@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LicitaScope — Preview v2 · Radar de oportunidades TIC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#09090b;
+    --bg-soft:#0d0d10;
+    --shell:rgba(255,255,255,.045);
+    --core:#101013;
+    --core-2:#131318;
+    --line:rgba(255,255,255,.07);
+    --line-soft:rgba(255,255,255,.045);
+    --txt:#e8e8ec;
+    --txt-2:#9d9da8;
+    --txt-3:#676772;
+    --accent:#3ecf8e;
+    --accent-dim:rgba(62,207,142,.12);
+    --accent-line:rgba(62,207,142,.28);
+    --warn:#d8a24a;
+    --sky:#6fa8c9;
+    --violet:#9a8bd0;
+    --rose:#cf7f8f;
+    --amber:#cfa15c;
+    --slate-cat:#8b93a3;
+    --ease:cubic-bezier(.32,.72,0,1);
+    --r-shell:22px;
+    --r-core:calc(var(--r-shell) - 6px);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);
+    color:var(--txt);
+    font-family:"Geist",-apple-system,"Segoe UI",sans-serif;
+    font-size:15px;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  body::before{
+    content:"";
+    position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:
+      radial-gradient(720px 420px at 82% -8%, rgba(62,207,142,.07), transparent 62%),
+      radial-gradient(640px 480px at -10% 34%, rgba(111,168,201,.05), transparent 60%);
+  }
+  .mono{font-family:"Geist Mono",ui-monospace,"SF Mono",monospace;font-variant-numeric:tabular-nums}
+  ::selection{background:rgba(62,207,142,.25)}
+
+  /* ---------- layout ---------- */
+  .app{display:flex;min-height:100dvh;position:relative;z-index:1}
+  .sidebar{
+    width:248px;flex-shrink:0;position:sticky;top:0;height:100dvh;
+    display:flex;flex-direction:column;
+    border-right:1px solid var(--line-soft);
+    background:var(--bg-soft);
+    padding:22px 16px 16px;
+  }
+  main{flex:1;min-width:0}
+  .wrap{max-width:1240px;margin:0 auto;padding:44px 44px 80px}
+
+  /* ---------- sidebar ---------- */
+  .brand{display:flex;align-items:center;gap:11px;padding:2px 8px 20px;border-bottom:1px solid var(--line-soft)}
+  .brand-mark{
+    width:34px;height:34px;border-radius:11px;flex-shrink:0;
+    background:linear-gradient(160deg,#17171c,#0e0e12);
+    border:1px solid var(--line);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .brand-mark svg{width:18px;height:18px;stroke:var(--accent);fill:none;stroke-width:1.5;stroke-linecap:round}
+  .brand-name{font-weight:600;font-size:15px;letter-spacing:-.01em}
+  .brand-tag{font-size:10.5px;color:var(--txt-3);letter-spacing:.06em;text-transform:uppercase;margin-top:1px}
+  .nav{margin-top:18px}
+  .nav-label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--txt-3);padding:0 10px;margin-bottom:8px}
+  .nav-item{
+    display:flex;align-items:center;gap:10px;
+    padding:8px 10px;border-radius:10px;margin-bottom:2px;
+    color:var(--txt-2);font-size:13.5px;font-weight:500;
+    transition:color .35s var(--ease),background .35s var(--ease);
+    cursor:pointer;text-decoration:none;
+  }
+  .nav-item svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.75}
+  .nav-item:hover{color:var(--txt);background:var(--shell)}
+  .nav-item.active{color:var(--txt);background:var(--shell)}
+  .nav-item.active::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent);flex-shrink:0;margin-left:-2px}
+  .nav-item .n{margin-left:auto;font-size:10.5px;color:var(--txt-3)}
+  .sidebar-foot{margin-top:auto}
+  .sync{
+    border:1px solid var(--line-soft);border-radius:14px;padding:12px 13px;margin-bottom:12px;
+    background:var(--core);
+  }
+  .sync-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--txt-2)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0;animation:pulse 2.6s var(--ease) infinite}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}
+  .sync-sub{font-size:11px;color:var(--txt-3);margin-top:6px}
+  .user{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:12px;transition:background .35s var(--ease)}
+  .user:hover{background:var(--shell)}
+  .avatar{
+    width:32px;height:32px;border-radius:50%;flex-shrink:0;
+    background:linear-gradient(140deg,#1d2b25,#101613);
+    border:1px solid var(--accent-line);
+    color:var(--accent);font-size:11.5px;font-weight:600;
+    display:flex;align-items:center;justify-content:center;letter-spacing:.02em;
+  }
+  .user-name{font-size:13px;font-weight:500}
+  .user-mail{font-size:11px;color:var(--txt-3)}
+
+  /* ---------- topbar (mobile) ---------- */
+  .topbar{display:none;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line-soft);background:var(--bg-soft)}
+
+  /* ---------- reveal ---------- */
+  .reveal{opacity:0;transform:translateY(22px);filter:blur(5px);transition:opacity .9s var(--ease),transform .9s var(--ease),filter .9s var(--ease)}
+  .reveal.in{opacity:1;transform:none;filter:none}
+
+  /* ---------- header ---------- */
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:7px;
+    font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;font-weight:500;
+    color:var(--accent);background:var(--accent-dim);
+    border:1px solid var(--accent-line);
+    padding:5px 12px;border-radius:999px;margin-bottom:18px;
+  }
+  h1{font-size:30px;font-weight:600;letter-spacing:-.03em;line-height:1.15}
+  .lede{color:var(--txt-2);max-width:62ch;margin-top:10px;font-size:14.5px}
+  .pagehead{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}
+  .actions{display:flex;gap:10px;align-items:center}
+  .btn{
+    display:inline-flex;align-items:center;gap:10px;
+    font-family:inherit;font-size:13px;font-weight:500;
+    border-radius:999px;padding:9px 9px 9px 16px;cursor:pointer;
+    transition:transform .4s var(--ease),background .4s var(--ease),border-color .4s var(--ease);
+    border:1px solid var(--line);background:var(--shell);color:var(--txt);
+  }
+  .btn:hover{transform:translateY(-1px)}
+  .btn:active{transform:scale(.98)}
+  .btn .btn-ico{
+    width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    background:rgba(255,255,255,.06);border:1px solid var(--line-soft);
+    transition:transform .45s var(--ease);
+  }
+  .btn:hover .btn-ico{transform:translateX(2px)}
+  .btn .btn-ico svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+  .btn.primary{background:var(--accent);border-color:transparent;color:#06130d}
+  .btn.primary .btn-ico{background:rgba(0,0,0,.14);border-color:transparent}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}
+  .chip{
+    font-size:11.5px;color:var(--txt-2);border:1px solid var(--line-soft);
+    background:var(--shell);border-radius:999px;padding:5px 11px;
+    display:inline-flex;align-items:center;gap:7px;
+  }
+  .chip::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent)}
+
+  /* ---------- KPIs ---------- */
+  .kpis{display:grid;grid-template-columns:1.25fr 1fr 1fr 1fr;gap:14px;margin-top:38px}
+  .shell{
+    background:var(--shell);border:1px solid var(--line-soft);
+    border-radius:var(--r-shell);padding:6px;
+  }
+  .core{
+    background:var(--core);border-radius:var(--r-core);height:100%;
+    border:1px solid var(--line-soft);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+    padding:20px 22px;
+  }
+  .kpi-label{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt-3);font-weight:500}
+  .kpi-num{font-size:30px;font-weight:600;letter-spacing:-.02em;margin-top:8px}
+  .kpi-sub{font-size:12px;color:var(--txt-2);margin-top:7px}
+  .kpi-sub b{color:var(--txt);font-weight:500}
+  .delta{
+    display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;
+    border-radius:999px;padding:2.5px 8px;margin-left:7px;vertical-align:2px;
+  }
+  .delta.up{color:var(--accent);background:var(--accent-dim)}
+  .delta.flat{color:var(--txt-2);background:var(--shell)}
+  .kpi-accent .core{border-color:var(--accent-line);background:linear-gradient(170deg,rgba(62,207,142,.08),var(--core) 55%)}
+
+  /* ---------- sections & bento ---------- */
+  section{margin-top:54px}
+  .sec-head{margin-bottom:20px}
+  .sec-eyebrow{font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--txt-3);font-weight:500;margin-bottom:8px;display:block}
+  h2{font-size:19px;font-weight:600;letter-spacing:-.02em}
+  .sec-sub{color:var(--txt-2);font-size:13.5px;margin-top:6px;max-width:70ch}
+  .bento{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+  .bento-3{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:14px}
+  .pad{padding:24px 26px}
+
+  /* ---------- pipeline ---------- */
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin-top:6px}
+  .node{
+    flex:1;min-width:130px;border:1px solid var(--line-soft);border-radius:14px;
+    background:var(--core-2);padding:13px 15px;position:relative;
+    transition:border-color .45s var(--ease),transform .45s var(--ease);
+  }
+  .node:hover{border-color:var(--line);transform:translateY(-2px)}
+  .node-name{font-size:13px;font-weight:600}
+  .node-sub{font-size:11px;color:var(--txt-3);margin-top:3px}
+  .node.new{border-color:var(--accent-line);background:linear-gradient(165deg,rgba(62,207,142,.1),var(--core-2) 60%)}
+  .node.new .node-name{color:var(--accent)}
+  .node-tag{
+    position:absolute;top:-9px;right:10px;font-size:9px;letter-spacing:.14em;font-weight:600;
+    color:var(--accent);background:#0b1712;border:1px solid var(--accent-line);
+    padding:2px 8px;border-radius:999px;text-transform:uppercase;
+  }
+  .link{align-self:center;padding:0 7px;color:var(--txt-3);flex-shrink:0}
+  .link svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+  /* ---------- tables ---------- */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{
+    text-align:left;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--txt-3);font-weight:500;padding:10px 14px;border-bottom:1px solid var(--line-soft);
+  }
+  td{padding:13px 14px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  tbody tr{transition:background .35s var(--ease)}
+  tbody tr:hover{background:rgba(255,255,255,.02)}
+  td.num,th.num{text-align:right;white-space:nowrap}
+  .t-med{font-weight:500;color:var(--txt)}
+  .t-dim{color:var(--txt-2);font-size:12px}
+  .bar-track{width:64px;height:4px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;display:inline-block;vertical-align:middle;margin-right:9px}
+  .bar-fill{height:100%;border-radius:99px;background:var(--accent);transform-origin:left;transform:scaleX(0);transition:transform 1.1s var(--ease) .2s}
+  .in .bar-fill{transform:scaleX(var(--w,1))}
+  .bar-fill.mut{background:#7d8590}
+  .pill{
+    display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;
+    border-radius:999px;padding:3.5px 10px;
+  }
+  .pill.pass{color:var(--accent);background:var(--accent-dim)}
+  .pill.role{color:var(--txt-2);background:var(--shell);border:1px solid var(--line-soft);font-weight:500}
+  .cat{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:500;white-space:nowrap}
+  .cat::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c,#8b93a3);flex-shrink:0}
+  .kw{
+    font-size:10.5px;color:var(--txt-2);border:1px solid var(--line-soft);
+    background:var(--shell);padding:2.5px 8px;border-radius:999px;margin:2px 3px 0 0;display:inline-block;
+  }
+  .score{
+    font-size:11.5px;font-weight:600;color:var(--accent);
+    border:1px solid var(--accent-line);background:var(--accent-dim);
+    border-radius:8px;padding:3px 8px;white-space:nowrap;
+  }
+
+  /* ---------- dedup pairs ---------- */
+  .pair{border:1px solid var(--line-soft);border-radius:14px;padding:15px 17px;margin-bottom:10px;background:var(--core-2);transition:border-color .4s var(--ease)}
+  .pair:hover{border-color:var(--line)}
+  .pair-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .pair-title{font-size:13.5px;font-weight:500}
+  .pair-meta{font-size:11.5px;color:var(--txt-3);margin-top:5px}
+  .pair-ids{font-size:11px;color:var(--txt-2);margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .id-chip{border:1px solid var(--line-soft);background:var(--shell);border-radius:7px;padding:2.5px 8px}
+  .sim{font-size:12px;font-weight:600;color:var(--accent)}
+  .sim-track{width:110px;height:4px;background:rgba(255,255,255,.07);border-radius:99px;overflow:hidden}
+  .sim-fill{height:100%;background:var(--accent);border-radius:99px;transform-origin:left;transform:scaleX(0);transition:transform 1.1s var(--ease) .25s}
+  .in .sim-fill{transform:scaleX(var(--w,1))}
+  .flag{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--warn);border:1px solid rgba(216,162,74,.3);background:rgba(216,162,74,.1);padding:2.5px 8px;border-radius:999px;font-weight:600}
+  .link-ico{width:12px;height:12px;stroke:var(--txt-3);fill:none;stroke-width:1.6;stroke-linecap:round}
+
+  /* ---------- quality ---------- */
+  .gate{display:flex;align-items:center;gap:12px;padding:11px 2px;border-bottom:1px solid var(--line-soft)}
+  .gate:last-child{border-bottom:none}
+  .gate-name{font-size:10.5px;flex:1;min-width:0;letter-spacing:-.02em}
+  .gate-val{font-size:11.5px;color:var(--txt-2)}
+  .q-summary{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
+  .q-big{font-size:26px;font-weight:600;letter-spacing:-.02em}
+  .q-note{font-size:12px;color:var(--txt-3)}
+
+  /* ---------- chart ---------- */
+  .chart{display:flex;align-items:flex-end;gap:14px;height:150px;margin-top:18px;padding-top:10px}
+  .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:9px;height:100%;justify-content:flex-end}
+  .col-bar{
+    width:100%;max-width:44px;border-radius:8px 8px 3px 3px;
+    background:linear-gradient(180deg,rgba(62,207,142,.75),rgba(62,207,142,.28));
+    transform-origin:bottom;transform:scaleY(0);transition:transform 1s var(--ease) calc(var(--i)*70ms + .15s);
+    min-height:6px;
+  }
+  .in .col-bar{transform:scaleY(1)}
+  .col-bar.dim{background:linear-gradient(180deg,rgba(139,147,163,.5),rgba(139,147,163,.18))}
+  .col-val{font-size:10.5px;color:var(--txt-2)}
+  .col-lab{font-size:10.5px;color:var(--txt-3);letter-spacing:.06em;text-transform:uppercase}
+
+  /* ---------- donut ---------- */
+  .donut-wrap{display:flex;align-items:center;gap:22px;margin-top:8px}
+  .donut-box{position:relative;width:138px;height:138px;flex-shrink:0}
+  .donut{
+    width:138px;height:138px;border-radius:50%;
+    background:conic-gradient(
+      var(--slate-cat) 0 31%,
+      var(--accent) 31% 55%,
+      var(--sky) 55% 73%,
+      var(--amber) 73% 85%,
+      var(--rose) 85% 94%,
+      var(--violet) 94% 100%
+    );
+    -webkit-mask:radial-gradient(circle,transparent 55%,#000 56%);mask:radial-gradient(circle,transparent 55%,#000 56%);
+  }
+  .donut-c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+  .donut-c b{font-size:19px;font-weight:600;letter-spacing:-.02em}
+  .donut-c span{font-size:9.5px;color:var(--txt-3);letter-spacing:.1em;text-transform:uppercase}
+  .legend{display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--txt-2);flex:1;min-width:0}
+  .legend .row{display:flex;align-items:center;gap:8px}
+  .legend .row b{margin-left:auto;color:var(--txt);font-weight:500}
+  .sw{width:8px;height:8px;border-radius:3px;flex-shrink:0}
+
+  /* ---------- footer ---------- */
+  footer{margin-top:64px;padding-top:22px;border-top:1px solid var(--line-soft);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .f-note{font-size:11.5px;color:var(--txt-3)}
+  .f-stack{font-size:11.5px;color:var(--txt-2)}
+
+  /* ---------- responsive ---------- */
+  @media (max-width:1080px){
+    .kpis{grid-template-columns:1fr 1fr}
+    .bento,.bento-3{grid-template-columns:1fr}
+  }
+  @media (max-width:860px){
+    .sidebar{display:none}
+    .topbar{display:flex}
+    .wrap{padding:28px 18px 64px}
+    .flow{flex-direction:column;gap:8px}
+    .link{transform:rotate(90deg);padding:0}
+    .pagehead{flex-direction:column;align-items:flex-start}
+    h1{font-size:25px}
+    .kpis{grid-template-columns:1fr}
+    .chart{gap:8px}
+    .donut-wrap{flex-direction:column;align-items:flex-start}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 12 L18 6"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>
+      </div>
+      <div>
+        <div class="brand-name">LicitaScope</div>
+        <div class="brand-tag">TFM · UCM</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-label">Panel</div>
+      <a class="nav-item active" href="#resumen">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="5" rx="2"/><rect x="13" y="10" width="8" height="11" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/></svg>
+        Resumen
+      </a>
+      <a class="nav-item" href="#pipeline">
+        <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="19" cy="12" r="2.2"/><path d="M7.2 12h2.6M14.2 12h2.6"/></svg>
+        Pipeline
+      </a>
+      <a class="nav-item" href="#dedup">
+        <svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="3.4"/><circle cx="16" cy="16" r="3.4"/><path d="M10.5 10.5l3 3"/></svg>
+        Deduplicación <span class="n mono">2.046</span>
+      </a>
+      <a class="nav-item" href="#clasificador">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13"/></svg>
+        Clasificador
+      </a>
+      <a class="nav-item" href="#calidad">
+        <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+        Calidad <span class="n mono">6/6</span>
+      </a>
+      <div class="nav-label" style="margin-top:18px">Explotación</div>
+      <a class="nav-item" href="#tendencias">
+        <svg viewBox="0 0 24 24"><path d="M4 19V9M9.3 19V5M14.6 19v-8M20 19V7"/></svg>
+        Tendencias
+      </a>
+      <a class="nav-item" href="#oportunidades">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v4.5l3 2"/></svg>
+        Oportunidades
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="sync">
+        <div class="sync-row"><span class="dot"></span>Ingesta al día</div>
+        <div class="sync-sub mono">último run · hace 2 h · sha ok</div>
+      </div>
+      <div class="user">
+        <div class="avatar">TC</div>
+        <div>
+          <div class="user-name">Tomás Campoy</div>
+          <div class="user-mail">t.campoy@ucm.es</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main>
+    <div class="topbar">
+      <div class="brand" style="border:none;padding:0">
+        <div class="brand-mark"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 12 L18 6"/></svg></div>
+        <div class="brand-name">LicitaScope</div>
+      </div>
+      <div class="avatar">TC</div>
+    </div>
+
+    <div class="wrap">
+
+      <!-- ===== header ===== -->
+      <header class="pagehead reveal" id="resumen">
+        <div>
+          <span class="eyebrow">v2.0 · corpus TED real · dedup simulado</span>
+          <h1>Radar de oportunidades TIC</h1>
+          <p class="lede">Corpus real de seis meses: 9.905 avisos TED de España (ene–jun 2026) con CPV al 100% e importe estimado en el 33%. La dedup cross-source y la evaluación del clasificador contra CPV se muestran como diseño v2. BOE verificado: no publica licitaciones.</p>
+          <div class="chips">
+            <span class="chip">Corpus TED ene–jun 2026</span>
+            <span class="chip">CPV 100% en silver</span>
+            <span class="chip">Dedup cross-source en diseño</span>
+            <span class="chip">Evaluación vs CPV pendiente</span>
+            <span class="chip">Warehouse Snowflake + dbt</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn"><span class="mono" style="font-size:12px">ene – jun 2026</span>
+            <span class="btn-ico"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M8 3v4M16 3v4"/></svg></span>
+          </button>
+          <button class="btn primary">Exportar gold
+            <span class="btn-ico"><svg viewBox="0 0 24 24"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          </button>
+        </div>
+      </header>
+
+      <!-- ===== KPIs ===== -->
+      <div class="kpis">
+        <div class="shell reveal" style="transition-delay:60ms"><div class="core">
+          <div class="kpi-label">Avisos integrados</div>
+          <div class="kpi-num mono">9.905</div>
+          <div class="kpi-sub">TED <b>9.905</b> · PLACSP <b>en integración</b> · BOE <b>contexto</b></div>
+        </div></div>
+        <div class="shell reveal kpi-accent" style="transition-delay:120ms"><div class="core">
+          <div class="kpi-label">Duplicados cross-source</div>
+          <div class="kpi-num mono">2.046<span class="delta flat">est.</span></div>
+          <div class="kpi-sub">estimación de diseño · <b>linkage v2 pendiente</b></div>
+        </div></div>
+        <div class="shell reveal" style="transition-delay:180ms"><div class="core">
+          <div class="kpi-label">Cobertura tecnológica</div>
+          <div class="kpi-num mono">37,6%<span class="delta up">real</span></div>
+          <div class="kpi-sub"><b>3.722</b> avisos con score &gt; 0</div>
+        </div></div>
+        <div class="shell reveal" style="transition-delay:240ms"><div class="core">
+          <div class="kpi-label">Puertas de calidad</div>
+          <div class="kpi-num mono">6/6<span class="delta flat">ok</span></div>
+          <div class="kpi-sub">9.905 avisos · <b>0 incidencias</b></div>
+        </div></div>
+      </div>
+
+      <!-- ===== pipeline ===== -->
+      <section id="pipeline" class="reveal">
+        <div class="sec-head">
+          <span class="sec-eyebrow">Arquitectura</span>
+          <h2>Pipeline v2 — medallion con etapa de enlace</h2>
+          <p class="sec-sub">La novedad estructural es la capa de <b style="color:var(--txt)">linkage</b> entre silver y gold: agrupa avisos que describen el mismo procedimiento en TED, PLACSP y BOE antes de clasificar.</p>
+        </div>
+        <div class="shell"><div class="core pad">
+          <div class="flow">
+            <div class="node"><div class="node-name mono">raw</div><div class="node-sub">TED · PLACSP · (BOE ctx.)<br>append-only · sha-256</div></div>
+            <div class="link"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+            <div class="node"><div class="node-name mono">bronze</div><div class="node-sub">payload + procedencia</div></div>
+            <div class="link"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+            <div class="node"><div class="node-name mono">silver</div><div class="node-sub">TenderRecord común</div></div>
+            <div class="link"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+            <div class="node new"><span class="node-tag">nuevo</span><div class="node-name mono">linkage</div><div class="node-sub">blocking + embeddings<br>dedup cross-source</div></div>
+            <div class="link"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+            <div class="node"><div class="node-name mono">gold</div><div class="node-sub">oportunidades · marts<br>calidad</div></div>
+            <div class="link"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+            <div class="node"><div class="node-name mono">serving</div><div class="node-sub">Snowflake + dbt<br>Vite · React</div></div>
+          </div>
+        </div></div>
+      </section>
+
+      <!-- ===== dedup ===== -->
+      <section id="dedup" class="reveal">
+        <div class="sec-head">
+          <span class="sec-eyebrow">Deduplicación cross-source</span>
+          <h2>El mismo contrato, tres escaparates</h2>
+          <p class="sec-sub">Comparación de métodos evaluada sobre una muestra de 412 pares etiquetada con ayuda de un LLM juez local y revisión manual. Los embeddings multilingües casi doblan el recall del baseline exacto sin apenas perder precisión.</p>
+        </div>
+        <div class="bento">
+          <div class="shell"><div class="core" style="padding:8px 10px">
+            <table>
+              <thead><tr><th>Método</th><th class="num">Precisión</th><th class="num">Recall</th><th class="num">F1</th><th>Rol en v2</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td class="t-med">ID de expediente exacto</td>
+                  <td class="num mono"><span class="bar-track"><span class="bar-fill mut" style="--w:.99"></span></span>0,99</td>
+                  <td class="num mono"><span class="bar-track"><span class="bar-fill mut" style="--w:.41"></span></span>0,41</td>
+                  <td class="num mono t-dim">0,58</td>
+                  <td><span class="pill role">baseline</span></td>
+                </tr>
+                <tr>
+                  <td class="t-med">Blocking + TF-IDF / Jaccard</td>
+                  <td class="num mono"><span class="bar-track"><span class="bar-fill mut" style="--w:.94"></span></span>0,94</td>
+                  <td class="num mono"><span class="bar-track"><span class="bar-fill mut" style="--w:.71"></span></span>0,71</td>
+                  <td class="num mono t-dim">0,81</td>
+                  <td><span class="pill role">baseline v1.1</span></td>
+                </tr>
+                <tr>
+                  <td class="t-med">Embeddings e5-small + reglas</td>
+                  <td class="num mono"><span class="bar-track"><span class="bar-fill" style="--w:.92"></span></span>0,92</td>
+                  <td class="num mono"><span class="bar-track"><span class="bar-fill" style="--w:.88"></span></span>0,88</td>
+                  <td class="num mono t-med" style="color:var(--accent)">0,90</td>
+                  <td><span class="pill pass">pipeline v2</span></td>
+                </tr>
+                <tr>
+                  <td class="t-med">LLM juez <span class="t-dim">(gpt-oss / qwen3, Ollama)</span></td>
+                  <td class="num mono t-dim">—</td>
+                  <td class="num mono t-dim">—</td>
+                  <td class="num mono t-dim">—</td>
+                  <td><span class="pill role">solo etiquetado · n=412</span></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="q-note" style="padding:14px 14px 12px;line-height:1.6">Blocking previo: comprador normalizado + ventana de ±7 días + división CPV. Reduce 9.905 avisos a 38.412 pares candidatos frente a ~49 M sin blocking; el par se decide por coseno de embeddings sobre título y resumen.</p>
+          </div></div>
+          <div class="shell"><div class="core pad">
+            <div class="kpi-label" style="margin-bottom:12px">Pares enlazados · muestra</div>
+
+            <div class="pair">
+              <div class="pair-top">
+                <div class="pair-title">Migración a la nube de la sede electrónica</div>
+                <div style="display:flex;align-items:center;gap:10px"><span class="sim mono">0,94</span><div class="sim-track"><div class="sim-fill" style="--w:.94"></div></div></div>
+              </div>
+              <div class="pair-meta">Ayuntamiento de Rivas-Vaciamadrid · Δ 2 días · Δ importe 0 €</div>
+              <div class="pair-ids mono">
+                <span class="id-chip">TED 00451207-2026</span>
+                <svg class="link-ico" viewBox="0 0 24 24"><path d="M9 12h6M8 7H6a4 4 0 000 8h2M16 7h2a4 4 0 010 8h-2"/></svg>
+                <span class="id-chip">PLACSP 2026/038412</span>
+              </div>
+            </div>
+
+            <div class="pair">
+              <div class="pair-top">
+                <div class="pair-title">Plataforma de analítica de datos y cuadros de mando</div>
+                <div style="display:flex;align-items:center;gap:10px"><span class="sim mono">0,89</span><div class="sim-track"><div class="sim-fill" style="--w:.89"></div></div></div>
+              </div>
+              <div class="pair-meta">Gerencia de Informática de la Seguridad Social · Δ 4 días</div>
+              <div class="pair-ids mono">
+                <span class="id-chip">TED 00447789-2026</span>
+                <svg class="link-ico" viewBox="0 0 24 24"><path d="M9 12h6M8 7H6a4 4 0 000 8h2M16 7h2a4 4 0 010 8h-2"/></svg>
+                <span class="id-chip">BOE B-2026-11823</span>
+              </div>
+            </div>
+
+            <div class="pair" style="margin-bottom:0">
+              <div class="pair-top">
+                <div class="pair-title">Mantenimiento y evolución de aplicaciones</div>
+                <div style="display:flex;align-items:center;gap:10px"><span class="flag">revisión</span><span class="sim mono">0,87</span></div>
+              </div>
+              <div class="pair-meta">Universidad Politécnica de Cartagena · Δ 1 día · umbral dudoso</div>
+              <div class="pair-ids mono">
+                <span class="id-chip">TED 00453331-2026</span>
+                <svg class="link-ico" viewBox="0 0 24 24"><path d="M9 12h6M8 7H6a4 4 0 000 8h2M16 7h2a4 4 0 010 8h-2"/></svg>
+                <span class="id-chip">PLACSP 2026/040117</span>
+              </div>
+            </div>
+          </div></div>
+        </div>
+      </section>
+
+      <!-- ===== clasificador + calidad ===== -->
+      <section id="clasificador" class="reveal">
+        <div class="sec-head">
+          <span class="sec-eyebrow">Clasificador evaluado</span>
+          <h2>Reglas de keywords medidas contra CPV</h2>
+          <p class="sec-sub">Ground truth aproximado con códigos CPV 48 / 64 / 72 más revisión manual de 312 avisos. El clasificador deja de ser una decisión de diseño para ser un método con métricas.</p>
+        </div>
+        <div class="bento">
+          <div class="shell"><div class="core" style="padding:8px 10px">
+            <table>
+              <thead><tr><th>Categoría</th><th class="num">P</th><th class="num">R</th><th class="num">F1</th><th class="num">soporte</th></tr></thead>
+              <tbody>
+                <tr><td><span class="cat" style="--c:var(--sky)">Cloud</span></td><td class="num mono">0,91</td><td class="num mono">0,84</td><td class="num mono"><span class="bar-track"><span class="bar-fill" style="--w:.87"></span></span>0,87</td><td class="num mono t-dim">58</td></tr>
+                <tr><td><span class="cat" style="--c:var(--violet)">AI &amp; Machine Learning</span></td><td class="num mono">0,88</td><td class="num mono">0,79</td><td class="num mono"><span class="bar-track"><span class="bar-fill" style="--w:.83"></span></span>0,83</td><td class="num mono t-dim">34</td></tr>
+                <tr><td><span class="cat" style="--c:var(--accent)">Data &amp; Analytics</span></td><td class="num mono">0,86</td><td class="num mono">0,83</td><td class="num mono"><span class="bar-track"><span class="bar-fill" style="--w:.84"></span></span>0,84</td><td class="num mono t-dim">71</td></tr>
+                <tr><td><span class="cat" style="--c:var(--rose)">Cybersecurity</span></td><td class="num mono">0,93</td><td class="num mono">0,90</td><td class="num mono"><span class="bar-track"><span class="bar-fill" style="--w:.91"></span></span>0,91</td><td class="num mono t-dim">42</td></tr>
+                <tr><td><span class="cat" style="--c:var(--slate-cat)">Software &amp; Development</span></td><td class="num mono">0,82</td><td class="num mono">0,77</td><td class="num mono"><span class="bar-track"><span class="bar-fill" style="--w:.79"></span></span>0,79</td><td class="num mono t-dim">83</td></tr>
+                <tr><td><span class="cat" style="--c:var(--amber)">Infrastructure &amp; Hardware</span></td><td class="num mono">0,85</td><td class="num mono">0,72</td><td class="num mono"><span class="bar-track"><span class="bar-fill" style="--w:.78"></span></span>0,78</td><td class="num mono t-dim">24</td></tr>
+                <tr><td class="t-med">macro-F1</td><td class="num"></td><td class="num"></td><td class="num mono t-med" style="color:var(--accent)">0,84</td><td class="num mono t-dim">312</td></tr>
+              </tbody>
+            </table>
+          </div></div>
+          <div class="shell" id="calidad"><div class="core pad">
+            <div class="kpi-label">Calidad · último run</div>
+            <div class="q-summary"><span class="q-big mono">6/6</span><span class="q-note">puertas superadas · 0 incidencias</span></div>
+            <div class="gate"><span class="gate-name mono">not_empty</span><span class="gate-val mono">9.905 ≥ 1</span><span class="pill pass">pass</span></div>
+            <div class="gate"><span class="gate-name mono">title_null_share</span><span class="gate-val mono">0,0% ≤ 5%</span><span class="pill pass">pass</span></div>
+            <div class="gate"><span class="gate-name mono">publication_date_null_share</span><span class="gate-val mono">0,0% ≤ 5%</span><span class="pill pass">pass</span></div>
+            <div class="gate"><span class="gate-name mono">invalid_amount_share</span><span class="gate-val mono">0,0% ≤ 10%</span><span class="pill pass">pass</span></div>
+            <div class="gate"><span class="gate-name mono">technology_match_share</span><span class="gate-val mono">37,6% ≥ 20%</span><span class="pill pass">pass</span></div>
+            <div class="gate"><span class="gate-name mono">duplicate_keys</span><span class="gate-val mono">0 = 0</span><span class="pill pass">pass</span></div>
+            <p class="q-note" style="margin-top:14px;line-height:1.5">La dedup cross-source actúa aguas abajo de estas puertas: no modifica silver, anota enlaces en gold.</p>
+          </div></div>
+        </div>
+      </section>
+
+      <!-- ===== tendencias ===== -->
+      <section id="tendencias" class="reveal">
+        <div class="sec-head">
+          <span class="sec-eyebrow">Explotación</span>
+          <h2>Qué compra el sector público tecnológico</h2>
+        </div>
+        <div class="bento-3">
+          <div class="shell"><div class="core pad">
+            <div class="kpi-label">Avisos por mes · 2026 · real</div>
+            <div class="chart">
+              <div class="col"><span class="col-val mono">1.323</span><div class="col-bar dim" style="height:69%;--i:0"></div><span class="col-lab">ene</span></div>
+              <div class="col"><span class="col-val mono">1.479</span><div class="col-bar dim" style="height:77%;--i:1"></div><span class="col-lab">feb</span></div>
+              <div class="col"><span class="col-val mono">1.921</span><div class="col-bar" style="height:100%;--i:2"></div><span class="col-lab">mar</span></div>
+              <div class="col"><span class="col-val mono">1.709</span><div class="col-bar dim" style="height:89%;--i:3"></div><span class="col-lab">abr</span></div>
+              <div class="col"><span class="col-val mono">1.629</span><div class="col-bar dim" style="height:85%;--i:4"></div><span class="col-lab">may</span></div>
+              <div class="col"><span class="col-val mono">1.844</span><div class="col-bar" style="height:96%;--i:5"></div><span class="col-lab">jun</span></div>
+            </div>
+          </div></div>
+          <div class="shell"><div class="core pad">
+            <div class="kpi-label">Categorías · avisos tech · real</div>
+            <div class="donut-wrap">
+              <div class="donut-box"><div class="donut" style="background:conic-gradient(var(--slate-cat) 0 74%,var(--amber) 74% 88.7%,var(--sky) 88.7% 93.4%,var(--rose) 93.4% 97%,var(--violet) 97% 98.7%,var(--accent) 98.7% 100%)"></div><div class="donut-c"><b class="mono">3.722</b><span>avisos</span></div></div>
+              <div class="legend">
+                <div class="row"><span class="sw" style="background:var(--slate-cat)"></span>Software<b class="mono">74%</b></div>
+                <div class="row"><span class="sw" style="background:var(--amber)"></span>Infra<b class="mono">14,7%</b></div>
+                <div class="row"><span class="sw" style="background:var(--sky)"></span>Cloud<b class="mono">4,7%</b></div>
+                <div class="row"><span class="sw" style="background:var(--rose)"></span>Cyber<b class="mono">3,7%</b></div>
+                <div class="row"><span class="sw" style="background:var(--violet)"></span>IA/ML<b class="mono">1,7%</b></div>
+                <div class="row"><span class="sw" style="background:var(--accent)"></span>Data<b class="mono">1,3%</b></div>
+              </div>
+            </div>
+          </div></div>
+          <div class="shell"><div class="core pad">
+            <div class="kpi-label" style="margin-bottom:6px">Top compradores · real</div>
+            <div class="gate"><span class="gate-name">Administrador de Infraestructuras Ferroviarias</span><span class="gate-val mono">335</span></div>
+            <div class="gate"><span class="gate-name">D.G. Racionalización y Centralización Económica</span><span class="gate-val mono">278</span></div>
+            <div class="gate"><span class="gate-name">Infraestructures de la Generalitat de Catalunya</span><span class="gate-val mono">227</span></div>
+            <div class="gate"><span class="gate-name">Metro de Madrid, S.A.</span><span class="gate-val mono">213</span></div>
+            <div class="gate"><span class="gate-name">TRAGSA (Transformación Agraria)</span><span class="gate-val mono">169</span></div>
+            <p class="q-note" style="margin-top:14px;line-height:1.5">Concentración: el top-5 de compradores suma el 12,3% de los avisos tech.</p>
+          </div></div>
+        </div>
+      </section>
+
+      <!-- ===== oportunidades ===== -->
+      <section id="oportunidades" class="reveal">
+        <div class="sec-head">
+          <span class="sec-eyebrow">Gold · opportunities</span>
+          <h2>Oportunidades mejor puntuadas</h2>
+          <p class="sec-sub">Top real por score e importe. En el corpus ya se aprecian avisos repetidos del mismo procedimiento (p. ej. Barcelona de Serveis Municipals): la motivación empírica del linkage v2.</p>
+        </div>
+        <div class="shell"><div class="core" style="padding:8px 10px">
+          <table>
+            <thead><tr><th>Categoría</th><th>Oportunidad</th><th>Comprador</th><th class="num">Importe</th><th class="num">Score</th><th>Keywords</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="cat" style="--c:var(--rose)">Cybersecurity</span></td>
+                <td class="t-med">Acuerdo Marco de ciberseguridad</td>
+                <td class="t-dim">Entidad Pública Aragonesa de Servicios Telemáticos</td>
+                <td class="num mono">36.216.667 €</td>
+                <td class="num"><span class="score mono">3</span></td>
+                <td><span class="kw">ciberseguridad</span><span class="kw">software</span></td>
+              </tr>
+              <tr>
+                <td><span class="cat" style="--c:var(--slate-cat)">Software &amp; Dev</span></td>
+                <td class="t-med">AMT-2025-0160: acuerdo marco de suministro y actualización de software</td>
+                <td class="t-dim">Agencia Modernización Tecnológica de Galicia</td>
+                <td class="num mono">11.743.680 €</td>
+                <td class="num"><span class="score mono">3</span></td>
+                <td><span class="kw">software</span><span class="kw">servidor</span><span class="kw">virtualizacion</span></td>
+              </tr>
+              <tr>
+                <td><span class="cat" style="--c:var(--violet)">AI &amp; ML</span></td>
+                <td class="t-med">Plataforma de servicios: construcción y desarrollo (modificación)</td>
+                <td class="t-dim">Centre de Telecomunicacions i Tecnologies de la Informació</td>
+                <td class="num mono">6.608.091 €</td>
+                <td class="num"><span class="score mono">4</span></td>
+                <td><span class="kw">inteligencia artificial</span><span class="kw">analitica</span></td>
+              </tr>
+              <tr>
+                <td><span class="cat" style="--c:var(--slate-cat)">Software &amp; Dev</span></td>
+                <td class="t-med">Derecho de uso de aplicación de mercado para gestión de la red</td>
+                <td class="t-dim">Barcelona de Serveis Municipals, S.A.</td>
+                <td class="num mono">1.891.510 €</td>
+                <td class="num"><span class="score mono">4</span></td>
+                <td><span class="kw">aplicacion</span><span class="kw">desarrollo</span></td>
+              </tr>
+              <tr>
+                <td><span class="cat" style="--c:var(--sky)">Cloud</span></td>
+                <td class="t-med">Instalación y parametrización de software de gestión integral</td>
+                <td class="t-dim">Ayuntamiento de Viladecans</td>
+                <td class="num mono">912.714 €</td>
+                <td class="num"><span class="score mono">4</span></td>
+                <td><span class="kw">cloud</span><span class="kw">desarrollo</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div></div>
+      </section>
+
+      <footer class="reveal">
+        <div class="f-note">Corpus TED real ene–jun 2026 (9.905 avisos) · dedup y evaluación CPV: diseño v2.<br>Pipeline real: <span class="mono">tfm-licitaciones</span></div>
+        <div class="f-stack mono">python 3.12 · uv · dbt · snowflake · docker · vite + react (+ clerk opcional)</div>
+      </footer>
+
+    </div>
+  </main>
+</div>
+
+<script>
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal, section').forEach(el => io.observe(el));
+</script>
+</body>
+</html>

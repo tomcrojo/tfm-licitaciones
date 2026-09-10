@@ -1,0 +1,50 @@
+category,publication_month,n_tenders,technology_score
+AI & Machine Learning,2025-12,2,2
+AI & Machine Learning,2026-01,32,59
+AI & Machine Learning,2026-02,22,41
+AI & Machine Learning,2026-03,30,55
+AI & Machine Learning,2026-04,28,51
+AI & Machine Learning,2026-05,23,40
+AI & Machine Learning,2026-06,55,90
+Cloud,2025-12,8,10
+Cloud,2026-01,103,156
+Cloud,2026-02,109,165
+Cloud,2026-03,123,183
+Cloud,2026-04,125,190
+Cloud,2026-05,154,234
+Cloud,2026-06,298,416
+Cybersecurity,2025-12,3,3
+Cybersecurity,2026-01,36,45
+Cybersecurity,2026-02,43,61
+Cybersecurity,2026-03,49,73
+Cybersecurity,2026-04,60,87
+Cybersecurity,2026-05,55,81
+Cybersecurity,2026-06,126,173
+Data & Analytics,2025-12,4,3
+Data & Analytics,2026-01,66,31
+Data & Analytics,2026-02,60,16
+Data & Analytics,2026-03,71,50
+Data & Analytics,2026-04,64,44
+Data & Analytics,2026-05,77,39
+Data & Analytics,2026-06,113,49
+Infrastructure & Hardware,2025-12,51,37
+Infrastructure & Hardware,2026-01,605,348
+Infrastructure & Hardware,2026-02,656,426
+Infrastructure & Hardware,2026-03,737,478
+Infrastructure & Hardware,2026-04,825,504
+Infrastructure & Hardware,2026-05,887,553
+Infrastructure & Hardware,2026-06,1679,1066
+Other,2025-12,1136,0
+Other,2026-01,11955,0
+Other,2026-02,14259,0
+Other,2026-03,15714,0
+Other,2026-04,16316,0
+Other,2026-05,19916,0
+Other,2026-06,37277,0
+Software & Development,2025-12,79,64
+Software & Development,2026-01,1217,1189
+Software & Development,2026-02,1312,1280
+Software & Development,2026-03,1474,1509
+Software & Development,2026-04,1585,1530
+Software & Development,2026-05,1718,1652
+Software & Development,2026-06,3062,2729

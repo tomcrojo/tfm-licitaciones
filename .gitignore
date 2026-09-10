@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Regenerables con: python -m tfm_licitaciones.cli ingest (no commitar batches reales)
+data/raw/ted/ted-*.jsonl
+data/raw/boe/boe-*.jsonl
+
+# Corpus raw y capas derivadas grandes: regenerables con cli ingest + run
+data/raw/placsp/placsp-*.zip
+data/bronze/records.jsonl
+data/silver/tenders.jsonl
+data/gold/opportunities.jsonl
+data/gold/opportunities.csv

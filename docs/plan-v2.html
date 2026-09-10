@@ -1,0 +1,1028 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LicitaScope — Plan v2 · Arquitectura interactiva</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#09090b; --bg-soft:#0d0d10; --shell:rgba(255,255,255,.045); --core:#101013;
+    --line:rgba(255,255,255,.07); --line-soft:rgba(255,255,255,.045);
+    --txt:#e8e8ec; --txt-2:#9d9da8; --txt-3:#676772;
+    --accent:#3ecf8e; --accent-dim:rgba(62,207,142,.12); --accent-line:rgba(62,207,142,.28);
+    --sky:#6fa8c9; --sky-dim:rgba(111,168,201,.12); --sky-line:rgba(111,168,201,.3);
+    --amber:#cfa15c; --amber-dim:rgba(207,161,92,.12); --amber-line:rgba(207,161,92,.3);
+    --violet:#9a8bd0; --rose:#cf7f8f;
+    --ease:cubic-bezier(.32,.72,0,1);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--txt);font-family:"Geist",-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .mono{font-family:"Geist Mono",ui-monospace,"SF Mono",monospace;font-variant-numeric:tabular-nums}
+  ::selection{background:rgba(62,207,142,.25)}
+  a{color:inherit}
+
+  /* ---------- topbar ---------- */
+  .topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:14px;padding:14px 26px;border-bottom:1px solid var(--line-soft);background:rgba(9,9,11,.82);backdrop-filter:blur(14px)}
+  .brand-mark{width:32px;height:32px;border-radius:10px;background:linear-gradient(160deg,#17171c,#0e0e12);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .brand-mark svg{width:17px;height:17px;stroke:var(--accent);fill:none;stroke-width:1.5;stroke-linecap:round}
+  .tb-title{font-weight:600;font-size:14.5px;letter-spacing:-.01em}
+  .tb-sub{font-size:11px;color:var(--txt-3);margin-top:1px}
+  .tb-right{margin-left:auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .legend{display:flex;gap:14px;font-size:11px;color:var(--txt-2)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .lg{width:8px;height:8px;border-radius:3px}
+  .tb-link{font-size:12.5px;color:var(--txt-2);text-decoration:none;border:1px solid var(--line);padding:6px 13px;border-radius:999px;transition:all .35s var(--ease)}
+  .tb-link:hover{color:var(--txt);border-color:var(--line)}
+
+  /* ---------- hero ---------- */
+  .hero{padding:40px 26px 8px;max-width:1380px;margin:0 auto}
+  .eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;font-weight:500;color:var(--accent);background:var(--accent-dim);border:1px solid var(--accent-line);padding:5px 12px;border-radius:999px;margin-bottom:16px}
+  h1{font-size:29px;font-weight:600;letter-spacing:-.03em;line-height:1.15;max-width:70ch}
+  .lede{color:var(--txt-2);max-width:78ch;margin-top:10px;font-size:14.5px}
+  .stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+  .stat{font-size:11.5px;color:var(--txt-2);border:1px solid var(--line-soft);background:var(--shell);border-radius:999px;padding:5px 12px}
+  .stat b{color:var(--txt);font-weight:600}
+
+  /* ---------- 3D stage ---------- */
+  .stage-wrap{position:relative;max-width:1380px;margin:22px auto 0;padding:0 26px}
+  .stage{position:relative;height:74vh;min-height:560px;border:1px solid var(--line-soft);border-radius:24px;overflow:hidden;background:radial-gradient(900px 500px at 70% 0%,rgba(62,207,142,.05),transparent 60%),radial-gradient(700px 460px at 10% 100%,rgba(111,168,201,.05),transparent 60%),var(--bg-soft)}
+  #scene{width:100%;height:100%;display:block;cursor:grab}
+  #scene.dragging{cursor:grabbing}
+  .hint{position:absolute;left:16px;bottom:14px;font-size:11px;color:var(--txt-3);display:flex;gap:14px;pointer-events:none;flex-wrap:wrap}
+  .hint .h{display:inline-flex;align-items:center;gap:6px}
+  .hint svg{width:13px;height:13px;stroke:var(--txt-3);fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .flow-tag{position:absolute;right:16px;top:14px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt-3);pointer-events:none}
+  .fallback{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:30px;color:var(--txt-2);font-size:13.5px}
+
+  /* ---------- panel ---------- */
+  .panel{position:fixed;top:0;right:0;height:100dvh;width:min(440px,100vw);z-index:60;background:rgba(13,13,16,.97);backdrop-filter:blur(18px);border-left:1px solid var(--line);transform:translateX(102%);transition:transform .55s var(--ease);display:flex;flex-direction:column}
+  .panel.open{transform:none}
+  .p-head{display:flex;align-items:flex-start;gap:12px;padding:22px 24px 0}
+  .p-zone{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--txt-3);font-weight:500;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;border-radius:999px;padding:3px 10px}
+  .pill.ok{color:var(--accent);background:var(--accent-dim)}
+  .pill.v2{color:var(--sky);background:var(--sky-dim)}
+  .pill.plan{color:var(--amber);background:var(--amber-dim)}
+  .p-close{margin-left:auto;width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--shell);color:var(--txt-2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .35s var(--ease);flex-shrink:0}
+  .p-close:hover{color:var(--txt);transform:rotate(90deg)}
+  .p-close svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round}
+  .p-body{overflow-y:auto;padding:12px 24px 30px;flex:1}
+  .p-body h2{font-size:20px;font-weight:600;letter-spacing:-.02em;margin-top:10px}
+  .p-desc{color:var(--txt-2);font-size:13.5px;margin-top:8px}
+  .p-tech{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px}
+  .chip{font-size:11px;color:var(--txt-2);border:1px solid var(--line-soft);background:var(--shell);border-radius:999px;padding:3px 10px}
+  .p-block{margin-top:20px}
+  .p-label{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--txt-3);font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .p-label::before{content:"";width:6px;height:6px;border-radius:2px;background:var(--sky)}
+  .p-label.clean::before{background:var(--accent)}
+  pre.code{background:#0b0b0e;border:1px solid var(--line-soft);border-radius:14px;padding:14px 16px;font-family:"Geist Mono",ui-monospace,monospace;font-size:11.5px;line-height:1.65;color:var(--txt-2);overflow-x:auto;white-space:pre}
+  .code .k{color:var(--sky)} .code .s{color:var(--accent)} .code .n{color:var(--amber)} .code .b{color:var(--violet)}
+  .p-note{margin-top:18px;font-size:12.5px;color:var(--txt-2);border:1px solid var(--line-soft);border-radius:14px;padding:12px 14px;background:var(--core)}
+  .p-note b{color:var(--txt);font-weight:500}
+
+  /* ---------- plan sections ---------- */
+  .plan{max-width:1240px;margin:0 auto;padding:64px 26px 40px}
+  section{margin-top:64px}
+  .sec-head{margin-bottom:22px}
+  .sec-eyebrow{font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--txt-3);font-weight:500;margin-bottom:8px;display:block}
+  h2.sec{font-size:20px;font-weight:600;letter-spacing:-.02em}
+  .sec-sub{color:var(--txt-2);font-size:13.5px;margin-top:6px;max-width:75ch}
+
+  /* roadmap */
+  .phases{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .phase{border:1px solid var(--line-soft);border-radius:20px;background:var(--core);padding:20px;position:relative;overflow:hidden}
+  .phase::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:var(--pc,var(--accent))}
+  .phase:nth-child(2){margin-top:16px}.phase:nth-child(3){margin-top:32px}.phase:nth-child(4){margin-top:48px}
+  .ph-num{font-size:10.5px;letter-spacing:.16em;color:var(--txt-3);text-transform:uppercase;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .ph-title{font-size:15px;font-weight:600;margin-top:8px;letter-spacing:-.01em}
+  .phase ul{list-style:none;margin-top:12px}
+  .phase li{font-size:12.5px;color:var(--txt-2);padding:5px 0 5px 16px;position:relative;border-bottom:1px solid var(--line-soft)}
+  .phase li:last-child{border-bottom:none}
+  .phase li::before{content:"";position:absolute;left:2px;top:12px;width:5px;height:5px;border-radius:50%;background:var(--pc,var(--accent));opacity:.8}
+  .phase li b{color:var(--txt);font-weight:500}
+
+  /* table */
+  .shell{background:var(--shell);border:1px solid var(--line-soft);border-radius:22px;padding:6px}
+  .core{background:var(--core);border-radius:16px;border:1px solid var(--line-soft);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--txt-3);font-weight:500;padding:12px 16px;border-bottom:1px solid var(--line-soft)}
+  td{padding:13px 16px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  tbody tr{transition:background .35s var(--ease)}
+  tbody tr:hover{background:rgba(255,255,255,.02)}
+  .t-med{font-weight:500}
+  .t-dim{color:var(--txt-2);font-size:12px}
+
+  /* star model */
+  .star{display:flex;align-items:center;gap:0;flex-wrap:wrap}
+  .dims{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .dim,.fact,.mart{border:1px solid var(--line-soft);border-radius:16px;background:var(--core);padding:13px 16px;font-size:12.5px}
+  .dim b,.fact b,.mart b{display:block;font-size:13px;font-weight:600}
+  .dim span,.fact span,.mart span{color:var(--txt-3);font-size:11px}
+  .fact{border-color:var(--accent-line);background:linear-gradient(170deg,rgba(62,207,142,.08),var(--core) 60%)}
+  .star-arrow{padding:0 16px;color:var(--txt-3);font-size:18px;flex-shrink:0}
+
+  /* estado grid */
+  .estado{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .est{border:1px solid var(--line-soft);border-radius:18px;background:var(--core);padding:18px 20px}
+  .est-l{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt-3);font-weight:500}
+  .est-v{font-size:24px;font-weight:600;margin-top:7px;letter-spacing:-.02em}
+  .est-s{font-size:11.5px;color:var(--txt-2);margin-top:4px}
+
+  footer{margin-top:72px;padding-top:22px;border-top:1px solid var(--line-soft);display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  .f-note{font-size:11.5px;color:var(--txt-3)}
+
+  @media (max-width:1080px){
+    .phases{grid-template-columns:repeat(2,1fr)}
+    .phase:nth-child(n){margin-top:0}
+    .estado{grid-template-columns:repeat(2,1fr)}
+  }
+  @media (max-width:760px){
+    .phases{grid-template-columns:1fr}
+    .estado{grid-template-columns:1fr}
+    .legend{display:none}
+    .stage{min-height:480px}
+    .star-arrow{transform:rotate(90deg);width:100%;text-align:center;padding:8px 0}
+    .dims{grid-template-columns:1fr 1fr}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ TOPBAR ============ -->
+<header class="topbar">
+  <div class="brand-mark"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 12 L18 6"/></svg></div>
+  <div>
+    <div class="tb-title">LicitaScope · Plan v2</div>
+    <div class="tb-sub">TFM UCM · plataforma DataOps de licitaciones tecnológicas</div>
+  </div>
+  <div class="tb-right">
+    <div class="legend">
+      <span><i class="lg" style="background:var(--accent)"></i>construido</span>
+      <span><i class="lg" style="background:var(--sky)"></i>v2 en curso</span>
+      <span><i class="lg" style="background:var(--amber)"></i>planificado</span>
+    </div>
+    <a class="tb-link" href="./v2-preview.html">Dashboard preview</a>
+  </div>
+</header>
+
+<!-- ============ HERO ============ -->
+<div class="hero">
+  <span class="eyebrow">arquitectura interactiva · clic en cualquier nodo</span>
+  <h1>La plataforma, edificio a edificio: de diez fuentes abiertas a un lakehouse explotable</h1>
+  <p class="lede">Diagrama 3D del flujo de datos completo del TFM. Cada construcción es un nodo del pipeline: al pinchar verás qué procesa, con qué tecnologías, y un ejemplo real de cómo entra (raw) y cómo sale (clean). El color indica estado: lo ya construido y verificado con corpus real, lo que llega en la v2 y lo planificado.</p>
+  <div class="stats">
+    <span class="stat"><b>28</b> nodos</span>
+    <span class="stat"><b>10</b> fuentes de datos</span>
+    <span class="stat"><b>8</b> zonas (medallion)</span>
+    <span class="stat"><b>30</b> flujos con partículas en vivo</span>
+    <span class="stat">corpus real · <b>9.905</b> avisos TED</span>
+  </div>
+</div>
+
+<!-- ============ 3D STAGE ============ -->
+<div class="stage-wrap">
+  <div class="stage">
+    <canvas id="scene"></canvas>
+    <div class="flow-tag">flujo de datos · en vivo</div>
+    <div class="hint">
+      <span class="h"><svg viewBox="0 0 24 24"><path d="M9 12h6M8 7H6a4 4 0 000 8h2M16 7h2a4 4 0 010 8h-2"/></svg>arrastrar · rotar</span>
+      <span class="h"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M11 8v6M8 11h6M21 21l-4.3-4.3"/></svg>rueda · zoom</span>
+      <span class="h"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg>clic en nodo · detalle</span>
+    </div>
+    <div class="fallback" id="fallback">El diagrama 3D necesita conexión para cargar three.js.<br>El plan completo está debajo del lienzo.</div>
+  </div>
+</div>
+
+<!-- ============ PLAN ============ -->
+<div class="plan">
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-eyebrow">Roadmap</span>
+      <h2 class="sec">Cuatro fases, de lo verificado a lo explotable</h2>
+    </div>
+    <div class="phases">
+      <div class="phase" style="--pc:var(--accent)">
+        <div class="ph-num">Fase 0 <span class="pill ok">hecho</span></div>
+        <div class="ph-title">Corpus real verificado</div>
+        <ul>
+          <li><b>9.905 avisos TED</b> ene–jun 2026 con query tecnológica</li>
+          <li>CPV principal en el <b>100%</b> de registros</li>
+          <li>Puertas de calidad <b>6/6</b> · 13 tests OK</li>
+          <li>Hallazgo: <b>BOE no publica licitaciones</b></li>
+          <li>Importe estimado al 33% vía <span class="mono">estimated-value-lot</span></li>
+        </ul>
+      </div>
+      <div class="phase" style="--pc:var(--sky)">
+        <div class="ph-num">Fase 1 <span class="pill v2">núcleo v2</span></div>
+        <div class="ph-title">Linkage + evaluación</div>
+        <ul>
+          <li><b>Dedup cross-source</b>: blocking DIR3 ±7d + CPV, embeddings e5</li>
+          <li><b>LLM juez</b> (Ollama) etiqueta muestra n≈412 · P/R/F1 por método</li>
+          <li>Evaluación <b>jerárquica del clasificador vs CPV</b></li>
+          <li><b>PLACSP</b> en producción (bulk XML español)</li>
+          <li>Dims DIR3 + taxonomía CPV en silver</li>
+        </ul>
+      </div>
+      <div class="phase" style="--pc:var(--sky)">
+        <div class="ph-num">Fase 2 <span class="pill v2">plataforma</span></div>
+        <div class="ph-title">Lakehouse enterprise</div>
+        <ul>
+          <li>Medallion sobre <b>Databricks + PySpark</b></li>
+          <li>Tablas <b>Delta</b> y <b>Iceberg</b> (comparativa en memoria)</li>
+          <li><b>Great Expectations</b> sustituye gates caseros</li>
+          <li><b>Docker</b> reproducible de extremo a extremo</li>
+          <li>Modelo estrella facts/dims en gold</li>
+        </ul>
+      </div>
+      <div class="phase" style="--pc:var(--amber)">
+        <div class="ph-num">Fase 3 <span class="pill plan">explotación</span></div>
+        <div class="ph-title">Analítica y producto</div>
+        <ul>
+          <li><b>Dashboard Vite + React</b> sobre el lakehouse</li>
+          <li>Mapas coropléticos <b>IGN + INE</b> por provincia</li>
+          <li><b>Bunching</b> contratos menores (picos 14.999 €)</li>
+          <li>Gasto per cápita vs renta (AEAT)</li>
+          <li>ROLE: adjudicaciones con prohibición activa</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-eyebrow">Fuentes y enriquecimiento</span>
+      <h2 class="sec">Diez conjuntos de datos, cada uno con un papel</h2>
+      <p class="sec-sub">Los dos primeros mejoran las contribuciones nucleares del TFM (evaluación y linkage); el resto añaden dimensiones analíticas y hallazgos potenciales.</p>
+    </div>
+    <div class="shell"><div class="core" style="padding:8px 10px">
+      <table>
+        <thead><tr><th>Dataset</th><th>Fuente</th><th>Qué aporta</th><th>Prioridad</th><th>Estado</th></tr></thead>
+        <tbody>
+          <tr><td class="t-med">TED Search API</td><td class="t-dim">Unión Europea</td><td class="t-dim">Corpus nuclear: avisos ESP con CPV, comprador, importe y URL</td><td class="mono">—</td><td><span class="pill ok">en producción</span></td></tr>
+          <tr><td class="t-med">Taxonomía CPV</td><td class="t-dim">SIMAP / UE</td><td class="t-dim">Evaluación jerárquica del clasificador (división / grupo / clase)</td><td class="mono">alta</td><td><span class="pill v2">fase 1</span></td></tr>
+          <tr><td class="t-med">DIR3 organismos</td><td class="t-dim">datos.gob.es</td><td class="t-dim">ID canónico de comprador; blocking key del linkage; tipo admin, CCAA, provincia</td><td class="mono">alta</td><td><span class="pill v2">fase 1</span></td></tr>
+          <tr><td class="t-med">OpenPLACSP</td><td class="t-dim">Hacienda</td><td class="t-dim">Licitaciones españolas completas (bulk XML) · lado español del linkage</td><td class="mono">alta</td><td><span class="pill v2">fase 1</span></td></tr>
+          <tr><td class="t-med">BOE sumario</td><td class="t-dim">BOE datos abiertos</td><td class="t-dim">Contexto normativo (verificado: sin licitaciones)</td><td class="mono">baja</td><td><span class="pill ok">contexto</span></td></tr>
+          <tr><td class="t-med">INE + AEAT renta</td><td class="t-dim">INE / AEAT</td><td class="t-dim">Población y renta municipal → gasto per cápita y equidad territorial</td><td class="mono">media</td><td><span class="pill plan">fase 3</span></td></tr>
+          <tr><td class="t-med">Cartografía IGN</td><td class="t-dim">IGN / datos.gob.es</td><td class="t-dim">Geometrías provinciales → mapas de calor del dashboard</td><td class="mono">media</td><td><span class="pill plan">fase 3</span></td></tr>
+          <tr><td class="t-med">Contratos menores</td><td class="t-dim">datos.madrid.es</td><td class="t-dim">Bunching bajo umbrales (14.999 € / 39.999 €) con literatura que citar</td><td class="mono">media</td><td><span class="pill plan">fase 3</span></td></tr>
+          <tr><td class="t-med">ROLE licitadores</td><td class="t-dim">datos.gob.es</td><td class="t-dim">Lado proveedor: capacidad y prohibiciones de contratar (formato posicional)</td><td class="mono">baja</td><td><span class="pill plan">opcional</span></td></tr>
+          <tr><td class="t-med">BDNS subvenciones</td><td class="t-dim">datos.gob.es</td><td class="t-dim">Contrato vs subvención por organismo (reusa linkage DIR3)</td><td class="mono">baja</td><td><span class="pill plan">opcional</span></td></tr>
+        </tbody>
+      </table>
+    </div></div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-eyebrow">Modelo de datos</span>
+      <h2 class="sec">Gold como modelo estrella</h2>
+      <p class="sec-sub">La respuesta enterprise no está en el motor: está en que el modelo dimensional esté bien diseñado. Hechos observables, dimensiones enriquecidas, marts derivados.</p>
+    </div>
+    <div class="star">
+      <div class="dims">
+        <div class="dim"><b>dim_organismo</b><span>DIR3 · tipo · CCAA · provincia</span></div>
+        <div class="dim"><b>dim_cpv</b><span>jerarquía división → clase</span></div>
+        <div class="dim"><b>dim_territorio</b><span>IGN geometrías + INE población</span></div>
+        <div class="dim"><b>dim_fecha</b><span>mes · trimestre · año fiscal</span></div>
+      </div>
+      <div class="star-arrow">→</div>
+      <div class="fact"><b>fct_licitaciones</b><span>una fila por aviso · cluster_id del linkage · categoría · score · importe · keywords</span></div>
+      <div class="star-arrow">→</div>
+      <div class="mart"><b>marts</b><span>opportunities · buyer_tech · monthly_volume · bunching · per_cápita</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-eyebrow">Stack y mercado</span>
+      <h2 class="sec">Elegido contra la demanda real de Madrid</h2>
+      <p class="sec-sub">Investigación interna ago-2026 sobre ~180 títulos de ofertas en LinkedIn Madrid: Databricks concentra 240 anuncios y +25% de prima salarial; Azure domina enterprise (~700); Iceberg es nicho premium (4 ofertas, 60–65 k); "medallion" ya aparece literal en Capgemini, Aubay y Grupo NS. Airflow/dbt/Snowflake apenas salen en títulos: descartados.</p>
+    </div>
+    <div class="stats">
+      <span class="stat">Python 3.12 · uv</span>
+      <span class="stat">PySpark</span>
+      <span class="stat">Databricks Community</span>
+      <span class="stat">Delta Lake</span>
+      <span class="stat">Apache Iceberg</span>
+      <span class="stat">Great Expectations</span>
+      <span class="stat">Docker</span>
+      <span class="stat">Vite + React + Tailwind</span>
+      <span class="stat">Ollama (LLM juez)</span>
+      <span class="stat">sentence-transformers e5</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-eyebrow">Estado verificado · hoy</span>
+      <h2 class="sec">Con qué números reales cuenta el proyecto</h2>
+    </div>
+    <div class="estado">
+      <div class="est"><div class="est-l">Avisos TED</div><div class="est-v mono">9.905</div><div class="est-s">ene–jun 2026 · 105 MB raw</div></div>
+      <div class="est"><div class="est-l">CPV principal</div><div class="est-v mono">100%</div><div class="est-s">evaluación del clasificador directa</div></div>
+      <div class="est"><div class="est-l">Comprador / URL</div><div class="est-v mono">100%</div><div class="est-s">vía buyer-name + links.html</div></div>
+      <div class="est"><div class="est-l">Importe estimado</div><div class="est-v mono">33%</div><div class="est-s">estimated-value-lot</div></div>
+      <div class="est"><div class="est-l">Match tecnológico</div><div class="est-v mono">37,6%</div><div class="est-s">la brecha que justifica evaluar vs CPV</div></div>
+      <div class="est"><div class="est-l">Calidad</div><div class="est-v mono">6/6</div><div class="est-s">puertas superadas · 0 incidencias</div></div>
+      <div class="est"><div class="est-l">Tests</div><div class="est-v mono">13</div><div class="est-s">unitarios + smoke e2e, sin red</div></div>
+      <div class="est"><div class="est-l">BOE licitaciones</div><div class="est-v mono">0</div><div class="est-s">hallazgo junio 2026 · viven en PLACSP</div></div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="f-note">Plan v2 · generado el 18-08-2026 · integra hallazgos del corpus real, la investigación de mercado y el inventario de datasets</div>
+    <div class="f-note mono">tfm-licitaciones · LicitaScope</div>
+  </footer>
+</div>
+
+<!-- ============ NODE PANEL ============ -->
+<aside class="panel" id="panel" aria-hidden="true">
+  <div class="p-head">
+    <div class="p-zone"><span id="p-zone">—</span><span class="pill" id="p-status">—</span></div>
+    <button class="p-close" id="p-close" aria-label="Cerrar"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div class="p-body">
+    <h2 id="p-name">—</h2>
+    <p class="p-desc" id="p-desc"></p>
+    <div class="p-tech" id="p-tech"></div>
+    <div class="p-block"><div class="p-label">entrada · raw</div><pre class="code" id="p-raw"></pre></div>
+    <div class="p-block"><div class="p-label clean">salida · clean</div><pre class="code" id="p-clean"></pre></div>
+    <div class="p-note" id="p-note" style="display:none"></div>
+  </div>
+</aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+
+/* ================= DATA: nodes, zones, edges ================= */
+
+const STATUS = {
+  ok:   {label:"construido", color:0x3ecf8e, css:"ok"},
+  v2:   {label:"v2 en curso", color:0x6fa8c9, css:"v2"},
+  plan: {label:"planificado", color:0xcfa15c, css:"plan"},
+};
+
+const ZONES = [
+  {id:"fuentes",  label:"FUENTES",        x:-46, w:17},
+  {id:"raw",      label:"RAW · inmutable",x:-30, w:11},
+  {id:"bronze",   label:"BRONZE",         x:-16, w:10},
+  {id:"silver",   label:"SILVER",         x:-2,  w:10},
+  {id:"linkage",  label:"CALIDAD + LINKAGE",x:12,w:11},
+  {id:"gold",     label:"GOLD",           x:26,  w:10},
+  {id:"lake",     label:"LAKEHOUSE",      x:40,  w:10},
+  {id:"serving",  label:"SERVING",        x:54,  w:10},
+];
+
+const NODES = {
+  "src-ted": {name:"TED Search API", zone:"fuentes", status:"ok", x:-49, z:-16, h:5.4,
+    tech:["HTTP POST JSON","ventanas 31d","paginación 100","throttle 0,6s","reintentos exp"],
+    desc:"Fuente primaria europea. Consulta experta por país (CY=ESP) y 11 términos tecnológicos, en ventanas de 31 días con paginación y backoff. Sin API key. Descarga verificada: 9.905 avisos en ~4 min.",
+    raw:`POST /v3/notices/search
+{
+  "query": "CY=ESP AND (FT~\\"cloud\\" OR FT~\\"big data\\"
+    OR … 11 términos) AND PD>=20260101
+    AND PD<=20260131",
+  "fields": ["ND","PD","TI","CY","buyer-name",
+    "PC","estimated-value-lot","links"],
+  "page": 1, "limit": 100
+}`,
+    clean:`{"ND":"14-2026","PD":"2026-01-02+01:00",
+ "TI":{"spa":"España – Servicios de vigilancia – …"},
+ "buyer-name":{"spa":["Consorcio de la Zona Franca de Barcelona"]},
+ "PC":["79714000","79714000"],
+ "links":{"html":{"ENG":"ted.europa.eu/en/notice/-/detail/14-2026"}}}
+— 9.905 registros · 105 MB · append-only`,
+    note:"Sin coste ni registro. El <b>429</b> recibido en sondeo motivó el throttle y los reintentos exponenciales."},
+
+  "src-placsp": {name:"OpenPLACSP", zone:"fuentes", status:"v2", x:-49, z:-8, h:4.5,
+    tech:["bulk XML/ZIP","Atom feeds","UCM eForms"],
+    desc:"Plataforma de Contratación del Sector Público: el escaparate español completo de licitaciones. Descarga masiva en XML/ZIP y feeds Atom. Es el lado español del linkage cross-source y la fuente que cubre todo lo que no llega a TED por umbral.",
+    raw:`<feed xmlns="http://www.w3.org/2005/Atom">
+ <entry>
+  <id>https://contrataciondelestado.es…2026/000214</id>
+  <title>Servicio de vigilancia y seguridad privada…</title>
+  <updated>2026-01-03T09:00:00Z</updated>
+  <summary>Expediente 2026/000214 · Órgano:
+    Consorcio Zona Franca Barcelona</summary>
+ </entry>
+</feed>`,
+    clean:`{"_source":"placsp","tender_id":"2026/000214",
+ "title":"Servicio de vigilancia y seguridad privada…",
+ "buyer":"Consorcio de la Zona Franca de Barcelona",
+ "published_date":"2026-01-03","country":"ES",
+ "url":"https://contrataciondelestado.es/…"}
+— mismo contrato que TED 14-2026 (caso de linkage)`,
+    note:"Los prototipos v1 lo dejaron en stub por un proxy SSL. La v2 ataca la descarga masiva oficial."},
+
+  "src-boe": {name:"BOE Sumario", zone:"fuentes", status:"ok", x:-49, z:0, h:2.9,
+    tech:["GET JSON diario","aplanado anidado"],
+    desc:"Sumario diario del BOE como contexto normativo. Hallazgo empírico clave: se analizó junio 2026 completo y el sumario no publica ni un solo anuncio de licitación (solo secciones I–III). Las licitaciones viven en PLACSP.",
+    raw:`GET /datosabiertos/api/boe/sumario/20260601
+{"data":{"sumario":{"diario":[{"seccion":[
+  {"nombre":"III. Otras disposiciones",
+   "departamento":[{"nombre":"TGSS",
+    "epigrafe":[{"item":{"identificador":"BOE-A-2026-11692",
+      "titulo":"Resolución de 1 de junio…"}}]}]}]}]}}}`,
+    clean:`{"_source":"boe","item_id":"BOE-A-2026-11692",
+ "section":"III. Otras disposiciones",
+ "department":"Tesorería General de la Seg. Social",
+ "title":"Resolución de 1 de junio de 2026…",
+ "publication_date":"2026-06-01"}
+— 2.524 items en junio · 0 licitaciones`,
+    note:"Bug corregido en v2: el aplanado asumía un nivel <span class='mono'>texto</span> que no existe en la API real."},
+
+  "src-cpv": {name:"Taxonomía CPV", zone:"fuentes", status:"v2", x:-49, z:8, h:3.4,
+    tech:["SIMAP/EU","CSV jerárquico","división→grupo→clase"],
+    desc:"Vocabulario oficial de contratación (Common Procurement Vocabulary) con su jerarquía. Convierte la evaluación del clasificador de plana a jerárquica: acertar la división (72 = servicios TI) vale distinto que acertar la clase exacta.",
+    raw:`CPVCode,ES Denominación
+72000000,Servicios TI: consultoría,
+  desarrollo de software, Internet y apoyo
+48100000,Sistemas operativos y similares
+  (paquetes de software estándar)
+79714000,Servicios de vigilancia`,
+    clean:`dim_cpv:
+{"cpv":"72000000","nivel":"division","padre":null,
+ "denominacion":"Servicios TI"}
+{"cpv":"72000000-48100000? no:",
+ "nota":"mapeo jerárquico 48/64/72 → TIC"}
+— filas: 9.454 códigos · 45 divisiones`,
+    note:"Las divisiones <b>48, 64 y 72</b> son la frontera TIC oficial: el ground truth del clasificador."},
+
+  "src-dir3": {name:"DIR3 organismos", zone:"fuentes", status:"v2", x:-49, z:16, h:4.4,
+    tech:["datos.gob.es","CSV/XML","ID canónico"],
+    desc:"Directorio oficial de organismos: cada comprador público con su identificador único. Resuelve el mayor problema del linkage y de las analíticas: el mismo ayuntamiento aparece escrito de 12 formas distintas en TED y PLACSP. DIR3 lo convierte en una clave.",
+    raw:`idOrg,denominacion,tipoAdmin,comunidad,provincia
+EA0000011,Ayuntamiento de Rivas-Vaciamadrid,
+  Entidad local,Comunidad de Madrid,Madrid
+E04743101,Gerencia Informática Seg. Social,
+  Estatal,,
+C85000001,Diputación de Badajoz,Institucional,
+  Extremadura,Badajoz`,
+    clean:`dim_organismo:
+{"dir3_id":"EA0000011",
+ "nombre":"Ayuntamiento de Rivas-Vaciamadrid",
+ "tipo":"Local","ccaa":"Madrid","provincia":"Madrid"}
+— blocking key del linkage + dimensiones del star`,
+    note:"Sin DIR3, el top de compradores fragmenta: 12 variantes de un mismo ayuntamiento cuentan como 12."},
+
+  "src-ine": {name:"INE + AEAT renta", zone:"fuentes", status:"plan", x:-42.5, z:-16, h:3,
+    tech:["INE 2893","AEAT IRPF","join municipal"],
+    desc:"Población municipal (INE) y renta neta media (AEAT). Habilita las preguntas de equidad territorial: gasto tech per cápita y su correlación con la renta. Convierte importes absolutos en intensidades comparables.",
+    raw:`INE · tabla municipios:
+codINE,poblacion_2026
+28123,91421
+28079,3258042
+
+AEAT · renta municipal:
+codINE,renta_neta_media
+28123,23912
+28079,16488`,
+    clean:`dim_territorio:
+{"ine_code":"28123","nombre":"Rivas-Vaciamadrid",
+ "poblacion":91421,"renta_media":23912,
+ "provincia":"Madrid","ccaa":"Madrid"}
+— habilita gasto per cápita y curva renta↔gasto`,
+    note:null},
+
+  "src-ign": {name:"Cartografía IGN", zone:"fuentes", status:"plan", x:-42.5, z:-8, h:2.6,
+    tech:["GeoJSON","Simplificación","centroides"],
+    desc:"Geometrías provinciales del Instituto Geográfico Nacional. Con ellas el dashboard pinta mapas coropléticos: el activo visual más potente de una defensa oral.",
+    raw:`{"type":"FeatureCollection","features":[{
+ "type":"Feature",
+ "geometry":{"type":"Polygon","coordinates":[[[-3.9,40.4],…]]},
+ "properties":{"nombre":"Madrid","codINE":"28"}}]}`,
+    clean:`territorio_geo:
+{"provincia":"Madrid","codINE":"28",
+ "geometria_simplificada":"…(0.1º)",
+ "centroide":[-3.7,40.4]}
+— 52 provincias · listo para coropletas`,
+    note:null},
+
+  "src-role": {name:"ROLE Licitadores", zone:"fuentes", status:"plan", x:-42.5, z:0, h:3.8,
+    tech:["formato posicional","ancho fijo","parseo por columnas"],
+    desc:"Registro Oficial de Licitadores y Empresas Clasificadas: lado proveedor del ecosistema. Guarda clasificación, capacidad y —la joya— prohibiciones de contratar. Procesar un formato posicional de ancho fijo de los 80 es mérito técnico en sí mismo.",
+    raw:`6000000123NOMBRE EMPRESA SL          B12345678 2
+000000950000000000020260115N… (campos por
+POSICIÓN: cols 1-10 NIF, 11-50 razón social,
+51-59 capacidad económica, 62 flag prohibición)`,
+    clean:`dim_proveedor:
+{"nif":"B12345678","razon_social":"Nombre Empresa SL",
+ "clasificacion":"Obras·Grupo3",
+ "capacidad_economica_eur":950000,
+ "prohibicion_contratar":false,"desde":"2026-01-15"}
+— hallazgo potencial: adjudicaciones con prohibición`,
+    note:"Si entra, es el hallazgo mediático del TFM: <b>contratos a empresas con prohibición activa</b>."},
+
+  "src-bdns": {name:"BDNS Subvenciones", zone:"fuentes", status:"plan", x:-42.5, z:8, h:3,
+    tech:["datos.gob.es","CSV convocatorias","reusa DIR3"],
+    desc:"Base de Datos Nacional de Subvenciones. Abre una pregunta nueva con infraestructura ya construida: cómo reparte cada organismo su gasto entre contrato y subvención, usando el mismo dim_organismo del linkage.",
+    raw:`idConvocatoria,organo,importeTotal,fecha
+612345,Ministerio de Transportes,2400000,
+  2026-02-11
+612351,Diputación de Badajoz,180000,2026-03-02`,
+    clean:`fct_subvenciones:
+{"bdns_id":"612345","dir3_id":"E0…(linkage DIR3)",
+ "importe":2400000,"fecha":"2026-02-11"}
+— join directo con fct_licitaciones por organismo`,
+    note:null},
+
+  "src-menores": {name:"Contratos menores", zone:"fuentes", status:"plan", x:-42.5, z:16, h:3,
+    tech:["datos.madrid.es","CSV","análisis de bunching"],
+    desc:"Contratos de menor cuantía del Ayuntamiento de Madrid. El análisis estrella: bunching bajo los umbrales — los importes se amontonan sospechosamente en 14.999 € y 39.999 €, justo por debajo del límite que obliga a publicar en PLACSP. Gráfico espectacular y literatura académica que citar.",
+    raw:`fecha,proveedor,importe,objeto
+2026-04-02,Proveedor SL,14998.50,
+  "Suministro de equipamiento informático"
+2026-04-03,Otra SA,39980.00,"Mantenimiento software"`,
+    clean:`menores_normalizado:
+{"fecha":"2026-04-02","proveedor_nif":"…",
+ "importe":14998.50,"umbral":15000,
+ "ratio_umbral":0.9999,"sospechoso_bunching":true}
+— histograma con picos en 14.999 y 39.999`,
+    note:"García-López et al. documentan este patrón en contratación española: hay paper que citar."},
+
+  "raw-ted": {name:"raw/ted", zone:"raw", status:"ok", x:-30, z:-6, h:4.2,
+    tech:["JSONL append-only","sha-256","inmutable"],
+    desc:"Aterrizaje inmutable de las respuestas de TED tal cual llegan, una línea por aviso, con nombre de ventana. Nunca se reescriben: cada análisis parte del mismo byte de origen.",
+    raw:`(respuesta de la API, tal cual)
+{"ND":"14-2026","PD":"2026-01-02+01:00",
+ "TI":{"hun":"…","spa":"…",  24 idiomas},
+ "PC":["79714000","79714000"], …}`,
+    clean:`data/raw/ted/ted-20260101-20260630.jsonl
+  9.905 registros · 105 MB
+  sha256: 4f3a…c91  (en run_manifest.json)
+  regenerable · fuera de git`,
+    note:null},
+
+  "raw-placsp": {name:"raw/placsp", zone:"raw", status:"v2", x:-30, z:0.5, h:3.6,
+    tech:["XML/ZIP","Atom","append-only"],
+    desc:"Igual que raw/ted pero para la descarga masiva española: ficheros ZIP diarios/semanales con XML de licitaciones, conservados sin transformar.",
+    raw:`(contenido del ZIP oficial)
+licitaciones-20260103.xml · 38 MB
+<entry><id>…2026/000214</id>…`,
+    clean:`data/raw/placsp/placsp-20260103.jsonl
+  {"_source":"placsp", …payload original…}`,
+    note:null},
+
+  "raw-boe": {name:"raw/boe", zone:"raw", status:"ok", x:-30, z:6, h:2.4,
+    tech:["JSONL diario"],
+    desc:"Sumarios diarios aplanados a JSONL. Peso ínfimo; valor de contexto normativo y trazabilidad temporal.",
+    raw:`(respuesta sumario del día, 400 KB JSON anidado)`,
+    clean:`data/raw/boe/boe-202606.jsonl
+  {"_source":"boe","item_id":"BOE-A-2026-11692",…}`,
+    note:null},
+
+  "raw-enrich": {name:"raw/enrich", zone:"raw", status:"v2", x:-30, z:12, h:3.8,
+    tech:["CSV/GeoJSON/XML","catalogado","inmutable"],
+    desc:"Recepción de los datasets de enriquecimiento (CPV, DIR3, INE, IGN, ROLE, BDNS, menores). Cada uno catalogado con fuente, fecha de descarga y checksum.",
+    raw:`dir3.csv · ine_poblacion.csv · aeat_renta.csv
+provincias.geojson · role_posicional.txt
+bdns.csv · menores_madrid.csv`,
+    clean:`data/raw/enrich/<dataset>/<version>/
+  + catalogo.json {fuente, fecha, sha256, filas}`,
+    note:null},
+
+  "bronze": {name:"Bronze + manifiesto", zone:"bronze", status:"ok", x:-16, z:-1, h:5,
+    tech:["procedencia","sha-256 por fichero","JSONL"],
+    desc:"Primera capa con estructura común: cada aviso lleva su fuente, el fichero del que procede y el payload intacto. El run_manifest acredita qué entradas produjeron cada ejecución: la trazabilidad total del DataOps.",
+    raw:`{"ND":"14-2026","TI":{…24 idiomas…},"PC":[…],
+ "_source":"ted"}   (línea de raw/ted)`,
+    clean:`{"source":"ted",
+ "source_file":"ted/ted-20260101-20260630.jsonl",
+ "payload":{"ND":"14-2026", …intacto…}}
+— + run_manifest: counts 9.905 · sha por fichero`,
+    note:"Capa append-only: un fallo posterior nunca borra las capas ya generadas."},
+
+  "silver-tenders": {name:"Silver · normaliza", zone:"silver", status:"ok", x:-2, z:-5, h:5,
+    tech:["TenderRecord","dataclass congelada","anti-acento","importes EU"],
+    desc:"El contrato común: cualquier fuente, cualquier idioma, misma forma. Título en español preferente, importe con separadores europeos, fecha ISO, URL canónica y CPV preservado. Aquí desaparecen las 24 traducciones de TED.",
+    raw:`(payload bronze de TED, bruto y multilingüe)
+"TI":{"hun":"…","lav":"…","spa":[…],"eng":…}`,
+    clean:`TenderRecord:
+{"tender_id":"14-2026","source":"ted",
+ "title":"España – Servicios de vigilancia – …",
+ "buyer":"Consorcio de la Zona Franca de Barcelona",
+ "published_date":"2026-01-02","country":"ESP",
+ "url":"ted.europa.eu/en/notice/-/detail/14-2026",
+ "raw.PC":["79714000"]}`,
+    note:"Con el corpus real: comprador y URL al 100%, importe al 33%, fechas sin nulos."},
+
+  "silver-dims": {name:"Silver · dimensiones", zone:"silver", status:"v2", x:-2, z:7, h:3.8,
+    tech:["dims CPV/DIR3/territorio","claves canónicas"],
+    desc:"Normalización del lado enriquecimiento: la taxonomía CPV con su jerarquía, los organismos con su DIR3 canónico y el territorio con población y renta. Sin este nodo no hay modelo estrella ni linkage fiable.",
+    raw:`(catálogos crudos: dir3.csv, cpv.csv, ine…)`,
+    clean:`dim_cpv / dim_organismo / dim_territorio
+  limpias, sin duplicados, claves estables`,
+    note:null},
+
+  "quality": {name:"Calidad · Great Expectations", zone:"linkage", status:"v2", x:12, z:-8, h:4,
+    tech:["gates umbrales hoy","GE suites v2","reporte JSON"],
+    desc:"Puertas de calidad ejecutadas antes de cerrar cada run: volumen, nulos de título/fecha, importes inválidos, cobertura tecnológica y duplicados. Hoy son 6 gates propios con reporte machine-readable; la v2 los convierte en suites Great Expectations versionadas — la keyword que pide el mercado.",
+    raw:`(flujo silver: 9.905 TenderRecords)`,
+    clean:`quality_report.json (real, último run):
+not_empty            9.905 ≥ 1        pass
+title_null_share       0.0% ≤ 5%      pass
+invalid_amount_share   0.0% ≤ 10%     pass
+technology_match_share 37.6% ≥ 20%    pass
+duplicate_keys           0  = 0       pass
+— 6/6 · 0 incidencias`,
+    note:"Un fallo no borra capas: permite inspeccionar y corregir en nueva ejecución."},
+
+  "linkage": {name:"Linkage cross-source", zone:"linkage", status:"v2", x:12, z:0, h:5.6,
+    tech:["blocking DIR3 ±7d + CPV","e5-small embeddings","coseno","clustering"],
+    desc:"El problema duro del TFM: el mismo procedimiento aparece en TED, PLACSP y BOE con textos distintos. Primero blocking determinista (comprador DIR3 + ventana ±7 días + división CPV) que reduce ~49M de pares a decenas de miles; luego similitud semántica de título con embeddings multilingües locales; el umbral decide el clúster.",
+    raw:`candidato (bloque: DIR3=CZX-927, Δ=1d, CPV 79):
+  A) ted:14-2026 "España – Servicios de
+     vigilancia – Servicio de vigilancia y
+     seguridad privada de polígono industrial…"
+  B) placsp:2026/000214 "Servicio de
+     vigilancia y seguridad privada. Polígono
+     industrial. Consorcio Zona Franca"`,
+    clean:`link_result:
+{"cluster_id":"cl-000312",
+ "members":["ted:14-2026","placsp:2026/000214"],
+ "sim_cosine":0.91,"method":"e5-small",
+ "blocking":"dir3+7d+cpv-div","verdict":"match"}`,
+    note:"Ya hay motivación empírica: el corpus real contiene el mismo aviso de Barcelona de Serveis Municipals dos veces."},
+
+  "llm-judge": {name:"Lab · LLM juez", zone:"linkage", status:"v2", x:12, z:8, h:3.4,
+    tech:["Ollama","gpt-oss / qwen3","etiquetado de muestra"],
+    desc:"El LLM no trabaja en el pipeline: evalúa. Etiqueta una muestra de ~412 pares (¿mismo procedimiento?) que, tras revisión manual parcial, se convierte en ground truth para medir precision/recall de los métodos de linkage. La IA como juez, no como trabajador.",
+    raw:`prompt → "¿Describen el mismo
+procedimiento de contratación?
+A) ted:14-2026 …  B) placsp:2026/000214 …"
+respuesta: {"same_procedure": true,
+            "confidence": 0.9}`,
+    clean:`evaluación sobre muestra etiquetada (n=412):
+método              P     R     F1
+expediente exacto  .99   .41   .58
+tf-idf+jaccard     .94   .71   .81
+e5 embeddings      .92   .88   .90  ← v2`,
+    note:"Acuerdo LLM↔revisión manual verificado antes de usarlo como referencia."},
+
+  "gold-classify": {name:"Clasificador + eval CPV", zone:"gold", status:"v2", x:26, z:-7, h:4.8,
+    tech:["reglas keywords","explicabilidad total","eval vs CPV"],
+    desc:"Clasificación tecnológica por reglas: cada score se audita vía matched_keywords, sin modelo entrenado. Hoy matchea el 37,6% de un corpus que llega 100% etiquetado por CPV: esa brecha es precisamente lo que la evaluación v2 cuantifica y corrige, con métricas jerárquicas por división/grupo/clase.",
+    raw:`title: "España – Servicios TI – Acuerdo
+Marco de ciberseguridad"
+summary: "… SOC 24×7, siem, respuesta
+a incidentes …"`,
+    clean:`{"category":"Cybersecurity",
+ "technology_score":3,
+ "matched_keywords":["ciberseguridad","software",
+                     "desarrollo"]}
+— v2: + P/R/F1 vs CPV por nivel jerárquico`,
+    note:"La brecha 37,6% vs 100% CPV es el argumento central de la sección de evaluación de la memoria."},
+
+  "gold-star": {name:"Modelo estrella", zone:"gold", status:"v2", x:26, z:1, h:4.6,
+    tech:["facts / dims","claves DIR3+CPV","SQL analítico"],
+    desc:"Los registros clasificados y deduplicados se funden con las dimensiones enriquecidas en un modelo estrella clásico: hechos observables rodeados de dimensiones con contexto. Es la respuesta enterprise a '¿dónde está el valor?': en el diseño dimensional.",
+    raw:`(gold rows + dims de silver-dimensiones)`,
+    clean:`CREATE TABLE fct_licitaciones (
+  tender_key STRING, cluster_id STRING,
+  dir3_key STRING, cpv_key STRING,
+  geo_key STRING, date_key INT,
+  amount DOUBLE, category STRING,
+  technology_score INT, …
+)`,
+    note:null},
+
+  "gold-marts": {name:"Marts analíticos", zone:"gold", status:"ok", x:26, z:9, h:4,
+    tech:["opportunities","buyer_summary","technology_summary","+ bunching/per cápita v2"],
+    desc:"Tablas de negocio listas para consumir: oportunidades puntuadas, volumen por categoría y mes, compradores tech. La v2 añade los marts de análisis señalado: bunching de menores, gasto per cápita, concentración territorial.",
+    raw:`(consultas agregadas sobre el star)`,
+    clean:`buyer_summary (real):
+Administrador de Infraestructuras Ferroviarias 335
+D.G. Racionalización y Centralización      278
+Infraestructures Generalitat de Catalunya  227
+Metro de Madrid, S.A.                      213`,
+    note:"El top-5 de compradores concentra el 12,3% de los avisos tech."},
+
+  "delta": {name:"Delta Lake", zone:"lake", status:"v2", x:40, z:-3.5, h:4.6,
+    tech:["ACID sobre data lake","MERGE","time travel","Databricks"],
+    desc:"La capa silver/gold como tablas Delta en Databricks: transacciones ACID, upserts con MERGE para llegadas incrementales, y time travel para auditar cualquier estado histórico del corpus. La skill nº1 del mercado de Madrid.",
+    raw:`(nuevos avisos de julio 2026, batch)`,
+    clean:`MERGE INTO silver.tenders t
+USING updates u ON t.tender_id = u.tender_id
+WHEN MATCHED THEN UPDATE SET *
+WHEN NOT MATCHED THEN INSERT *;
+
+SELECT * FROM silver.tenders
+VERSION AS OF 3;  -- time travel`,
+    note:"Databricks concentra 240 ofertas en Madrid con +25% de prima salarial (investigación interna ago-2026)."},
+
+  "iceberg": {name:"Apache Iceberg", zone:"lake", status:"v2", x:40, z:4.5, h:4.6,
+    tech:["open table format","schema evolution","snapshots","multi-engine"],
+    desc:"Las mismas capas replicadas como tablas Iceberg: el formato abierto que pelea por ser el estándar. Evolución de esquema sin romper consumidores y snapshots para lectura aislada. La memoria comparará Delta vs Iceberg en el mismo pipeline: estar dentro de la guerra de formatos es hablar como senior.",
+    raw:`(mismos datos, otro motor de tabla)`,
+    clean:`ALTER TABLE silver.tenders
+ADD COLUMN region STRING;  -- sin downtime
+
+SELECT * FROM silver.tenders
+SNAPSHOT AS OF 4190273;`,
+    note:"Nicho premium: 4 ofertas en España… pagando 60–65 k (Grupo NS exige Iceberg + medallion)."},
+
+  "srv-dashboard": {name:"Dashboard Vite+React", zone:"serving", status:"v2", x:54, z:-6, h:4.2,
+    tech:["Vite","React","Tailwind","estado derivado del lakehouse"],
+    desc:"Fachada de producto: radar de oportunidades con filtros por categoría, territorio e importe, alimentado por las tablas del lakehouse. Ya existe su diseño objetivo validado (v2-preview.html).",
+    raw:`GET /api/opportunities?category=Cloud
+  ← desde tablas Delta/Iceberg`,
+    clean:`┌ Radar TIC ─────────────────────────┐
+│ 9.905 avisos · 37,6% match        │
+│ [Cloud] [Cyber] [Data] … filtros  │
+│ top: Acuerdo Marco ciberseguridad │
+│      36,2 M€ · score 3            │
+└───────────────────────────────────┘`,
+    note:"Clerk queda como trabajo futuro: la autenticación no suma valor académico."},
+
+  "srv-maps": {name:"Mapas territoriales", zone:"serving", status:"plan", x:54, z:1, h:3.2,
+    tech:["GeoJSON IGN","coropletas","per cápita INE"],
+    desc:"Visualización geográfica del gasto tecnológico público: importe total, per cápita e intensidad relativa a la renta, provincia a provincia. El gráfico más memorable de una defensa.",
+    raw:`(geometrías + métricas agregadas por provincia)`,
+    clean:`coropleta:
+Madrid      ██████████ 312 €/hab
+Barcelona   ███████ 241 €/hab
+Badajoz     ███ 118 €/hab  …`,
+    note:null},
+
+  "srv-analysis": {name:"Notebooks de análisis", zone:"serving", status:"v2", x:54, z:8, h:3.6,
+    tech:["Databricks notebooks","SQL/PySpark","figuras de la memoria"],
+    desc:"Los análisis que nutren la memoria con números reproducibles: estacionalidad, concentración de compradores, distribución de importes, brecha keywords↔CPV. Cada gráfico de la memoria sale de aquí, con semilla y comando.",
+    raw:`%sql
+SELECT month(published_date) m,
+       category, count(*) n, sum(amount)
+FROM fct_licitaciones GROUP BY 1,2`,
+    clean:`hallazgo tipo: el volumen tech crece de
+1.323 (ene) a 1.844 (jun) avisos/mes;
+marzo marca máximo (1.921)`,
+    note:"Regla del TFM: ninguna cifra de la memoria sin celda que la genere."},
+};
+
+
+const SHORT = {
+  "src-ted":"TED API","src-placsp":"PLACSP","src-boe":"BOE","src-cpv":"CPV tax",
+  "src-dir3":"DIR3","src-ine":"INE·AEAT","src-ign":"IGN","src-role":"ROLE",
+  "src-bdns":"BDNS","src-menores":"MENORES",
+  "raw-ted":"raw ted","raw-placsp":"raw placsp","raw-boe":"raw boe","raw-enrich":"raw enrich",
+  "bronze":"bronze","silver-tenders":"silver","silver-dims":"dims",
+  "quality":"calidad","linkage":"linkage","llm-judge":"LLM juez",
+  "gold-classify":"clasif. + CPV","gold-star":"star","gold-marts":"marts",
+  "delta":"delta","iceberg":"iceberg",
+  "srv-dashboard":"dashboard","srv-maps":"mapas","srv-analysis":"notebooks"
+};
+
+const EDGES = [
+  ["src-ted","raw-ted"],["src-placsp","raw-placsp"],["src-boe","raw-boe"],
+  ["src-cpv","raw-enrich"],["src-dir3","raw-enrich"],["src-ine","raw-enrich"],
+  ["src-ign","raw-enrich"],["src-role","raw-enrich"],["src-bdns","raw-enrich"],["src-menores","raw-enrich"],
+  ["raw-ted","bronze"],["raw-placsp","bronze"],["raw-boe","bronze"],["raw-enrich","bronze"],
+  ["bronze","silver-tenders"],["bronze","silver-dims"],
+  ["silver-tenders","quality"],["silver-tenders","linkage"],
+  ["quality","gold-classify"],["linkage","gold-classify"],
+  ["gold-classify","llm-judge"],
+  ["silver-dims","gold-star"],["gold-classify","gold-star"],
+  ["gold-star","gold-marts"],
+  ["gold-marts","delta"],["gold-marts","iceberg"],
+  ["delta","srv-dashboard"],["iceberg","srv-dashboard"],
+  ["gold-star","srv-maps"],["delta","srv-analysis"],
+];
+
+/* ================= UI: panel ================= */
+
+const panel = document.getElementById("panel");
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function hl(s){
+  const re = /("[^"\n]*")(\s*:)|("[^"\n]*")|(-?\b\d+(?:[.,]\d+)*\b)|\b(true|false|null)\b/g;
+  return esc(s).replace(re, (m, k, c, str, num, bool) => {
+    if (k) return `<span class="k">${k}</span>${c}`;
+    if (str) return `<span class="s">${str}</span>`;
+    if (num) return `<span class="n">${num}</span>`;
+    if (bool) return `<span class="b">${bool}</span>`;
+    return m;
+  });
+}
+const ZONE_LABEL = Object.fromEntries(ZONES.map(z=>[z.id,z.label]));
+function openPanel(id){
+  const n = NODES[id]; if(!n) return;
+  document.getElementById("p-zone").textContent = ZONE_LABEL[n.zone] || n.zone;
+  const st = STATUS[n.status];
+  const pSt = document.getElementById("p-status");
+  pSt.textContent = st.label; pSt.className = "pill " + st.css;
+  document.getElementById("p-name").textContent = n.name;
+  document.getElementById("p-desc").innerHTML = n.desc;
+  document.getElementById("p-tech").innerHTML = n.tech.map(t=>`<span class="chip mono">${esc(t)}</span>`).join("");
+  document.getElementById("p-raw").innerHTML = hl(n.raw);
+  document.getElementById("p-clean").innerHTML = hl(n.clean);
+  const note = document.getElementById("p-note");
+  if (n.note){ note.innerHTML = n.note; note.style.display = ""; } else note.style.display = "none";
+  panel.classList.add("open"); panel.setAttribute("aria-hidden","false");
+}
+function closePanel(){ panel.classList.remove("open"); panel.setAttribute("aria-hidden","true"); if(selected){setGlow(selected,0.35); selected=null;} }
+document.getElementById("p-close").addEventListener("click", closePanel);
+window.addEventListener("keydown", e => { if(e.key==="Escape") closePanel(); });
+
+/* ================= 3D SCENE ================= */
+
+function boot(){
+  if (typeof THREE === "undefined"){ document.getElementById("fallback").style.display="flex"; return; }
+
+  const canvas = document.getElementById("scene");
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0c0c0f);
+  scene.fog = new THREE.Fog(0x0c0c0f, 110, 250);
+  const camera = new THREE.PerspectiveCamera(46, 2, 0.1, 600);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(40, 70, 30); scene.add(dir);
+  const fill = new THREE.DirectionalLight(0x6fa8c9, 0.25); fill.position.set(-50, 30, -40); scene.add(fill);
+
+  // ground
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(190, 90), new THREE.MeshStandardMaterial({color:0x0b0b0e, roughness:1}));
+  ground.rotation.x = -Math.PI/2; ground.position.y = -0.02; scene.add(ground);
+  const grid = new THREE.GridHelper(190, 95, 0x1b1b22, 0x141419);
+  grid.position.y = 0.01; scene.add(grid);
+
+  // label sprite helper
+  function makeLabel(text, color, big){
+    const dpr = 2, pad = big ? 12 : 10, fs = big ? 20 : 22;
+    const c = document.createElement("canvas");
+    const ctx = c.getContext("2d");
+    ctx.font = `600 ${fs}px "Geist", -apple-system, sans-serif`;
+    const w = Math.ceil(ctx.measureText(text.toUpperCase()).width) + pad*2 + 14;
+    const h = fs + pad*1.4;
+    c.width = w*dpr; c.height = h*dpr; ctx.scale(dpr,dpr);
+    ctx.font = `600 ${fs}px "Geist", -apple-system, sans-serif`;
+    const r = 10;
+    ctx.fillStyle = "rgba(11,11,15,0.92)";
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(0.5,0.5,w-1,h-1,r) : ctx.rect(0,0,w,h); ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.13)"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(pad+5, h/2, 4.5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = "#e8e8ec";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text.toUpperCase(), pad+16, h/2+1);
+    const tex = new THREE.CanvasTexture(c); tex.minFilter = THREE.LinearFilter;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthWrite:false}));
+    const s = big ? 0.10 : 0.048;
+    sp.scale.set(w*s, h*s, 1);
+    return sp;
+  }
+
+  // zones
+  const STATUS_HEX = {ok:0x3ecf8e, v2:0x6fa8c9, plan:0xcfa15c};
+  const clickables = [];
+  ZONES.forEach(z => {
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(z.w, 0.3, 46), new THREE.MeshStandardMaterial({color:0x121217, roughness:.95}));
+    plate.position.set(z.x, 0.15, 0); scene.add(plate);
+    const edge = new THREE.LineSegments(new THREE.EdgesGeometry(plate.geometry), new THREE.LineBasicMaterial({color:0x24242e}));
+    edge.position.copy(plate.position); scene.add(edge);
+    const lab = makeLabel(z.label, "#676772", true);
+    lab.position.set(z.x, 0.5, 23.6); scene.add(lab);
+  });
+
+  // buildings
+  const selected = {mesh:null};
+  function setGlow(mesh, v){ mesh.material.emissiveIntensity = v; }
+  Object.entries(NODES).forEach(([id,n]) => {
+    const col = STATUS_HEX[n.status];
+    const mat = new THREE.MeshStandardMaterial({color:0x16161d, roughness:.6, metalness:.15, emissive:col, emissiveIntensity:.35});
+    const box = new THREE.Mesh(new THREE.BoxGeometry(3, n.h, 3), mat);
+    box.position.set(n.x, 0.3 + n.h/2, n.z);
+    box.userData.nodeId = id;
+    scene.add(box); clickables.push(box);
+    const wire = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({color:col, transparent:true, opacity:.9}));
+    wire.position.copy(box.position); scene.add(wire);
+    const lab = makeLabel(SHORT[id] || n.name, "#"+col.toString(16).padStart(6,"0"), false);
+    lab.position.set(n.x, 0.3 + n.h + 2.4, n.z); scene.add(lab);
+  });
+
+  // edges + particles
+  const particles = [];
+  const SPEED = {ok:.24, v2:.15, plan:.09};
+  const COUNT = {ok:3, v2:2, plan:1};
+  EDGES.forEach(([a,b]) => {
+    const na = NODES[a], nb = NODES[b];
+    const st = (na.status==="ok" && b.startsWith("raw-")) || (na.status!=="plan" && nb.status!=="plan") ? (na.status==="ok" ? "ok" : (na.status==="v2"||nb.status==="v2" ? "v2" : "plan")) : na.status;
+    const col = STATUS_HEX[st] || STATUS_HEX.plan;
+    const p1 = new THREE.Vector3(na.x, 0.3+na.h*0.55, na.z);
+    const p2 = new THREE.Vector3(nb.x, 0.3+nb.h*0.55, nb.z);
+    const mid = p1.clone().add(p2).multiplyScalar(.5);
+    mid.y = Math.max(na.h, nb.h)*0.6 + 3.2 + p1.distanceTo(p2)*0.07;
+    const curve = new THREE.QuadraticBezierCurve3(p1, mid, p2);
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 28, .085, 6), new THREE.MeshBasicMaterial({color:col, transparent:true, opacity:.26}));
+    scene.add(tube);
+    const n = COUNT[st] || 1, speed = SPEED[st] || .1;
+    for (let i=0;i<n;i++){
+      const m = new THREE.Mesh(new THREE.SphereGeometry(.34, 10, 10), new THREE.MeshBasicMaterial({color:col}));
+      scene.add(m);
+      particles.push({mesh:m, curve, t:(i/n + Math.random()*.08)%1, speed});
+    }
+  });
+
+  /* ---------- orbit controls ---------- */
+  const target = new THREE.Vector3(4, 3, 0);
+  const orbit = {radius:96, theta:-1.05, phi:1.12, vTheta:0, vPhi:0, vr:0};
+  let dragging=false, moved=0, px=0, py=0, lastInteract=0;
+  canvas.addEventListener("pointerdown", e=>{dragging=true; moved=0; px=e.clientX; py=e.clientY; canvas.classList.add("dragging"); lastInteract=performance.now();});
+  window.addEventListener("pointerup", e=>{
+    if(dragging && moved<6) pick(e);
+    dragging=false; canvas.classList.remove("dragging");
+  });
+  window.addEventListener("pointermove", e=>{
+    if(!dragging) return;
+    const dx=e.clientX-px, dy=e.clientY-py; px=e.clientX; py=e.clientY; moved+=Math.abs(dx)+Math.abs(dy);
+    orbit.vTheta = -dx*0.0032; orbit.vPhi = -dy*0.0026;
+    orbit.theta += orbit.vTheta; orbit.phi += orbit.vPhi;
+    orbit.phi = Math.max(0.28, Math.min(1.42, orbit.phi));
+    lastInteract=performance.now();
+  });
+  canvas.addEventListener("wheel", e=>{
+    e.preventDefault();
+    orbit.radius = Math.max(40, Math.min(170, orbit.radius * (1 + e.deltaY*0.0011)));
+    lastInteract=performance.now();
+  }, {passive:false});
+
+  /* ---------- picking ---------- */
+  const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2();
+  let selectedMesh = null;
+  function setEmissive(mesh, v){ if(mesh) mesh.material.emissiveIntensity = v; }
+  function pick(e){
+    const r = canvas.getBoundingClientRect();
+    mouse.x = ((e.clientX-r.left)/r.width)*2-1;
+    mouse.y = -((e.clientY-r.top)/r.height)*2+1;
+    ray.setFromCamera(mouse, camera);
+    const hits = ray.intersectObjects(clickables);
+    if (hits.length){
+      const id = hits[0].object.userData.nodeId;
+      if (selectedMesh !== hits[0].object){
+        setEmissive(selectedMesh, .35);
+        selectedMesh = hits[0].object;
+        openPanel(id);
+      }
+      setEmissive(selectedMesh, 1.0);
+    }
+  }
+  let hoverThrottle = 0;
+  window.addEventListener("pointermove", e=>{
+    if(dragging || performance.now()-hoverThrottle < 90) return;
+    hoverThrottle = performance.now();
+    const r = canvas.getBoundingClientRect();
+    if (e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom){ canvas.style.cursor="grab"; return; }
+    mouse.x = ((e.clientX-r.left)/r.width)*2-1;
+    mouse.y = -((e.clientY-r.top)/r.height)*2+1;
+    ray.setFromCamera(mouse, camera);
+    const hits = ray.intersectObjects(clickables);
+    canvas.style.cursor = hits.length ? "pointer" : "grab";
+    clickables.forEach(c => { if(c!==selectedMesh) setEmissive(c, .35); });
+    if (hits.length && hits[0].object!==selectedMesh) setEmissive(hits[0].object, .7);
+  });
+
+  /* ---------- resize ---------- */
+  function resize(){
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w/h; camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize); resize();
+
+  /* ---------- loop ---------- */
+  const clock = new THREE.Clock();
+  function animate(){
+    requestAnimationFrame(animate);
+    const dt = Math.min(clock.getDelta(), .05);
+    if (!dragging && performance.now()-lastInteract > 5000) orbit.theta += dt*0.05;
+    const sph = new THREE.Spherical(orbit.radius, orbit.phi, orbit.theta);
+    camera.position.setFromSpherical(sph).add(target);
+    camera.lookAt(target);
+    particles.forEach(p=>{
+      p.t = (p.t + dt*p.speed) % 1;
+      p.mesh.position.copy(p.curve.getPoint(p.t));
+    });
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // deep link: #node=<id>
+  if (location.hash.startsWith("#node=")){
+    const id = location.hash.slice(6);
+    if (NODES[id]){
+      openPanel(id);
+      const n = NODES[id];
+      target.set(n.x, n.h*0.6+1, n.z);
+      orbit.radius = 55;
+    }
+  }
+}
+
+if (document.readyState === "complete") boot();
+else window.addEventListener("load", boot);
+</script>
+</body>
+</html>
