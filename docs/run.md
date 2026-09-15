@@ -120,10 +120,11 @@ El helper de persistencia permite reintentar con una descarga nueva:
   repone el payload y conserva el timestamp ya registrado.
 
 Las diferencias fallan sin sobrescribir lo existente. No se puede completar la
-evidencia con el reloj de transformación ni con mtime. El caché OpenPLACSP aún
-rechaza un ZIP existente sin evidencia: para recuperarlo mediante la CLI,
-descargue en un directorio nuevo como en el ejemplo anterior; el refresco de
-meses cacheados sigue pendiente.
+evidencia con el reloj de transformación ni con mtime. Ante un ZIP OpenPLACSP
+válido sin sidecar, `ingest` realiza una descarga oficial nueva: solo completa
+la pareja si los bytes coinciden y registra el timestamp real de ese reintento.
+Un sidecar presente pero inválido nunca se repara automáticamente. El refresco
+ordinario de meses cacheados sigue pendiente.
 
 Bronze conserva todos los snapshots recuperados, incluidos sus tombstones y
 rechazos. Silver/Gold legado recibe únicamente el snapshot más reciente por
