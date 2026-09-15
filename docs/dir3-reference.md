@@ -36,13 +36,13 @@ como `data/raw/dir3/dir3-unidades-<ambito>.xlsx`.
   tamaño mínimo, magic bytes `PK` y estructura de cabeceras antes de aceptar el
   fichero (fallo claro si la respuesta es el challenge JavaScript de F5/TSPD
   del host, con instrucciones de descarga manual en el navegador).
-- La operación es idempotente: un fichero local ya válido no se vuelve a
-  descargar.
 - Cadencia: el PAe publica snapshots completos sin changelog ni fecha de corte
-  declarada; la trazabilidad se basa en el `sha256` registrado en
-  `data/reference/dir3/build_manifest.json`.
-- Cobertura temporal: snapshot vigente a la fecha de descarga; todas las filas
-  del snapshot actual tienen `status = V`.
+  declarada; la identidad del contenido descargado es su URL + `sha256`,
+  registrados en `data/reference/dir3/build_manifest.json`.
+- La operación es idempotente: un fichero local ya válido no se vuelve a
+  descargar (y por tanto tampoco se refresca: ver limitaciones).
+- Cobertura temporal: snapshot vigente en el momento de la descarga; todas las
+  filas del snapshot actual tienen `status = V`.
 
 ## Formato raw y diferencias reales entre ficheros
 
@@ -95,7 +95,7 @@ justifica en una columna real del fichero; no hay columnas decorativas.
 | `parent_dir3_code` | `C_ID_DEP_UD_SUPERIOR` | String/null | unidad inmediatamente superior |
 | `principal_dir3_code` | `C_ID_DEP_UD_PRINCIPAL` | String/null | «unidad orgánica raíz»; medido: coincide con el propio código en las 13.194 filas de nivel 1 |
 | `status` | `C_ID_ESTADO` | String | catálogo V/E/A/T; el snapshot actual solo contiene V |
-| `official_valid_from` | `D_VIG_ALTA_OFICIAL` | Date/null | texto `dd/mm/yy`; la leyenda la describe como «fecha de creación oficial» |
+| `official_valid_from_raw` | `D_VIG_ALTA_OFICIAL` | String/null | texto oficial `dd/mm/yy` conservado verbatim; la leyenda la describe como «fecha de creación oficial» |
 | `nif_cif` | `NIF_CIF` | String/null | normalizado a mayúsculas para futuro cruce con compradores |
 
 Columnas fuente descartadas (documentadas, no pérdida silenciosa): nombres de
@@ -105,14 +105,18 @@ superior/principal/EDP (recomputables por cruce con `dir3_code`), campos EDP
 `CONTACTOS` en EELL (enriquecimiento territorial futuro vía INE/NUTS), y
 `CARGADOR` en Justicia (interno de la administración de justicia).
 
-### Regla de siglo para fechas de dos dígitos
+### Fechas de dos dígitos: se conserva el valor oficial, sin siglo inventado
 
-DIR3 publica `dd/mm/yy` sin regla oficial de siglo. La normalización deriva el
-siglo de forma determinista respecto al **año de referencia del snapshot**
-(registrado en el manifiesto como `date_century_pivot_reference_year`, por
-defecto el año UTC de la ejecución): cada `yy` se asigna al año más reciente
-que no sea posterior al año de referencia. Así una fecha oficial nunca queda en
-el futuro (p. ej. `01/01/27` con referencia 2026 → 1927-01-01).
+DIR3 publica `D_VIG_ALTA_OFICIAL` como texto `dd/mm/yy` y no documenta regla
+alguna de resolución de siglo. Por eso la dimensión **conserva el valor
+oficial verbatim** en `official_valid_from_raw` (String) y no deriva un
+`Date`: cualquier regla de siglo (p. ej. «el año más reciente que no quede en
+el futuro») sería una interpretación no oficial y haría que los mismos bytes
+raw produjeran salidas canónicas distintas según el momento de
+reconstrucción, además de no resolver la ambigüedad real (`01/01/25` puede ser
+1925 o 2025). Si DIR3 publica una regla oficial fiable, se derivará la fecha
+normalizada como cambio explícito. La única validación es de forma: lo que no
+sea `dd/mm/yy` se rechaza de forma observable.
 
 ## Reglas de ingesta
 
@@ -130,7 +134,7 @@ el futuro (p. ej. `01/01/27` con referencia 2026 → 1927-01-01).
 ## Ejecución
 
 ```bash
-# descarga explícita (red)
+# descarga explícita (red); DIR3 nunca forma parte de `--source all`
 uv run --with-editable . python -m tfm_licitaciones.cli ingest \
   --start 2026-09-15 --end 2026-09-15 --source dir3
 
@@ -148,10 +152,16 @@ evidencia de la construcción).
   observable con estos ficheros.
 - Los 63 padres no resueltos no se pueden resolver con las seis distribuciones
   de vigentes.
-- Sin épocas oficiales de alta extinguida/anulada: el campo
-  `official_valid_from` es la fecha oficial de alta, no un rango de vigencia.
+- `official_valid_from_raw` no es una fecha tipada: DIR3 no publica regla de
+  siglo y no se inventa una.
 - El host PAe está detrás de protección F5/TSPD: si endurece el challenge, la
   descarga programática fallará con instrucciones claras y se podrá completar a
   mano sin cambiar el pipeline.
+- Sin mecanismo de refresco en P0: un XLSX local estructuralmente válido se
+  omite siempre; para forzar un snapshot nuevo hay que borrar manualmente
+  `data/raw/dir3/*.xlsx` y volver a ejecutar `ingest --source dir3`.
+- La identidad de contenido de cada snapshot es su URL + `sha256` (registrados
+  en el manifiesto). `built_at` del manifiesto es la hora de **transformación**,
+  no la hora de descarga, que no se persiste.
 - La correspondencia `NIF_CIF` → unidad no es 1:1 (varias unidades comparten
   el NIF de su entidad raíz).

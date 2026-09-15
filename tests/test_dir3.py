@@ -213,8 +213,8 @@ class Dir3FixtureTestCase(unittest.TestCase):
         for scope in ADMINISTRATION_SCOPES:
             write_scope_file(self.raw_dir, scope, sample_rows(scope))
 
-    def build(self, reference_year: int = 2026) -> tuple[pl.DataFrame, dict[str, Any]]:
-        return build_dir3_units(self.raw_dir, reference_year=reference_year)
+    def build(self) -> tuple[pl.DataFrame, dict[str, Any]]:
+        return build_dir3_units(self.raw_dir)
 
 
 class NormalizeDir3UnitsTests(Dir3FixtureTestCase):
@@ -260,9 +260,9 @@ class NormalizeDir3UnitsTests(Dir3FixtureTestCase):
         self.assertIsNone(row["public_entity_type"])
         self.assertEqual(row["nif_cif"], "Q0332001G")  # lowercase NIF uppercased
         roots = units.filter(pl.col("hierarchy_level") == 1)
-        self.assertEqual(roots.get_column("official_valid_from").null_count(), roots.height)
+        self.assertEqual(roots.get_column("official_valid_from_raw").null_count(), roots.height)
 
-    def test_two_digit_dates_derive_century_from_reference_year(self) -> None:
+    def test_official_valid_from_raw_preserves_source_string_verbatim(self) -> None:
         rows = sample_rows("AGE") + [
             {
                 "C_ID_UD_ORGANICA": "EA1000003",
@@ -273,32 +273,16 @@ class NormalizeDir3UnitsTests(Dir3FixtureTestCase):
                 "C_ID_DEP_UD_SUPERIOR": "EA1000001",
                 "C_ID_DEP_UD_PRINCIPAL": "EA1000001",
                 "C_ID_ESTADO": "V",
-                "D_VIG_ALTA_OFICIAL": "30/10/79",
+                "D_VIG_ALTA_OFICIAL": "01/01/25",  # genuinely ambiguous century: 1925 or 2025
                 "NIF_CIF": "",
-            },
-            {
-                "C_ID_UD_ORGANICA": "EA1000004",
-                "C_DNM_UD_ORGANICA": "Unidad con año ambiguo",
-                "C_ID_NIVEL_ADMON": "1",
-                "C_ID_TIPO_ENT_PUBLICA": "",
-                "N_NIVEL_JERARQUICO": "2",
-                "C_ID_DEP_UD_SUPERIOR": "EA1000001",
-                "C_ID_DEP_UD_PRINCIPAL": "EA1000001",
-                "C_ID_ESTADO": "V",
-                "D_VIG_ALTA_OFICIAL": "01/01/27",
-                "NIF_CIF": "",
-            },
+            }
         ]
         write_scope_file(self.raw_dir, "AGE", rows)
-        units, build = self.build(reference_year=2026)
-        self.assertEqual(build["manifest"]["date_century_pivot_reference_year"], 2026)
-        dates = {row["dir3_code"]: str(row["official_valid_from"]) for row in units.to_dicts()}
-        self.assertEqual(dates["EA1000002"], "2023-11-27")  # yy <= 26 -> current century
-        self.assertEqual(dates["EA1000003"], "1979-10-30")
-        self.assertEqual(dates["EA1000004"], "1927-01-01")  # yy 27 would be future in 2026 -> past century
-        rebuilt, _ = build_dir3_units(self.raw_dir, reference_year=2030)
-        later = {row["dir3_code"]: str(row["official_valid_from"]) for row in rebuilt.to_dicts()}
-        self.assertEqual(later["EA1000004"], "2027-01-01")  # same rule, newer snapshot year
+        units, _ = self.build()
+        values = {row["dir3_code"]: row["official_valid_from_raw"] for row in units.to_dicts()}
+        self.assertEqual(values["EA1000002"], "27/11/23")  # official string, byte for byte
+        self.assertEqual(values["EA1000003"], "01/01/25")  # no century invented
+        self.assertEqual(units.schema["official_valid_from_raw"], pl.String)
 
     def test_deterministic_ordering(self) -> None:
         rows = sample_rows("JUSTICIA", n=2)
@@ -573,6 +557,56 @@ def _config_path() -> Path:
     from tfm_licitaciones.config import project_root
 
     return project_root() / "config" / "pipeline.json"
+
+
+class CliIngestIsolationTests(unittest.TestCase):
+    """DIR3 reference data must stay out of ordinary ``--source all`` ingestion."""
+
+    def setUp(self) -> None:
+        import json as json_module
+        from unittest.mock import patch
+
+        self._patch = patch
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        config = {
+            "storage": {"raw_dir": str(self.tmp / "raw")},
+            "sources": {
+                "ted": {"enabled": False},
+                "boe": {"enabled": False},
+                "placsp": {"enabled": False},
+                "dir3": {"enabled": True, "base_url": "https://example.test", "timeout_seconds": 5, "retry_attempts": 1},
+            },
+        }
+        self.config_path = self.tmp / "pipeline.json"
+        self.config_path.write_text(json_module.dumps(config), encoding="utf-8")
+
+    def _ingest(self, source: str | None) -> None:
+        from tfm_licitaciones import cli as cli_module
+
+        arguments = [
+            "ingest",
+            "--start",
+            "2026-09-15",
+            "--end",
+            "2026-09-15",
+            "--config",
+            str(self.config_path),
+        ]
+        if source is not None:
+            arguments.extend(["--source", source])
+        with self._patch.object(cli_module, "fetch_dir3_units", return_value=[]) as spy:
+            code = cli_main(arguments)
+        self.assertEqual(code, 0)
+        return spy
+
+    def test_default_ingestion_does_not_fetch_dir3(self) -> None:
+        spy = self._ingest(None)  # default --source all
+        self.assertEqual(spy.call_count, 0)
+
+    def test_explicit_dir3_source_is_fetched(self) -> None:
+        spy = self._ingest("dir3")
+        self.assertEqual(spy.call_count, 1)
 
 
 if __name__ == "__main__":

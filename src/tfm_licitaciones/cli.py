@@ -33,7 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--source",
         choices=["ted", "boe", "placsp", "dir3"],
         default="all",
-        help="limitar la ingesta a una fuente (por defecto, todas las habilitadas)",
+        help="limitar la ingesta a una fuente (por defecto, todas las habilitadas; "
+        "los datos de referencia DIR3 requieren --source dir3 explícito)",
     )
 
     dir3 = subparsers.add_parser("dir3", help="construir la dimensión DIR3 de unidades orgánicas")
@@ -75,7 +76,9 @@ def main(argv: list[str] | None = None) -> int:
             placsp_paths = fetch_placsp(args.start, args.end, config, raw_dir)
             summary["placsp_files"] = len(placsp_paths)
             files.extend(str(path) for path in placsp_paths)
-        if args.source in {"all", "dir3"}:
+        if args.source == "dir3":
+            # Reference data with an independent failure mode (F5/TSPD): only
+            # fetched when explicitly requested, never part of --source all.
             dir3_paths = fetch_dir3_units(raw_dir, config)
             summary["dir3_files"] = len(dir3_paths)
             files.extend(str(path) for path in dir3_paths)

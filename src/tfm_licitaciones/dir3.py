@@ -16,7 +16,7 @@ import re
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Any
@@ -49,13 +49,14 @@ _NAME_COLUMN_PREFIXES = ("C_DNM_UD_ORGANICA", "EDP.C_DNM_UD_ORGANICA")
 
 _CODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9]\d{7}$")  # 9 characters, as measured in all official distributions
 _STATUS_VALUES = frozenset({"V", "E", "A", "T"})
-_DATE_PATTERN = re.compile(r"^(\d{2})/(\d{2})/(\d{2})$")
+_DATE_PATTERN = re.compile(r"^\d{2}/\d{2}/\d{2}$")  # DIR3 publishes dd/mm/yy with no official century rule
 _HIERARCHY_PATTERN = re.compile(r"^\d+$")
 
 #: Canonical typed schema of the organisational-unit dimension. Column names
 #: keep the official source semantics: ``C_ID_TIPO_ENT_PUBLICA`` is the public
 #: entity type, ``C_ID_DEP_UD_PRINCIPAL`` the principal (root) unit and
-#: ``D_VIG_ALTA_OFICIAL`` the official validity start date.
+#: ``D_VIG_ALTA_OFICIAL`` the official validity start, preserved verbatim as a
+#: two-digit-year string because DIR3 publishes no century-resolution rule.
 DIR3_UNITS_SCHEMA = pl.Schema(
     {
         "dir3_code": pl.String,
@@ -66,7 +67,7 @@ DIR3_UNITS_SCHEMA = pl.Schema(
         "parent_dir3_code": pl.String,
         "principal_dir3_code": pl.String,
         "status": pl.String,
-        "official_valid_from": pl.Date,
+        "official_valid_from_raw": pl.String,
         "nif_cif": pl.String,
     }
 )
@@ -161,24 +162,20 @@ def _text(value: Any) -> str | None:
     return text or None
 
 
-def _parse_creation_date(value: str | None, reference_year: int) -> date | None:
-    """Parse the official ``dd/mm/yy`` validity start date.
+def _validate_valid_from(value: str | None) -> str | None:
+    """Validate the official ``dd/mm/yy`` validity start, preserving it verbatim.
 
-    DIR3 publishes two-digit years without an official century rule. The
-    century is derived deterministically from ``reference_year`` (the snapshot
-    year): each two-digit year maps to the most recent year that is not later
-    than ``reference_year``, so an official validity start can never land in
-    the future.
+    DIR3 publishes two-digit years without an official century-resolution
+    rule, so the canonical dimension keeps the official string instead of
+    inventing a century. Only the published ``dd/mm/yy`` shape is enforced;
+    anything else is an observable rejection.
     """
 
     if value is None:
         return None
-    match = _DATE_PATTERN.fullmatch(value)
-    if match is None:
+    if _DATE_PATTERN.fullmatch(value) is None:
         raise ValueError(f"invalid validity start date: {value!r}")
-    day, month, two_digit_year = (int(part) for part in match.groups())
-    century = 2000 if two_digit_year <= reference_year % 100 else 1900
-    return date(century + two_digit_year, month, day)
+    return value
 
 
 def _build_opener():
@@ -313,7 +310,6 @@ def fetch_dir3_units(raw_dir: Path, config: dict[str, Any], logger: logging.Logg
 def _normalize_rows(
     frame: pl.DataFrame,
     source: Dir3UnitSource,
-    reference_year: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Validate and map one raw sheet to canonical rows plus observable rejections."""
 
@@ -377,7 +373,7 @@ def _normalize_rows(
             rejected.append({"dir3_code": code or "", "rejection_reason": reason})
             continue
         try:
-            valid_from = _parse_creation_date(_text(row["D_VIG_ALTA_OFICIAL"]), reference_year)
+            valid_from = _validate_valid_from(_text(row["D_VIG_ALTA_OFICIAL"]))
         except ValueError:
             rejected.append({"dir3_code": code or "", "rejection_reason": "invalid_valid_from_date"})
             continue
@@ -392,33 +388,25 @@ def _normalize_rows(
                 "parent_dir3_code": parent,
                 "principal_dir3_code": principal,
                 "status": status,
-                "official_valid_from": valid_from,
+                "official_valid_from_raw": valid_from,
                 "nif_cif": nif.upper() if nif else None,
             }
         )
     return accepted, rejected
 
 
-def normalize_dir3_units(
-    path: Path,
-    scope: str,
-    reference_year: int | None = None,
-) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+def normalize_dir3_units(path: Path, scope: str) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
     """Normalize one official distribution into canonical rows plus rejections."""
 
     source = DIR3_SOURCES_BY_SCOPE.get(scope)
     if source is None:
         raise ValueError(f"Ámbito DIR3 desconocido: {scope!r}")
-    year = reference_year if reference_year is not None else datetime.now(timezone.utc).year
     frame = _load_unit_sheet(path)
-    accepted, rejected = _normalize_rows(frame, source, year)
+    accepted, rejected = _normalize_rows(frame, source)
     return pl.DataFrame(accepted, schema=DIR3_UNITS_SCHEMA), rejected
 
 
-def build_dir3_units(
-    raw_dir: Path,
-    reference_year: int | None = None,
-) -> tuple[pl.DataFrame, dict[str, Any]]:
+def build_dir3_units(raw_dir: Path) -> tuple[pl.DataFrame, dict[str, Any]]:
     """Build the whole dimension from the six local distributions.
 
     Returns the deterministically ordered frame and a provenance manifest with
@@ -426,13 +414,12 @@ def build_dir3_units(
     """
 
     directory = raw_dir / "dir3"
-    year = reference_year if reference_year is not None else datetime.now(timezone.utc).year
     accepted_rows: list[dict[str, Any]] = []
     rejections: list[dict[str, Any]] = []
     sources_manifest: list[dict[str, Any]] = []
     for source in DIR3_UNIT_SOURCES:
         path = directory / source.filename
-        frame, rejected = normalize_dir3_units(path, source.scope, reference_year=year)
+        frame, rejected = normalize_dir3_units(path, source.scope)
         accepted_rows.extend(frame.to_dicts())
         rejections.extend({**row, "administration_scope": source.scope} for row in rejected)
         reasons: dict[str, int] = {}
@@ -461,8 +448,7 @@ def build_dir3_units(
     parents_unresolved = parents.filter(~parents.is_in(pl.Series(sorted(known_codes)))).n_unique()
     manifest = {
         "dimension": "dir3_units",
-        "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "date_century_pivot_reference_year": year,
+        "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # transformation time, not retrieval time
         "row_count": units.height,
         "unique_dir3_codes": len(known_codes),
         "parents_unresolved": parents_unresolved,
