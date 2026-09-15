@@ -2,57 +2,83 @@
 
 ## Prerrequisitos
 
-Se usa Python 3.10 o superior y `uv`, siguiendo la convención del repositorio.
-No hay credenciales; la única dependencia de red es la ingesta explícita.
-El TLS de OpenPLACSP se ancla con la raíz FNMT incluida en
-`config/certs/` — no se desactiva la verificación de certificados.
+- Python 3.10 o posterior;
+- `uv`;
+- red únicamente para la ingesta explícita.
 
-## Run local con fixtures
+OpenPLACSP utiliza una cadena TLS de la FNMT. El adaptador carga la raíz
+incluida en `config/certs/` y no desactiva la validación de certificados.
+
+## Pruebas offline
 
 ```bash
 uv run --with-editable . python -m unittest discover -s tests -v
-uv run --with-editable . python -m tfm_licitaciones.cli run
 ```
 
-El comando genera:
+La suite utiliza fixtures locales y no necesita consultar las fuentes
+oficiales.
 
-- `data/bronze/records.jsonl`: payloads con procedencia;
-- `data/silver/tenders.jsonl`: registros normalizados y plegados;
-- `data/gold/opportunities.jsonl` y `opportunities.csv`: tabla principal;
-- `data/gold/technology_summary.csv`: volumen por categoría y mes (canónicos);
-- `data/gold/buyer_summary.csv`: volumen por comprador y categoría (canónicos);
-- `data/gold/quality_report.json`: checks, métricas e incidencias;
-- `data/gold/classifier_evaluation.json`: P/R/F1 del clasificador vs CPV;
-- `data/gold/run_manifest.json`: conteos, checksums, ingesta y linkage.
+## Ejecución con fixtures
 
-## Ingesta live
-
-La ingesta se mantiene separada del procesamiento para que un run sea
-reproducible a partir de archivos. Se lanza de forma explícita y por fuente:
+Es recomendable indicar un directorio de salida temporal para no sustituir los
+artefactos Gold versionados:
 
 ```bash
-# TED (query tecnológica, avisos españoles; ~4 min por semestre)
+uv run --with-editable . python -m tfm_licitaciones.cli run \
+  --raw-dir tests/fixtures/raw \
+  --output-root /tmp/tfm-licitaciones-fixture
+```
+
+Se generan:
+
+```text
+/tmp/tfm-licitaciones-fixture/bronze/records.jsonl
+/tmp/tfm-licitaciones-fixture/silver/tenders.jsonl
+/tmp/tfm-licitaciones-fixture/gold/opportunities.jsonl
+/tmp/tfm-licitaciones-fixture/gold/opportunities.csv
+/tmp/tfm-licitaciones-fixture/gold/technology_summary.csv
+/tmp/tfm-licitaciones-fixture/gold/buyer_summary.csv
+/tmp/tfm-licitaciones-fixture/gold/quality_report.json
+/tmp/tfm-licitaciones-fixture/gold/classifier_evaluation.json
+/tmp/tfm-licitaciones-fixture/gold/run_manifest.json
+```
+
+## Ingesta desde fuentes oficiales
+
+La descarga y la transformación son operaciones separadas. Las ventanas se
+indican de forma explícita:
+
+```bash
 uv run --with-editable . python -m tfm_licitaciones.cli ingest \
   --start 2026-01-01 --end 2026-06-30 --source ted
 
-# OpenPLACSP (6 ZIPs mensuales de ~200 MB; reanudable, valida cada zip)
 uv run --with-editable . python -m tfm_licitaciones.cli ingest \
   --start 2026-01-01 --end 2026-06-30 --source placsp
-
-uv run --with-editable . python -m tfm_licitaciones.cli run
 ```
 
-`run` no hace llamadas externas. Sobre el corpus completo ene-jun 2026
-(TED + 6 meses de sindicación 643) el run tarda ~15-17 minutos: el coste
-dominante es el parseo CODICE de ~350.000 entries y la escritura de las capas.
-
-Si un endpoint no responde, el adaptador reintenta dentro del límite
-configurado y no sustituye los raw existentes. Las ventanas, el patrón de ZIP
-y los parámetros de linkage se controlan en `config/pipeline.json`.
-
-## Revisión rápida
+Después puede ejecutarse el procesamiento sobre los ficheros descargados:
 
 ```bash
+uv run --with-editable . python -m tfm_licitaciones.cli run
 uv run --with-editable . python -m tfm_licitaciones.cli report
-uv run python -c "import json; m=json.load(open('data/gold/run_manifest.json')); print(m['counts'], m['linkage'])"
 ```
+
+El corpus raw no se versiona. El manifest Gold conserva rutas, tamaños y
+checksums de los inputs utilizados en la última ejecución publicada.
+
+## Comportamiento y límites de la versión 0.1
+
+- TED se consulta por páginas y ventanas acotadas, con retries y throttle.
+- La configuración actual de TED incluye términos tecnológicos.
+- OpenPLACSP descarga ZIP mensuales, los valida antes de moverlos a su destino
+  y reutiliza un ZIP existente si sigue siendo legible.
+- Un mes de OpenPLACSP que agota los reintentos se registra en logs, pero la
+  CLI puede continuar con el resto. Todavía no existe un estado persistente de
+  completitud de ventana.
+- La transformación `run` es offline y determinista respecto a sus inputs de
+  negocio, salvo por los timestamps técnicos de ejecución.
+- JSONL y CSV son formatos transitorios de la implementación actual; la
+  arquitectura P0 utiliza Parquet.
+
+Estas limitaciones se mantienen visibles para que los siguientes cambios
+puedan demostrar qué propiedad añaden.

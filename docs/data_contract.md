@@ -1,61 +1,74 @@
-# Contrato de datos
+# Contrato de datos actual
+
+Este documento describe la implementación 0.1. La arquitectura objetivo y el
+futuro contrato `procurement_events` se recogen en
+[architecture.md](architecture.md). Mantener ambos estados separados evita
+presentar como implementado un modelo que todavía está en migración.
 
 ## Silver: `TenderRecord`
 
-| Campo | Tipo | Regla |
+Grano actual: una versión consolidada por `(source, tender_id)`. Las revisiones
+de OpenPLACSP se pliegan mediante el timestamp `updated` y los identificadores
+marcados como tombstone se excluyen.
+
+| Campo | Tipo | Regla actual |
 | --- | --- | --- |
-| `tender_id` | string | Identificador natural de la fuente (número de aviso TED o id numérico PLACSP) |
-| `source` | string | `ted`, `boe` o `placsp` |
-| `title` | string | Texto del aviso; obligatorio para gold |
-| `summary` | string | Descripción disponible, vacía si no existe |
-| `buyer` | string/null | Organismo comprador |
-| `published_date` | date/null | Fecha ISO normalizada (TED `PD`; PLACSP fecha de `updated`) |
-| `amount` | number/null | Importe no negativo; opcional a nivel de aviso |
-| `currency` | string/null | Informado siempre que hay importe: `currencyID` PLACSP; `EUR` inferido en TED (Search API normaliza valores a EUR) |
-| `country` | string/null | País o ámbito de publicación |
-| `url` | string/null | Enlace público original |
-| `cpv_main` | string/null | Código CPV principal (TED `PC`[0]; PLACSP `ItemClassificationCode`[0]) |
-| `buyer_id` | string/null | Identificador DIR3 del comprador (PLACSP) |
-| `region` | string/null | NUTS/CountrySubentity de ejecución (PLACSP) |
-| `status` | string/null | Estado del expediente (PLACSP `ContractFolderStatusCode`) |
-| `raw` | object | Campos source-specific para trazabilidad |
+| `tender_id` | string | Identificador proporcionado por la fuente |
+| `source` | string | `ted`, `placsp` o `boe`; BOE está deshabilitado en la configuración normal |
+| `title` | string | Título disponible en el aviso |
+| `summary` | string | Descripción disponible; cadena vacía si falta |
+| `buyer` | string/null | Nombre del organismo comprador |
+| `published_date` | date/null | TED: `PD`; PLACSP: actualmente deriva de `updated` |
+| `amount` | number/null | Importe no negativo cuando puede interpretarse |
+| `currency` | string/null | Moneda publicada; TED se marca como EUR cuando la API aporta importe normalizado |
+| `country` | string/null | País o ámbito publicado |
+| `url` | string/null | URL pública del aviso |
+| `cpv_main` | string/null | Primer código CPV disponible |
+| `buyer_id` | string/null | DIR3 cuando OpenPLACSP lo publica |
+| `region` | string/null | Región textual de ejecución |
+| `status` | string/null | Estado publicado por OpenPLACSP |
+| `raw` | object | Payload source-specific conservado para trazabilidad |
 
-El plegado de actualizaciones garantiza una fila por `(source, tender_id)`;
-los avisos anulados (tombstones PLACSP) se retiran de silver.
+## Gold: oportunidad 0.1
 
-## Gold: oportunidad
+Gold aplana `TenderRecord` y añade la clasificación y el resultado del enlace:
 
-Gold añade clasificación y enlace sobre cada aviso de silver:
-
-| Campo | Tipo | Regla |
+| Campo | Tipo | Regla actual |
 | --- | --- | --- |
-| `category` | string | Primera categoría con keywords coincidentes; si no hay, categoría del mapa CPV inequívoco; si no, `Other` |
-| `category_source` | string | `keywords`, `cpv` o `none`: qué señal decidió la categoría |
-| `technology_score` | int | Número de keywords únicas detectadas en título y resumen (señal keywords) |
-| `matched_keywords` | list | Keywords normalizadas sin acentos que coincidieron |
-| `dup_group` | int/null | Identificador de grupo de linkage cuando el aviso enlaza con otro |
-| `is_canonical` | bool | `true` en el aviso representativo del grupo (fecha más antigua, luego título más largo) |
-| `duplicate_of` | string/null | `tender_id` del canónico para los no canónicos |
+| `category` | string | Primera categoría con keywords; fallback CPV; `Other` si no hay coincidencia |
+| `category_source` | string | `keywords`, `cpv` o `none` |
+| `technology_score` | int | Número de keywords distintas encontradas |
+| `matched_keywords` | list | Keywords normalizadas que coincidieron |
+| `dup_group` | int/null | Grupo asignado por el linkage heurístico |
+| `is_canonical` | bool | Marca el representante seleccionado del grupo |
+| `duplicate_of` | string/null | `tender_id` del representante actual |
 
-Los marts (`technology_summary.csv`, `buyer_summary.csv`) se calculan solo
-sobre filas canónicas: cuentan procedimientos únicos, no avisos.
+Los CSV `technology_summary` y `buyer_summary` se calculan sobre registros
+marcados como canónicos.
 
-## Evaluación del clasificador: `classifier_evaluation.json`
+## Evaluación actual
 
-Métricas de precisión, recall, F1 y soporte por categoría comparando el
-señal de keywords contra etiquetas CPV inequívocas, más macro-F1 y cobertura.
-Los registros decididos por CPV quedan fuera para evitar circularidad.
+`classifier_evaluation.json` compara la señal de keywords con prefijos CPV
+inequívocos configurados. CPV actúa como proxy, no como anotación humana. La
+cobertura y el soporte por clase forman parte del resultado y deben citarse al
+interpretar las métricas.
 
-## Trazabilidad mínima
+La implementación actual incluye en el macro-F1 clases con soporte cero. Esa
+agregación se corregirá antes de utilizarla como resultado académico; el
+artefacto versionado se conserva para representar fielmente el baseline.
 
-| Criterio | Código | Evidencia | Interpretación | Estado |
-| --- | --- | --- | --- | --- |
-| Integración de fuentes | `fetch.py`, `normalize.py`, `atom.py` | `bronze/records.jsonl`, `run_manifest.json` | Cada fila conserva fuente, fichero y payload; PLACSP con CA FNMT | OK |
-| Plegado de actualizaciones | `pipeline.fold_latest_updates` | `ingestion.updates_folded` en manifest | Una fila por clave; se conserva la última revisión | OK |
-| Normalización | `models.py`, `normalize.py` | `silver/tenders.jsonl` | TED/PLACSP comparten contrato comparable con CPV, DIR3 y EUR | OK |
-| Calidad | `quality.py` | `gold/quality_report.json` | Las puertas muestran valor, umbral y estado | OK |
-| Clasificación | `classify.py` | `opportunities.csv` | Score y keywords explican cada categoría; `category_source` audita la señal | OK |
-| Evaluación vs CPV | `evaluation.py` | `gold/classifier_evaluation.json` | P/R/F1 por categoría y macro-F1 contra proxy CPV | OK |
-| Linkage | `linkage.py` | `linkage` en manifest, `dup_group`/`is_canonical` en gold | Pares candidatos, enlazados y grupos; canónico por grupo | OK |
-| Explotación | `marts.py` | `technology_summary.csv`, `buyer_summary.csv` | Procedimientos únicos (canónicos) listos para análisis | OK |
-| Reproducibilidad | `pipeline.py`, `tests/` | smoke test y checksums | El mismo raw produce las mismas filas de negocio | OK |
+## Limitaciones conocidas
+
+| Área | Situación actual | Corrección prevista |
+| --- | --- | --- |
+| Fechas PLACSP | `updated` se reutiliza como `published_date` | Separar publicación y actualización |
+| Linkage | La generación de candidatos no excluye la misma fuente | Exigir fuentes diferentes |
+| Bloques grandes | Los bloques por encima del límite se omiten | Subdividir o reportar como no evaluados |
+| Rechazos | Algunos errores pueden descartarse antes de quality | Contabilizar `parsed`, `accepted`, `rejected` y motivo |
+| Completitud | Una partición que falla puede no impedir el run | Registrar esperadas/descargadas y estado incompleto |
+| Persistencia | Bronze, Silver y Gold principales usan JSONL/CSV | Migrar por límites a Parquet |
+| TED | La configuración aplica una query tecnológica | Hacer el filtro sectorial opcional y downstream |
+
+Estas limitaciones son trabajo pendiente conocido. No invalidan las pruebas del
+comportamiento actual, pero impiden presentar todavía la versión 0.1 como la
+plataforma P0 terminada.

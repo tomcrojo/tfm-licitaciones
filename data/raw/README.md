@@ -1,21 +1,18 @@
 # Datos raw
 
-Esta carpeta contiene únicamente descargas reales inmutables (regenerables con
-`ingest`, fuera de git). Corpus actual: TED España ene-jun 2026 con la query
-tecnológica del pipeline (9.905 avisos, 105 MB).
+Esta carpeta se reserva para los payloads descargados por la CLI.
+Los lotes reales no se versionan debido a su tamaño; los fixtures deterministas
+viven en `tests/fixtures/raw/`.
 
 ```bash
 uv run --with-editable . python -m tfm_licitaciones.cli ingest \
-  --start 2026-01-01 --end 2026-06-30
+  --start 2026-01-01 --end 2026-06-30 --source ted
+
+uv run --with-editable . python -m tfm_licitaciones.cli ingest \
+  --start 2026-01-01 --end 2026-06-30 --source placsp
 ```
 
-Los fixtures deterministas para tests viven en `tests/fixtures/raw/`.
-
-Hallazgos verificados con la API real:
-
-- TED: `PC` aporta el CPV principal en el 100% de los avisos; el importe
-  estimado (`estimated-value-lot`) llega al ~33%; `links.html` es la fuente
-  correcta de la URL del aviso.
-- BOE: el sumario diario no publica anuncios de licitación (verificado junio
-  2026 completo, solo secciones I-III). Las licitaciones españolas se publican
-  en PLACSP; BOE queda restringido a contexto normativo.
+El estado actual evita sustituir un ZIP de OpenPLACSP que ya sea válido, pero
+todavía no implementa el registro completo de ventanas, checksums e
+idempotencia definido para P0. Véanse [la arquitectura](../../docs/architecture.md)
+y [la guía de ejecución](../../docs/run.md).
