@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .bronze import bronze_frame, discover_raw_files, load_raw_records, rejection_frame
+from .bronze import bronze_frame, discover_raw_files, load_raw_records, rejection_frame, tombstone_frame
 from .classify import score_tender
 from .config import configured_path, load_config
 from .evaluation import evaluate_against_cpv
@@ -26,8 +26,8 @@ def fold_latest_updates(records: list[TenderRecord]) -> tuple[list[TenderRecord]
     so the same atom id appears in several Atom files and monthly zips.
     Recency uses the entry ``updated`` timestamp rather than file order
     because the base Atom holds the latest state but sorts first inside
-    each zip. TED and BOE windows contain each notice once, so the fold
-    leaves them untouched.
+    each zip. Raw loading already selects the latest snapshot per partition
+    and orders retrievals chronologically; position breaks ties across windows.
     """
 
     latest: dict[tuple[str, str], tuple[Any, int, TenderRecord]] = {}
@@ -76,6 +76,7 @@ def run_pipeline(
     }
     write_parquet(bronze_path / "records.parquet", bronze_frame(bronze_rows))
     write_parquet(bronze_path / "rejections.parquet", rejection_frame(loaded["rejections"]))
+    write_parquet(bronze_path / "tombstones.parquet", tombstone_frame(loaded["tombstones"]))
     write_json(bronze_path / "ingestion_report.json", ingestion_stats)
     write_jsonl(silver_path / "tenders.jsonl", (record.to_dict() for record in kept_records))
 
