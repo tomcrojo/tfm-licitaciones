@@ -10,6 +10,9 @@ uv run --with-editable . python -m tfm_licitaciones.cli ingest \
 
 uv run --with-editable . python -m tfm_licitaciones.cli ingest \
   --start 2026-01-01 --end 2026-06-30 --source placsp
+
+uv run --with-editable . python -m tfm_licitaciones.cli ingest \
+  --start 2026-09-15 --end 2026-09-15 --source dir3
 ```
 
 El estado actual evita sustituir un ZIP de OpenPLACSP que ya sea válido, pero

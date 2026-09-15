@@ -1,0 +1,108 @@
+{
+  "dimension": "dir3_units",
+  "built_at": "2026-09-15T14:33:46+00:00",
+  "date_century_pivot_reference_year": 2026,
+  "row_count": 108261,
+  "unique_dir3_codes": 108261,
+  "parents_unresolved": 63,
+  "status_counts": [
+    {
+      "status": "V",
+      "count": 108261
+    }
+  ],
+  "administration_scope_counts": [
+    {
+      "administration_scope": "AGE",
+      "count": 19919
+    },
+    {
+      "administration_scope": "CCAA",
+      "count": 18825
+    },
+    {
+      "administration_scope": "EELL",
+      "count": 26606
+    },
+    {
+      "administration_scope": "JUSTICIA",
+      "count": 34213
+    },
+    {
+      "administration_scope": "OTRAS_INSTITUCIONES",
+      "count": 1338
+    },
+    {
+      "administration_scope": "UNIVERSIDADES",
+      "count": 7360
+    }
+  ],
+  "sources": [
+    {
+      "scope": "AGE",
+      "official_name": "Listado Unidades AGE.xlsx",
+      "url": "https://administracionelectronica.gob.es/ctt/resources/Soluciones/238/Descargas/Listado%20Unidades%20AGE.xlsx?idIniciativa=238&idElemento=2741",
+      "filename": "dir3-unidades-age.xlsx",
+      "sha256": "33e0970fe04ea3d00aa4e991f05848f989c5f9e200edda8b2ef34e50857a81b3",
+      "parsed": 19919,
+      "accepted": 19919,
+      "rejected": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "scope": "CCAA",
+      "official_name": "Listado Unidades CCAA.xlsx",
+      "url": "https://administracionelectronica.gob.es/ctt/resources/Soluciones/238/Descargas/Listado%20Unidades%20CCAA.xlsx?idIniciativa=238&idElemento=2742",
+      "filename": "dir3-unidades-ccaa.xlsx",
+      "sha256": "b0b0d34434192fab701739b4136236798ada53638d59fe70ce318a0bdbb3276c",
+      "parsed": 18825,
+      "accepted": 18825,
+      "rejected": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "scope": "EELL",
+      "official_name": "Listado Unidades EELL.xlsx",
+      "url": "https://administracionelectronica.gob.es/ctt/resources/Soluciones/238/Descargas/Listado%20Unidades%20EELL.xlsx?idIniciativa=238&idElemento=2744",
+      "filename": "dir3-unidades-eell.xlsx",
+      "sha256": "84f73e9c531d53e9fc4fb54f2d78440214bef9fb91b5659f22bf9bc21a6f59d0",
+      "parsed": 26606,
+      "accepted": 26606,
+      "rejected": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "scope": "UNIVERSIDADES",
+      "official_name": "Listado Unidades Universidades.xlsx",
+      "url": "https://administracionelectronica.gob.es/ctt/resources/Soluciones/238/Descargas/Listado%20Unidades%20Universidades.xlsx?idIniciativa=238&idElemento=2808",
+      "filename": "dir3-unidades-universidades.xlsx",
+      "sha256": "20bdf281da77d1cba89258d5b801d1098175ca74b4f19d2c5f0bc9487c682dfd",
+      "parsed": 7360,
+      "accepted": 7360,
+      "rejected": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "scope": "OTRAS_INSTITUCIONES",
+      "official_name": "Listado Unidades Institucionales.xlsx",
+      "url": "https://administracionelectronica.gob.es/ctt/resources/Soluciones/238/Descargas/Listado%20Unidades%20Institucionales.xlsx?idIniciativa=238&idElemento=2810",
+      "filename": "dir3-unidades-otras-instituciones.xlsx",
+      "sha256": "f7d33f19bf1538c7f44f7272ef58da242ec3f25fe8848437f98e2fe0035f25de",
+      "parsed": 1338,
+      "accepted": 1338,
+      "rejected": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "scope": "JUSTICIA",
+      "official_name": "Listado-unidades-organicas-Justicia.xlsx",
+      "url": "https://administracionelectronica.gob.es/ctt/resources/Soluciones/238/Descargas/Listado-unidades-organicas-Justicia.xlsx?idIniciativa=238&idElemento=7326",
+      "filename": "dir3-unidades-justicia.xlsx",
+      "sha256": "47edc58ab8ec9bbdac61b61921117b613d1bc9479039cd4749163b1c97cd0144",
+      "parsed": 34213,
+      "accepted": 34213,
+      "rejected": 0,
+      "rejection_reasons": {}
+    }
+  ]
+}

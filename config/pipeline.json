@@ -7,7 +7,8 @@
     "raw_dir": "data/raw",
     "bronze_dir": "data/bronze",
     "silver_dir": "data/silver",
-    "gold_dir": "data/gold"
+    "gold_dir": "data/gold",
+    "reference_dir": "data/reference"
   },
   "sources": {
     "ted": {
@@ -69,6 +70,13 @@
       "timeout_seconds": 300,
       "retry_attempts": 3,
       "note": "Sindicacion 643: licitaciones publicadas en PLACSP excluyendo contratos menores. El TLS usa la cadena FNMT-RCM, anclada mediante ca_bundle."
+    },
+    "dir3": {
+      "enabled": true,
+      "base_url": "https://administracionelectronica.gob.es",
+      "timeout_seconds": 120,
+      "retry_attempts": 3,
+      "note": "Listados oficiales de unidades organicas por ambito (PAe/CTT DIR3). El host usa proteccion F5/TSPD: si la descarga programatica devuelve HTML, se descarga manualmente en data/raw/dir3/ con el nombre determinista de cada ambito. Ver docs/dir3-reference.md."
     }
   },
   "linkage": {
