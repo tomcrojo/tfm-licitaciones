@@ -8,14 +8,14 @@ import ssl
 import tempfile
 import time
 import zipfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .config import load_config
 from .io import write_jsonl
+from .raw_provenance import RawProvenanceError, load_raw_artifact, persist_raw_artifact
 
 
 def build_ted_query(country: str, technology_terms: list[str], start: date, end: date) -> str:
@@ -168,8 +168,8 @@ def fetch_placsp(start: date, end: date, config: dict[str, Any], raw_dir: Path) 
 
     Hacienda serves the syndication over a FNMT-RCM chain that is not in the
     Python trust store, so the adapter pins the published root certificate
-    from ``ca_bundle``. Each zip is validated as a readable archive before
-    it replaces any existing raw file, keeping ``data/raw`` append-only.
+    from ``ca_bundle``. Each zip is validated before publishing its immutable
+    payload and retrieval sidecar. Cached files must have matching evidence.
     """
 
     source = config["sources"]["placsp"]
@@ -188,26 +188,33 @@ def fetch_placsp(start: date, end: date, config: dict[str, Any], raw_dir: Path) 
         run_id = f"{cursor:%Y%m}"
         url = f"{base_url}/{source['zip_pattern'].format(run_id=run_id)}"
         destination = raw_dir / "placsp" / f"placsp-{run_id}.zip"
+        next_month = date(cursor.year + (cursor.month == 12), cursor.month % 12 + 1, 1)
         if _is_valid_zip(destination):
+            evidence = load_raw_artifact(raw_dir, destination)
+            if (evidence.source, evidence.partition, evidence.window_start, evidence.window_end) != (
+                "placsp", run_id, cursor.isoformat(), (next_month - timedelta(days=1)).isoformat(),
+            ):
+                raise RawProvenanceError(f"PLACSP partition identity mismatch: {destination}")
             log.info("PLACSP %s already present, skipping", run_id)
             saved.append(destination)
         else:
             try:
-                _download_zip(
+                saved_path = _download_zip(
                     url,
                     destination,
+                    raw_dir=raw_dir,
+                    partition=run_id,
+                    window_start=cursor.isoformat(),
+                    window_end=(next_month - timedelta(days=1)).isoformat(),
                     context=context,
                     timeout=source.get("timeout_seconds", 120),
                     attempts=source.get("retry_attempts", 3),
                     logger=log,
                 )
-                saved.append(destination)
+                saved.append(saved_path)
             except RuntimeError as exc:
                 log.warning("PLACSP %s not downloaded: %s", run_id, exc)
-        if cursor.month == 12:
-            cursor = date(cursor.year + 1, 1, 1)
-        else:
-            cursor = date(cursor.year, cursor.month + 1, 1)
+        cursor = next_month
     return saved
 
 
@@ -227,11 +234,15 @@ def _download_zip(
     url: str,
     destination: Path,
     *,
+    raw_dir: Path,
+    partition: str,
+    window_start: str,
+    window_end: str,
     context: ssl.SSLContext,
     timeout: int,
     attempts: int,
     logger: logging.Logger,
-) -> None:
+) -> Path:
     """Download one zip with bounded retries, validating it before commit."""
 
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -247,13 +258,19 @@ def _download_zip(
                         if not chunk:
                             break
                         output.write(chunk)
+                retrieved_at = datetime.now(timezone.utc)
                 if not _is_valid_zip(temporary):
                     raise ValueError("downloaded file is not a complete zip archive")
-                temporary.replace(destination)
-                logger.info("PLACSP downloaded %s -> %s", url, destination)
-                return
+                saved = persist_raw_artifact(
+                    temporary, destination, raw_dir, source="placsp", retrieved_at=retrieved_at,
+                    partition=partition, window_start=window_start, window_end=window_end,
+                )
+                logger.info("PLACSP downloaded %s -> %s", url, saved)
+                return saved
             finally:
                 temporary.unlink(missing_ok=True)
+        except RawProvenanceError:
+            raise
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
             if attempt == attempts:
                 raise RuntimeError(f"Download failed after {attempts} attempt(s): {url}") from exc
@@ -262,19 +279,46 @@ def _download_zip(
             time.sleep(wait_seconds)
 
 
-def save_raw_batches(raw_dir: Path, run_id: str, ted: list[dict[str, Any]], boe: list[dict[str, Any]]) -> list[Path]:
-    """Persist fetched raw batches as append-only, timestamped JSONL files."""
+def fetch_raw_batch(
+    source: str, start: date, end: date, config: dict[str, Any], raw_dir: Path,
+) -> tuple[int, list[Path]]:
+    """Capture JSON batch retrieval completion before serialization/persistence.
+
+    TED's existing Raw artifact aggregates a requested window. Its retrieval
+    time is completion of that batch, not an individual notice's publication.
+    """
+
+    adapter = {"ted": fetch_ted, "boe": fetch_boe}[source]
+    rows = adapter(start, end, config)
+    retrieved_at = datetime.now(timezone.utc)
+    paths = save_raw_batches(
+        raw_dir, f"{start:%Y%m%d}-{end:%Y%m%d}", rows if source == "ted" else [],
+        rows if source == "boe" else [], retrieved_at=retrieved_at,
+        window_start=start.isoformat(), window_end=end.isoformat(),
+    )
+    return len(rows), paths
+
+
+def save_raw_batches(
+    raw_dir: Path, run_id: str, ted: list[dict[str, Any]], boe: list[dict[str, Any]], *,
+    retrieved_at: datetime, window_start: str | None = None, window_end: str | None = None,
+) -> list[Path]:
+    """Persist batches with explicit retrieval evidence, preserving prior bytes."""
 
     paths: list[Path] = []
-    if ted:
-        paths.append(_save_batch(raw_dir / "ted" / f"ted-{run_id}.jsonl", ted))
-    if boe:
-        paths.append(_save_batch(raw_dir / "boe" / f"boe-{run_id}.jsonl", boe))
+    for source, rows in (("ted", ted), ("boe", boe)):
+        if not rows:
+            continue
+        destination = raw_dir / source / f"{source}-{run_id}.jsonl"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+        try:
+            write_jsonl(temporary, rows)
+            paths.append(persist_raw_artifact(
+                temporary, destination, raw_dir, source=source, partition=run_id,
+                retrieved_at=retrieved_at, window_start=window_start, window_end=window_end,
+            ))
+        finally:
+            temporary.unlink(missing_ok=True)
     return paths
-
-
-def _save_batch(path: Path, rows: list[dict[str, Any]]) -> Path:
-    """Write one raw batch using the shared JSONL helper."""
-
-    write_jsonl(path, rows)
-    return path

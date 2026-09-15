@@ -8,7 +8,7 @@ from datetime import date
 from pathlib import Path
 
 from .config import configured_path, load_config
-from .fetch import fetch_boe, fetch_placsp, fetch_ted, save_raw_batches
+from .fetch import fetch_placsp, fetch_raw_batch
 from .pipeline import run_pipeline
 
 
@@ -60,14 +60,11 @@ def main(argv: list[str] | None = None) -> int:
         raw_dir = args.raw_dir or configured_path(config, "raw_dir")
         summary: dict[str, object] = {}
         files: list[str] = []
-        if args.source in {"all", "ted"}:
-            ted = fetch_ted(args.start, args.end, config)
-            summary["ted"] = len(ted)
-            files.extend(str(path) for path in save_raw_batches(raw_dir, f"{args.start:%Y%m%d}-{args.end:%Y%m%d}", ted, []))
-        if args.source in {"all", "boe"}:
-            boe = fetch_boe(args.start, args.end, config)
-            summary["boe"] = len(boe)
-            files.extend(str(path) for path in save_raw_batches(raw_dir, f"{args.start:%Y%m%d}-{args.end:%Y%m%d}", [], boe))
+        for source in ("ted", "boe"):
+            if args.source in {"all", source}:
+                count, paths = fetch_raw_batch(source, args.start, args.end, config, raw_dir)
+                summary[source] = count
+                files.extend(str(path) for path in paths)
         if args.source in {"all", "placsp"}:
             placsp_paths = fetch_placsp(args.start, args.end, config, raw_dir)
             summary["placsp_files"] = len(placsp_paths)

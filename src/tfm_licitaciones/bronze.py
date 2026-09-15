@@ -12,14 +12,18 @@ import polars as pl
 from .atom import parse_atom_batch, parse_placsp_zip_batch
 from .models import TenderRecord
 from .normalize import normalize_record
+from .raw_provenance import RawProvenanceError, load_raw_artifact
 
 
 PROVENANCE_SCHEMA = {
     "source": pl.String,
     "source_file": pl.String,
     "source_member": pl.String,
+    "source_member_index": pl.UInt32,
     "record_locator": pl.String,
     "source_record_id": pl.String,
+    "raw_sha256": pl.String,
+    "raw_retrieved_at": pl.Datetime("us", "UTC"),
 }
 BRONZE_SCHEMA = {**PROVENANCE_SCHEMA, "payload_json": pl.String}
 REJECTION_SCHEMA = {
@@ -93,6 +97,8 @@ def load_raw_records(raw_dir: Path) -> dict[str, Any]:
             return
         if source not in {"ted", "placsp", "boe"}:
             reason = "unsupported_source"
+        elif source != artifact.source:
+            reason = "source_mismatch"
         else:
             record = normalize_record(payload)
             location["source_record_id"] = location["source_record_id"] or record.tender_id or None
@@ -108,9 +114,16 @@ def load_raw_records(raw_dir: Path) -> dict[str, Any]:
             records.append(record)
 
     for path in discover_raw_files(raw_dir):
-        relative = str(path.relative_to(raw_dir))
+        artifact = load_raw_artifact(raw_dir, path)
+        provenance = {
+            "source": artifact.source, "source_file": artifact.raw_path,
+            "raw_sha256": artifact.sha256, "raw_retrieved_at": artifact.timestamp,
+            "source_member_index": None,
+        }
         suffix = path.suffix.lower()
         if suffix in {".zip", ".xml", ".atom"}:
+            if artifact.source != "placsp":
+                raise RawProvenanceError(f"Expected PLACSP evidence for {path}")
             sources.add("placsp")
             batch = parse_placsp_zip_batch(path) if suffix == ".zip" else parse_atom_batch(path.read_bytes())
             atom_files += batch.atom_files
@@ -120,16 +133,16 @@ def load_raw_records(raw_dir: Path) -> dict[str, Any]:
                 # Preserve the existing Silver deletion behavior for ZIP inputs.
                 tombstones |= batch.tombstones
             for rejection in batch.rejections:
-                rejections.append({"source": "placsp", "source_file": relative, **rejection})
+                rejections.append({**provenance, **rejection})
             for entry in batch.entries:
-                accept({"source": "placsp", "source_file": relative, **entry})
+                accept({**provenance, **entry})
             continue
-        source_hint = path.parent.name.lower()
+        source_hint = artifact.source
         with path.open("rb") as handle:
             for line_number, line in enumerate(handle, 1):
                 if not line.strip():
                     continue
-                location = {"source": source_hint, "source_file": relative, "source_member": None,
+                location = {**provenance, "source_member": None,
                             "record_locator": f"line:{line_number}", "source_record_id": None}
                 try:
                     payload = json.loads(line.decode("utf-8"), parse_constant=_reject_json_constant,

@@ -12,6 +12,7 @@ from tfm_licitaciones.atom import parse_atom_file, parse_placsp_atom, iter_placs
 from tfm_licitaciones.bronze import BRONZE_SCHEMA, REJECTION_SCHEMA, load_raw_records
 from tfm_licitaciones.io import read_parquet
 from tfm_licitaciones.pipeline import run_pipeline
+from raw_fixtures import evidence_for_fixture
 
 
 FEED = '''<feed xmlns="http://www.w3.org/2005/Atom"
@@ -39,6 +40,7 @@ class BronzeTests(unittest.TestCase):
         path = self.raw / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+        evidence_for_fixture(self.raw, path, "ted" if path.suffix == ".jsonl" else "placsp")
         return path
 
     def assert_counts(self, report: dict, parsed: int, accepted: int, rejected: int) -> None:
@@ -82,6 +84,7 @@ class BronzeTests(unittest.TestCase):
             archive.writestr("a-broken.atom", "<feed")
             archive.writestr("nested/valid.atom", FEED)
             archive.writestr("readme.txt", "Metadata, not an Atom feed")
+        evidence_for_fixture(self.raw, path, "placsp")
         loaded = load_raw_records(self.raw)
         self.assert_counts(loaded["ingestion"], 4, 1, 3)
         self.assertEqual(loaded["ingestion"]["document_errors"], 1)
@@ -102,6 +105,7 @@ class BronzeTests(unittest.TestCase):
         self.write_raw("placsp/broken.zip", "not a ZIP")
         with zipfile.ZipFile(self.raw / "empty.zip", "w") as archive:
             archive.writestr("README.txt", "No feed")
+        evidence_for_fixture(self.raw, self.raw / "empty.zip", "placsp")
         loaded = load_raw_records(self.raw)
         self.assert_counts(loaded["ingestion"], 0, 0, 0)
         self.assertEqual(loaded["ingestion"]["document_errors"], 4)
@@ -138,6 +142,7 @@ class BronzeTests(unittest.TestCase):
     def test_invalid_encodings_are_located_and_do_not_stop_the_batch(self) -> None:
         path = self.write_raw("ted/encoding.jsonl", "")
         path.write_bytes(b'\xff\n' + json.dumps(TED).encode("utf-8") + b'\n')
+        evidence_for_fixture(self.raw, path, "ted")
         self.write_raw("placsp/encoding.atom", '<?xml version="1.0" encoding="unknown-charset"?><feed/>')
         loaded = load_raw_records(self.raw)
         self.assert_counts(loaded["ingestion"], 2, 1, 1)
