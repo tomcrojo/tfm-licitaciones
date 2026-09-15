@@ -72,8 +72,8 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_raw_artifact(raw_dir: Path, path: Path) -> RawArtifact:
-    """Require persisted retrieval evidence and verify it against this file."""
+def _load_raw_evidence(raw_dir: Path, path: Path) -> RawArtifact:
+    """Validate the local authority independently of payload availability."""
 
     sidecar = provenance_path(path)
     try:
@@ -82,7 +82,18 @@ def load_raw_artifact(raw_dir: Path, path: Path) -> RawArtifact:
         raise RawProvenanceError(f"Missing or invalid Raw provenance: {sidecar}: {exc}") from exc
     if artifact.raw_path != path.relative_to(raw_dir).as_posix():
         raise RawProvenanceError(f"Raw path mismatch: {sidecar}")
-    if artifact.sha256 != file_sha256(path):
+    return artifact
+
+
+def load_raw_artifact(raw_dir: Path, path: Path) -> RawArtifact:
+    """Require persisted retrieval evidence and verify it against this file."""
+
+    artifact = _load_raw_evidence(raw_dir, path)
+    try:
+        checksum = file_sha256(path)
+    except OSError as exc:
+        raise RawProvenanceError(f"Missing or unreadable Raw payload: {path}: {exc}") from exc
+    if artifact.sha256 != checksum:
         raise RawProvenanceError(f"Raw checksum mismatch: {path}")
     return artifact
 
@@ -103,34 +114,40 @@ def persist_raw_artifact(
     Identical downloads reuse the first retrieval evidence. A changed payload
     gets a checksum-suffixed filename within the same logical partition.
     The caller must supply the download-completion timestamp, never a default
-    derived here from persistence time. An orphan after interruption fails
-    closed on the next read; two filesystem files are not one transaction.
+    derived here from persistence time. Reads refuse either orphan. A new
+    matching download can complete the pair: payload-only uses this retry's
+    retrieval time; sidecar-only retains the persisted retrieval time.
     """
 
     if retrieved_at.tzinfo is None or retrieved_at.utcoffset() is None:
         raise RawProvenanceError("retrieved_at must include a timezone")
     checksum = file_sha256(temporary)
     identity = (source, partition, window_start, window_end)
-    if destination.exists():
+    if destination.exists() and provenance_path(destination).exists():
         known = load_raw_artifact(raw_dir, destination)
         if (known.source, known.partition, known.window_start, known.window_end) != identity:
             raise RawProvenanceError(f"Raw partition identity mismatch: {destination}")
         if known.sha256 == checksum:
             return destination
         destination = destination.with_name(f"{destination.stem}-{checksum}{destination.suffix}")
-        if destination.exists():
-            known = load_raw_artifact(raw_dir, destination)
-            if known.sha256 != checksum or (known.source, known.partition, known.window_start, known.window_end) != identity:
-                raise RawProvenanceError(f"Raw revision identity mismatch: {destination}")
-            return destination
-    artifact = RawArtifact(
-        source=source, raw_path=destination.relative_to(raw_dir).as_posix(), sha256=checksum,
-        retrieved_at=retrieved_at.astimezone(timezone.utc).isoformat(), partition=partition,
-        window_start=window_start, window_end=window_end,
-    )
     sidecar = provenance_path(destination)
-    if sidecar.exists():
-        raise RawProvenanceError(f"Raw evidence exists without its payload: {sidecar}")
+    payload_exists, sidecar_exists = destination.exists(), sidecar.exists()
+    if sidecar_exists:
+        artifact = _load_raw_evidence(raw_dir, destination)
+        if (artifact.source, artifact.partition, artifact.window_start, artifact.window_end) != identity:
+            raise RawProvenanceError(f"Raw partition identity mismatch: {destination}")
+        if artifact.sha256 != checksum:
+            raise RawProvenanceError(f"Raw retry checksum mismatch: {destination}")
+    else:
+        artifact = RawArtifact(
+            source=source, raw_path=destination.relative_to(raw_dir).as_posix(), sha256=checksum,
+            retrieved_at=retrieved_at.astimezone(timezone.utc).isoformat(), partition=partition,
+            window_start=window_start, window_end=window_end,
+        )
+    if payload_exists and file_sha256(destination) != checksum:
+        raise RawProvenanceError(f"Raw checksum mismatch: {destination}")
+    if payload_exists and sidecar_exists:
+        return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Hard links publish complete files without replacing an existing name.
     # Staging files live on the same filesystem as the destination.
@@ -138,8 +155,12 @@ def persist_raw_artifact(
         metadata_temporary = Path(handle.name)
     try:
         metadata_temporary.write_text(json.dumps(asdict(artifact), sort_keys=True, indent=2) + "\n", encoding="utf-8")
-        os.link(temporary, destination)
-        os.link(metadata_temporary, sidecar)
+        # Use the state we verified above: a concurrent publication must cause
+        # an explicit link collision, not silently reuse unverified files.
+        if not payload_exists:
+            os.link(temporary, destination)
+        if not sidecar_exists:
+            os.link(metadata_temporary, sidecar)
     finally:
         metadata_temporary.unlink(missing_ok=True)
     return destination

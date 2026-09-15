@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 from tfm_licitaciones.atom import parse_atom_file, parse_placsp_atom, iter_placsp_zip
-from tfm_licitaciones.bronze import BRONZE_SCHEMA, REJECTION_SCHEMA, load_raw_records
+from tfm_licitaciones.bronze import BRONZE_SCHEMA, REJECTION_SCHEMA, TOMBSTONE_SCHEMA, load_raw_records
 from tfm_licitaciones.io import read_parquet
 from tfm_licitaciones.pipeline import run_pipeline
 from raw_fixtures import evidence_for_fixture
@@ -137,7 +137,9 @@ class BronzeTests(unittest.TestCase):
             '{"x": NaN}', '{"x": 1e999}', '{"_source": "unknown"}', json.dumps(TED)]))
         loaded = load_raw_records(self.raw)
         self.assert_counts(loaded["ingestion"], 4, 1, 3)
-        self.assert_counts(loaded["ingestion"]["by_source"]["unknown"], 1, 0, 1)
+        self.assertEqual(set(loaded["ingestion"]["by_source"]), {"ted"})
+        self.assert_counts(loaded["ingestion"]["by_source"]["ted"], 4, 1, 3)
+        self.assertIn("unsupported_source", {row["rejection_reason"] for row in loaded["rejections"]})
 
     def test_invalid_encodings_are_located_and_do_not_stop_the_batch(self) -> None:
         path = self.write_raw("ted/encoding.jsonl", "")
@@ -179,8 +181,8 @@ class BronzeTests(unittest.TestCase):
                 self.assertEqual(json.loads(accepted["payload_json"][0]), valid)
                 self.assertEqual(rejected.height, 1)
                 rejection = rejected.row(0, named=True)
-                expected_source = "ted" if payload["_source"] == "ted" else r"\ud800"
-                self.assertEqual(rejection["source"], expected_source)
+                self.assertEqual(rejection["source"], "ted")
+                self.assertEqual(set(result["manifest"]["ingestion"]["by_source"]), {"ted"})
                 self.assertEqual(rejection["source_file"], "ted/surrogate.jsonl")
                 self.assertEqual(rejection["record_locator"], "line:1")
                 self.assertEqual(rejection["rejection_reason"], "invalid_unicode_payload")
@@ -214,10 +216,13 @@ class BronzeTests(unittest.TestCase):
             result = run_pipeline(raw_dir=self.raw, output_root=self.output)
             accepted = read_parquet(self.output / "bronze/records.parquet")
             rejected = read_parquet(self.output / "bronze/rejections.parquet")
+            tombstones = read_parquet(self.output / "bronze/tombstones.parquet")
             self.assertEqual(accepted.height, 0)
             self.assertEqual(rejected.height, int(all_rejected))
             self.assertEqual(dict(accepted.schema), BRONZE_SCHEMA)
             self.assertEqual(dict(rejected.schema), REJECTION_SCHEMA)
+            self.assertEqual(dict(tombstones.schema), TOMBSTONE_SCHEMA)
+            self.assertEqual(tombstones.height, 0)
             self.assertFalse(result["quality"]["passed"])
 
 

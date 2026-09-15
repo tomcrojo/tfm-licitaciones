@@ -37,6 +37,22 @@ o que no coincide con los bytes detiene la transformación; no se inventan
 rechazos de registros cuyo origen no puede verificarse. Ni la transformación,
 ni el manifest del run, ni el mtime proporcionan `retrieved_at`.
 
+Payload y sidecar se publican mediante enlaces locales sin sobrescritura; no
+forman una transacción de dos ficheros. Bronze detecta ambos huérfanos, incluso
+un directorio que solo contiene sidecars, y detiene el procesamiento. Una
+nueva descarga puede completar una publicación interrumpida:
+
+- Si existe solo el payload, los bytes recuperados deben tener el mismo SHA.
+  El nuevo sidecar registra el timestamp real de **ese reintento**, sin atribuir
+  una fecha histórica al payload huérfano. Bytes distintos fallan sin sobrescribir.
+- Si existe solo el sidecar, el reintento debe coincidir en bytes, fuente,
+  partición y ventana. Se repone el payload y se conserva el sidecar, incluido
+  su primer timestamp; cualquier diferencia falla.
+
+El sidecar es la raíz de confianza local. Se valida su estructura, ruta e
+integridad respecto al payload, pero no puede detectarse una edición externa
+semánticamente válida de su timestamp o identidad sin otra autoridad externa.
+
 `ingestion_state` sigue siendo estado de ejecución. No se duplica allí
 una segunda autoridad de recuperación: sus timestamps operativos y de
 aceptación de cambios no sustituyen al sidecar. La integración de completitud
@@ -53,7 +69,7 @@ vacío. No se infiere un Struct desde payloads heterogéneos:
 
 | Campo | Tipo Polars/Parquet | Semántica |
 | --- | --- | --- |
-| `source` | string | Fuente del adaptador (`ted`, `placsp`, `boe`) |
+| `source` | string | Fuente autoritativa del sidecar (`ted`, `placsp`, `boe`) |
 | `source_file` | string | Ruta relativa al directorio Raw del run |
 | `source_member` | string/null | Nombre del miembro Atom cuando procede de un ZIP |
 | `source_member_index` | uint32/null | Posición del miembro en el directorio central ZIP, desde 1, incluyendo miembros no Atom |
@@ -77,6 +93,18 @@ partición/ventana del artefacto se consultan en su sidecar; no se copian ventan
 en cada fila. En la futura migración, `ProcurementEvent.ingested_at` recibirá
 `raw_retrieved_at`. La persistencia Silver sigue sin cambios.
 
+`bronze/tombstones.parquet` conserva **cada** control de borrado válido de
+Atom/XML plano y ZIP, incluidos controles repetidos y snapshots anteriores.
+`TOMBSTONE_SCHEMA` contiene exactamente las columnas de procedencia anteriores,
+sin `payload_json`: `source_record_id` es el `ref` completo, y
+`record_locator=deleted-entry:N` localiza el control desde 1, contando también
+controles inválidos. Miembro, índice central ZIP, checksum y timestamp tienen
+la misma semántica que en registros/rechazos; en ficheros planos el miembro y
+su índice son nulos. El esquema se mantiene incluso cuando no hay controles.
+Esta tabla permitirá emitir un `ProcurementEvent` con
+`source_event_type="tombstone"` e `ingested_at=raw_retrieved_at` en la futura
+migración Bronze→Silver; aquí todavía no se construyen eventos canónicos.
+
 `bronze/rejections.parquet` utiliza las mismas columnas de procedencia,
 más `rejection_reason` y `rejection_scope`, ambas string; no contiene
 `payload_json`. Los motivos incluyen `invalid_json`, `invalid_unicode_payload`, `expected_json_object`,
@@ -85,14 +113,14 @@ más `rejection_reason` y `rejection_scope`, ambas string; no contiene
 `no_atom_members`, `non_finite_amount` y `missing_tombstone_ref`. El contenido original se consulta
 en Raw mediante su procedencia. Sin ID se conserva la posición; para un
 documento ilegible la posición y el ID son nulos.
-Si la propia etiqueta de fuente contiene surrogates aislados, su procedencia
-los representa como escapes `\ud800` para poder persistir el rechazo; Raw
-conserva la representación original.
 Si una etiqueta de fuente soportada del payload contradice la fuente del
-sidecar, el registro se rechaza con `source_mismatch`. El rechazo conserva
-esa etiqueta y su vínculo al artefacto, cuya fuente autoritativa está en el
-sidecar. Los errores de documento y de control también heredan checksum y
+sidecar, el registro se rechaza con `source_mismatch`. `source` y las métricas
+`by_source` siempre siguen el sidecar, también ante etiquetas desconocidas o
+Unicode inválido. La etiqueta conflictiva se recupera del Raw con la procedencia
+del rechazo. Los errores de documento y de control también heredan checksum y
 timestamp; el miembro/índice es null cuando no se llegó a abrir el contenedor.
+Las corrupciones CRC, DEFLATE, BZIP2 y LZMA de un miembro se registran como
+`unreadable_zip_member`, sin impedir el procesamiento de los demás miembros.
 
 `bronze/ingestion_report.json` y `manifest.ingestion` contienen los mismos
 conteos agregados y `by_source`:
@@ -105,15 +133,40 @@ conteos agregados y `by_source`:
 - `document_errors`: documentos/contenedores ilegibles o incompatibles,
   scope `document`; no se inventa cuántas entradas contenían;
 - `control_errors`: controles de borrado sin `ref`, scope `control`;
+- `tombstones`: controles válidos escritos en `tombstones.parquet`, sin
+  deduplicarlos ni incluirlos en `parsed`, `accepted` o `rejected`;
 - `passed`: ausencia de rechazos y errores de documento/control.
 
 Se cumple `parsed = accepted + rejected`, también por fuente, y el número de
 filas en rechazos es `rejected + document_errors + control_errors`. Las líneas
-en blanco y los miembros ZIP que no son Atom no son candidatos. Los tombstones
-válidos son controles separados; se conserva la semántica Silver anterior:
-se aplican los de ZIP, mientras la ruta Atom/XML plano todavía no los aplica.
+en blanco y los miembros ZIP que no son Atom no son candidatos.
 `placsp_entries` ahora cuenta todos los candidatos de ZIP, incluidos rechazados;
 `atom_files` cuenta los documentos Atom intentados en ZIP y ficheros planos.
+
+### Compatibilidad temporal con Silver/Gold legado
+
+Bronze y sus métricas conservan todas las recuperaciones. La lista normalizada
+que recibe el pipeline legado usa solo el snapshot más reciente de cada
+`(source, partition, window_start, window_end)`, según `retrieved_at` del
+sidecar. Los artefactos sin partición ni ventana siguen siendo independientes.
+Un empate en el máximo timestamp con checksums distintos detiene la ejecución:
+no hay evidencia suficiente para elegir una versión por nombre de fichero.
+Esta selección no acredita la completitud de la descarga.
+
+El snapshot se selecciona entero, antes del plegado de avisos y tombstones.
+Así, una corrección TED/BOE no pierde frente al fichero base por orden léxico;
+un ZIP corregido tampoco conserva efectos de tombstones retirados de su versión
+anterior. Se mantiene el plegado por `updated` dentro del conjunto seleccionado,
+con orden de recuperación como desempate. La vista legada sigue aplicando solo
+tombstones de ZIP; los de Atom/XML plano ya se conservan en Bronze, pero aún
+no se aplican a esta vista. No se cambia el modelo canónico ni los productos Gold.
+
+El informe añade `superseded_artifacts` y `superseded_records` a nivel de run
+para contar los artefactos y registros aceptados históricos excluidos de esa
+vista. `tombstone_ids` conserva el número de refs únicos de ZIP seleccionados;
+`tombstoned_removed` y `updates_folded` cuentan las operaciones legadas sobre
+los registros seleccionados. Los rechazos de snapshots anteriores siguen
+siendo visibles y mantienen `ingestion.passed=false`.
 
 La aceptación Bronze comprueba la estructura y los campos identificador/título,
 no certifica la validez de fechas, importes ni otros campos opcionales. Los

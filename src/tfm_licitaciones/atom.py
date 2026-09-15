@@ -8,6 +8,7 @@ silver contract can absorb and returns flat payloads for the bronze layer.
 
 from __future__ import annotations
 
+import lzma
 import math
 import re
 import zipfile
@@ -39,8 +40,14 @@ class AtomBatch:
 
     entries: list[dict[str, Any]] = field(default_factory=list)
     rejections: list[dict[str, Any]] = field(default_factory=list)
-    tombstones: set[str] = field(default_factory=set)
+    tombstone_rows: list[dict[str, Any]] = field(default_factory=list)
     atom_files: int = 0
+
+    @property
+    def tombstones(self) -> set[str]:
+        """Keep the legacy ref-set API while retaining every located control."""
+
+        return {row["source_record_id"] for row in self.tombstone_rows}
 
     def require_valid(self) -> None:
         """Legacy adapters fail explicitly instead of silently dropping entries."""
@@ -86,7 +93,8 @@ def parse_atom_batch(text: str | bytes, source_member: str | None = None) -> Ato
     for index, node in enumerate(root.findall("at:deleted-entry", CODICE_NS), 1):
         ref = node.attrib.get("ref", "").strip()
         if ref:
-            batch.tombstones.add(ref)
+            batch.tombstone_rows.append({**location, "record_locator": f"deleted-entry:{index}",
+                                         "source_record_id": ref})
         else:
             batch.rejections.append({**location, "record_locator": f"deleted-entry:{index}",
                                      "rejection_reason": "missing_tombstone_ref", "rejection_scope": "control"})
@@ -138,16 +146,17 @@ def parse_placsp_zip_batch(path: Path) -> AtomBatch:
                 result.atom_files += 1
                 try:
                     batch = parse_atom_batch(archive.read(member), member.filename)
-                except (zipfile.BadZipFile, RuntimeError, NotImplementedError, zlib.error, EOFError):
+                except (zipfile.BadZipFile, RuntimeError, NotImplementedError, zlib.error,
+                        OSError, lzma.LZMAError, EOFError):
                     result.rejections.append({**location, "source_member": member.filename,
                                               "source_member_index": member_index,
                                               "rejection_reason": "unreadable_zip_member", "rejection_scope": "document"})
                     continue
-                for row in batch.entries + batch.rejections:
+                for row in batch.entries + batch.rejections + batch.tombstone_rows:
                     row["source_member_index"] = member_index
                 result.entries.extend(batch.entries)
                 result.rejections.extend(batch.rejections)
-                result.tombstones |= batch.tombstones
+                result.tombstone_rows.extend(batch.tombstone_rows)
     except zipfile.BadZipFile:
         result.rejections.append({**location, "rejection_reason": "invalid_zip", "rejection_scope": "document"})
         return result
