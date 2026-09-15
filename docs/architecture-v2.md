@@ -6,6 +6,8 @@ El TFM implementa una plataforma de datos reproducible e incremental para integr
 
 El producto final es un feed de oportunidades: una empresa define qué vende, geografía, tamaño de contrato y otros criterios; el sistema publica diariamente nuevas oportunidades y señales de mercado compatibles con ese perfil.
 
+La plataforma es generalista respecto al dominio de contratación. No restringe la ingesta a licitaciones tecnológicas: obras, catering, sanidad, logística, energía, servicios profesionales, tecnología y cualquier otra categoría representable mediante CPV deben poder recorrer el mismo pipeline. Tecnología se mantiene como caso de estudio del TFM, no como restricción del modelo de datos.
+
 La clasificación semántica es una etapa de enriquecimiento del pipeline, no el objeto principal del TFM.
 
 ## 2. Alcance P0 para la entrega
@@ -17,7 +19,7 @@ El sistema debe demostrar de extremo a extremo:
 - idempotencia;
 - almacenamiento raw inmutable;
 - integración de al menos tres fuentes de contratación;
-- normalización a un modelo canónico;
+- normalización a un modelo canónico generalista;
 - reconciliación de revisiones, anulaciones y duplicados;
 - enriquecimiento con datos de referencia;
 - controles de calidad y observabilidad;
@@ -31,9 +33,9 @@ Fuera de P0: two-tower recommender, entrenamiento de modelos propios, Spark por 
 
 ### Fuentes transaccionales
 
-1. **TED** — avisos europeos mediante API oficial.
+1. **TED** — avisos europeos mediante API oficial. La ingesta objetivo es generalista dentro del alcance geográfico/temporal configurado; cualquier filtro sectorial se aplica downstream.
 2. **OpenPLACSP — licitaciones** — sindicación oficial española.
-3. **OpenPLACSP — contratos menores** — histórico y actualizaciones para inteligencia de compradores y oportunidades de menor ticket cuando proceda.
+3. **OpenPLACSP — contratos menores** — histórico y actualizaciones para inteligencia de compradores y señales de compra de menor ticket cuando proceda.
 
 Fuentes P1 si su integración resulta directa:
 
@@ -42,7 +44,7 @@ Fuentes P1 si su integración resulta directa:
 
 ### Fuentes de enriquecimiento
 
-- **CPV 2008** — taxonomía jerárquica de productos y servicios.
+- **CPV 2008** — taxonomía jerárquica oficial de productos, servicios y obras.
 - **DIR3** — identificación y jerarquía de organismos compradores.
 - **NUTS / Eurostat / INE** — contexto territorial y económico; P1 salvo que la integración sea trivial.
 
@@ -82,7 +84,7 @@ La separación entre ingesta y procesamiento se mantiene: una ejecución de tran
 
 ## 5. Grano y modelo Silver
 
-Silver no es una mega tabla enriquecida. Mantiene entidades reconciliadas con claves estables.
+Silver no es una mega tabla enriquecida. Mantiene entidades reconciliadas con claves estables y sin asumir un sector concreto.
 
 ### `silver.procurement_events`
 
@@ -134,7 +136,7 @@ El sistema soporta dos modos:
 
 Carga histórica parametrizable por rango temporal. Sirve para reconstruir el lake desde raw y para ampliar el corpus sin cambiar la lógica del pipeline.
 
-Objetivo inicial: intentar cubrir 2021–2026 para TED y las fuentes PLACSP que permitan histórico equivalente.
+Objetivo inicial: intentar cubrir 2021–2026 para TED y las fuentes PLACSP que permitan histórico equivalente. El backfill no debe limitarse por defecto a un subconjunto tecnológico.
 
 ### Daily incremental
 
@@ -225,20 +227,37 @@ El enrichment se aplica después de construir entidades Silver estables.
 - rangos de importe;
 - historial del comprador.
 
+CPV es la taxonomía oficial primaria y funciona para todo el universo de contratación, no solo para tecnología.
+
 ### Semántico
 
-Se utilizará un modelo preentrenado ya existente para producir una taxonomía multilabel de negocio, por ejemplo:
+Se utilizará un modelo preentrenado ya existente para producir etiquetas multilabel de negocio más útiles para búsqueda y matching. La taxonomía semántica debe ser generalista; por ejemplo:
 
 ```text
+Construction & Civil Works
+Architecture & Engineering
+Healthcare & Medical Supplies
+Catering & Food
+Cleaning & Facility Management
+Transport & Logistics
+Energy
+Education & Training
+Professional Services
+Legal Services
+Marketing & Communication
+Security Services
+Industrial Equipment
+Office Supplies
+IT & Digital
+Software Development
 Cloud
-Data Engineering
-Business Intelligence
+Data & Analytics
 AI / ML
 Cybersecurity
-Software Development
-Infrastructure
-Managed Services
+Telecommunications
 ```
+
+Una misma contratación puede recibir varias etiquetas. Estas etiquetas complementan CPV; no lo sustituyen.
 
 Cada enriquecimiento conserva al menos:
 
@@ -256,11 +275,11 @@ La evaluación se realiza sobre una muestra etiquetada manualmente y no debe com
 
 ## 10. Gold y producto
 
-Gold se define por casos de uso, no por fuente.
+Gold se define por casos de uso, no por fuente ni por un único sector.
 
 ### `gold.open_opportunities`
 
-Procedimientos abiertos y accionables, con enrichment y campos necesarios para filtrar por sector, ticket, geografía, comprador y deadline.
+Procedimientos abiertos y accionables de cualquier dominio, con enrichment y campos necesarios para filtrar por sector, ticket, geografía, comprador y deadline.
 
 ### `gold.minor_contract_signals`
 
@@ -276,7 +295,9 @@ Perfil agregado del organismo: categorías compradas, importes, frecuencia, prov
 
 ### `gold.daily_candidate_feed`
 
-Candidate set diario para el frontend. La primera versión usa scoring explicable:
+Candidate set diario para el frontend. El perfil de una empresa expresa qué vende y sus restricciones comerciales; el pipeline decide qué oportunidades del universo general son relevantes para ella.
+
+La primera versión usa scoring explicable:
 
 ```text
 semantic relevance
@@ -381,4 +402,4 @@ Con más tiempo y datos de interacción:
 
 ## 15. Criterio de éxito del TFM
 
-La entrega es satisfactoria si puede demostrarse que, partiendo de fuentes oficiales heterogéneas, el sistema puede reconstruir un histórico y ejecutar una carga incremental idempotente, reconciliar y enriquecer los datos, detectar fallos de calidad, producir productos analíticos reproducibles y alimentar un feed diario de oportunidades sin lógica específica del frontend.
+La entrega es satisfactoria si puede demostrarse que, partiendo de fuentes oficiales heterogéneas y sin asumir un sector concreto, el sistema puede reconstruir un histórico y ejecutar una carga incremental idempotente, reconciliar y enriquecer los datos, detectar fallos de calidad, producir productos analíticos reproducibles y alimentar un feed diario personalizado de oportunidades sin lógica específica del frontend.
