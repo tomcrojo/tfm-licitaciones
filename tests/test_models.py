@@ -107,6 +107,16 @@ class ProcurementEventTests(unittest.TestCase):
                 ingested_at=datetime(2026, 1, 1),
             )
 
+    def test_ingested_timestamp_is_required_at_runtime(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ingested_at must not be null"):
+            ProcurementEvent(
+                event_id="ted:event:1",
+                procedure_id=None,
+                source="ted",
+                source_event_type="notice",
+                ingested_at=None,  # type: ignore[arg-type]
+            )
+
     def test_duplicate_cpv_codes_are_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "cpv_codes must not contain duplicates"):
             ProcurementEvent(
