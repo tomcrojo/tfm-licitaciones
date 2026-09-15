@@ -17,6 +17,7 @@ Incluye:
 - descarga explícita desde TED y OpenPLACSP;
 - conservación local de los payloads descargados;
 - parsing de JSON, ZIP, Atom y CODICE/XML;
+- Bronze Parquet con procedencia, rechazos localizados y conteos de ingesta;
 - normalización a un `TenderRecord` común;
 - plegado de revisiones y aplicación de tombstones de OpenPLACSP;
 - clasificación tecnológica por reglas y CPV como baseline;
@@ -28,8 +29,9 @@ ejecución del 2 de septiembre de 2026 sobre 9.905 avisos TED y 129.090 avisos
 OpenPLACSP tras el plegado. Estos datos describen ese corpus concreto; no son
 una estimación del histórico completo.
 
-La implementación todavía usa JSONL/CSV y ejecución manual. La migración hacia
-ingesta incremental idempotente, Polars, Parquet, nuevas fuentes y Airflow está
+Bronze utiliza Parquet; Silver y Gold todavía usan JSONL/CSV y ejecución manual.
+La migración hacia ingesta incremental idempotente, Polars en las
+transformaciones, Parquet en las demás capas, nuevas fuentes y Airflow está
 descrita en la [arquitectura](docs/architecture.md). Las limitaciones conocidas
 se documentan en el [contrato de datos](docs/data_contract.md).
 

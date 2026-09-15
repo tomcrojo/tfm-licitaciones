@@ -8,8 +8,11 @@ silver contract can absorb and returns flat payloads for the bronze layer.
 
 from __future__ import annotations
 
+import math
 import re
 import zipfile
+import zlib
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -30,12 +33,28 @@ CODICE_NS = {
 _ENTRY_ID_NUMBER = re.compile(r"/(\d+)\s*$")
 
 
+@dataclass
+class AtomBatch:
+    """Account for every entry and distinguish unreadable documents."""
+
+    entries: list[dict[str, Any]] = field(default_factory=list)
+    rejections: list[dict[str, Any]] = field(default_factory=list)
+    tombstones: set[str] = field(default_factory=set)
+    atom_files: int = 0
+
+    def require_valid(self) -> None:
+        """Legacy adapters fail explicitly instead of silently dropping entries."""
+
+        if self.rejections:
+            raise ValueError(f"Atom parsing rejected input: {self.rejections[0]}")
+
+
 def parse_atom_file(path: Path) -> list[TenderRecord]:
     """Parse a plain Atom feed into normalized records without losing fields."""
 
-    payloads, _ = parse_placsp_atom(Path(path).read_text(encoding="utf-8"))
-    records = [normalize_placsp(payload) for payload in payloads]
-    return [record for record in records if record.title]
+    batch = parse_atom_batch(Path(path).read_bytes())
+    batch.require_valid()
+    return [normalize_placsp(entry["payload"]) for entry in batch.entries]
 
 
 def parse_placsp_atom(text: str) -> tuple[list[dict[str, Any]], set[str]]:
@@ -46,14 +65,51 @@ def parse_placsp_atom(text: str) -> tuple[list[dict[str, Any]], set[str]]:
     later files use to cancel previously published tenders.
     """
 
-    root = ElementTree.fromstring(text)
-    payloads: list[dict[str, Any]] = []
-    tombstones = {ref for node in root.findall("at:deleted-entry", CODICE_NS) if (ref := node.attrib.get("ref"))}
-    for entry in root.findall("atom:entry", CODICE_NS):
-        payload = _parse_entry(entry)
-        if payload is not None:
-            payloads.append(payload)
-    return payloads, tombstones
+    batch = parse_atom_batch(text)
+    batch.require_valid()
+    return [entry["payload"] for entry in batch.entries], batch.tombstones
+
+
+def parse_atom_batch(text: str | bytes, source_member: str | None = None) -> AtomBatch:
+    """Return accepted entries, located rejections and separate deletion controls."""
+
+    batch = AtomBatch(atom_files=1)
+    location = {"source_member": source_member, "record_locator": None, "source_record_id": None}
+    try:
+        root = ElementTree.fromstring(text)
+    except (ElementTree.ParseError, LookupError, ValueError):
+        batch.rejections.append({**location, "rejection_reason": "invalid_xml", "rejection_scope": "document"})
+        return batch
+    if root.tag != f"{{{ATOM_NS['atom']}}}feed":
+        batch.rejections.append({**location, "rejection_reason": "expected_atom_feed", "rejection_scope": "document"})
+        return batch
+    for index, node in enumerate(root.findall("at:deleted-entry", CODICE_NS), 1):
+        ref = node.attrib.get("ref", "").strip()
+        if ref:
+            batch.tombstones.add(ref)
+        else:
+            batch.rejections.append({**location, "record_locator": f"deleted-entry:{index}",
+                                     "rejection_reason": "missing_tombstone_ref", "rejection_scope": "control"})
+    for index, entry in enumerate(root.findall("atom:entry", CODICE_NS), 1):
+        entry_id = _text(entry, "id")
+        location = {"source_member": source_member, "record_locator": f"entry:{index}",
+                    "source_record_id": entry_id or None}
+        reason = None
+        if not _ENTRY_ID_NUMBER.search(entry_id):
+            reason = "invalid_atom_id"
+        elif not _text(entry, "title"):
+            reason = "missing_title"
+        if reason:
+            batch.rejections.append({**location, "rejection_reason": reason, "rejection_scope": "record"})
+        else:
+            payload = _parse_entry(entry)
+            if any(isinstance(value, float) and not math.isfinite(value) for value in payload.values()):
+                batch.rejections.append({**location, "rejection_reason": "non_finite_amount", "rejection_scope": "record"})
+                continue
+            if source_member is not None:
+                payload["_atom_file"] = source_member
+            batch.entries.append({**location, "payload": payload})
+    return batch
 
 
 def iter_placsp_zip(path: Path) -> tuple[list[dict[str, Any]], set[str], int]:
@@ -64,31 +120,46 @@ def iter_placsp_zip(path: Path) -> tuple[list[dict[str, Any]], set[str], int]:
     extracting the archive onto disk.
     """
 
-    payloads: list[dict[str, Any]] = []
-    tombstones: set[str] = set()
-    atoms = 0
-    with zipfile.ZipFile(path) as archive:
-        for name in archive.namelist():
-            if not name.lower().endswith(".atom"):
-                continue
-            atoms += 1
-            text = archive.read(name).decode("utf-8", errors="replace")
-            batch, deleted = parse_placsp_atom(text)
-            for payload in batch:
-                payload["_atom_file"] = name
-            payloads.extend(batch)
-            tombstones |= deleted
-    return payloads, tombstones, atoms
+    batch = parse_placsp_zip_batch(path)
+    batch.require_valid()
+    return [entry["payload"] for entry in batch.entries], batch.tombstones, batch.atom_files
 
 
-def _parse_entry(entry: ElementTree.Element) -> dict[str, Any] | None:
+def parse_placsp_zip_batch(path: Path) -> AtomBatch:
+    """Parse members independently so one malformed feed cannot hide the rest."""
+
+    result = AtomBatch()
+    location = {"source_member": None, "record_locator": None, "source_record_id": None}
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for member in archive.infolist():
+                if member.is_dir() or not member.filename.lower().endswith(".atom"):
+                    continue
+                result.atom_files += 1
+                try:
+                    batch = parse_atom_batch(archive.read(member), member.filename)
+                except (zipfile.BadZipFile, RuntimeError, NotImplementedError, zlib.error, EOFError):
+                    result.rejections.append({**location, "source_member": member.filename,
+                                              "rejection_reason": "unreadable_zip_member", "rejection_scope": "document"})
+                    continue
+                result.entries.extend(batch.entries)
+                result.rejections.extend(batch.rejections)
+                result.tombstones |= batch.tombstones
+    except zipfile.BadZipFile:
+        result.rejections.append({**location, "rejection_reason": "invalid_zip", "rejection_scope": "document"})
+        return result
+    if not result.atom_files:
+        result.rejections.append({**location, "rejection_reason": "no_atom_members", "rejection_scope": "document"})
+    return result
+
+
+def _parse_entry(entry: ElementTree.Element) -> dict[str, Any]:
     """Extract the CODICE fields of one Atom entry into a flat payload."""
 
     entry_id = _text(entry, "id")
     number = _ENTRY_ID_NUMBER.search(entry_id or "")
     title = _text(entry, "title")
-    if not number or not title:
-        return None
+    assert number is not None and title, "Entry must be validated before extraction"
     buyer_node = entry.find(".//cac:Party/cac:PartyName/cbc:Name", CODICE_NS)
     dir3 = None
     nif = None

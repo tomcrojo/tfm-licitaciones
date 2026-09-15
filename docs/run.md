@@ -32,7 +32,9 @@ uv run --with-editable . python -m tfm_licitaciones.cli run \
 Se generan:
 
 ```text
-/tmp/tfm-licitaciones-fixture/bronze/records.jsonl
+/tmp/tfm-licitaciones-fixture/bronze/records.parquet
+/tmp/tfm-licitaciones-fixture/bronze/rejections.parquet
+/tmp/tfm-licitaciones-fixture/bronze/ingestion_report.json
 /tmp/tfm-licitaciones-fixture/silver/tenders.jsonl
 /tmp/tfm-licitaciones-fixture/gold/opportunities.jsonl
 /tmp/tfm-licitaciones-fixture/gold/opportunities.csv
@@ -42,6 +44,20 @@ Se generan:
 /tmp/tfm-licitaciones-fixture/gold/classifier_evaluation.json
 /tmp/tfm-licitaciones-fixture/gold/run_manifest.json
 ```
+
+Bronze ya no escribe `records.jsonl`. Los Parquet de registros y rechazos
+conservan esquema explícito, incluso vacíos. El [contrato](data_contract.md)
+define payload, procedencia, motivos y la unidad de conteo.
+
+Revise `bronze/ingestion_report.json` junto a `gold/quality_report.json`:
+el primero informa `parsed`, `accepted`, `rejected`, errores de documento y
+control, y su estado `passed`, también con conteos por fuente. El manifest
+incluye el mismo informe bajo `ingestion`. Los errores de parsing no detienen
+los demás candidatos o miembros Atom recuperables.
+
+El estado `quality_passed` que muestra la CLI y su código de salida conservan
+los gates Silver/Gold anteriores: un resultado verde no implica cero rechazos
+Bronze. La agregación de ambos estados de calidad queda pendiente.
 
 ## Ingesta desde fuentes oficiales
 
@@ -77,8 +93,8 @@ checksums de los inputs utilizados en la última ejecución publicada.
   completitud de ventana.
 - La transformación `run` es offline y determinista respecto a sus inputs de
   negocio, salvo por los timestamps técnicos de ejecución.
-- JSONL y CSV son formatos transitorios de la implementación actual; la
-  arquitectura P0 utiliza Parquet.
+- Bronze utiliza Parquet; JSONL y CSV siguen siendo formatos transitorios de
+  Silver y Gold.
 
 Estas limitaciones se mantienen visibles para que los siguientes cambios
 puedan demostrar qué propiedad añaden.

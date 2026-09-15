@@ -8,15 +8,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .atom import iter_placsp_zip, parse_atom_file
+from .bronze import bronze_frame, discover_raw_files, load_raw_records, rejection_frame
 from .classify import score_tender
 from .config import configured_path, load_config
 from .evaluation import evaluate_against_cpv
-from .io import read_jsonl, write_csv, write_json, write_jsonl
+from .io import write_csv, write_json, write_jsonl, write_parquet
 from .linkage import link_duplicates
 from .marts import buyer_summary, opportunities_rows, technology_summary
 from .models import OpportunityRecord, TenderRecord
-from .normalize import normalize_record
 from .quality import validate_records
 
 
@@ -41,71 +40,6 @@ def fold_latest_updates(records: list[TenderRecord]) -> tuple[list[TenderRecord]
             latest[key] = (timestamp or "", position, record)
     folded = [entry[2] for entry in sorted(latest.values(), key=lambda entry: entry[1])]
     return folded, len(records) - len(folded)
-
-
-def discover_raw_files(raw_dir: Path) -> list[Path]:
-    """Return supported raw files in deterministic source/path order."""
-
-    return sorted(
-        path
-        for path in raw_dir.rglob("*")
-        if path.suffix.lower() in {".jsonl", ".xml", ".atom", ".zip"} and path.is_file()
-    )
-
-
-def load_raw_records(raw_dir: Path) -> dict[str, Any]:
-    """Read JSONL/XML/ZIP inputs into bronze payloads and normalized records.
-
-    OpenPLACSP zips are parsed in place: every Atom member contributes flat
-    CODICE payloads plus tombstone ids, which are merged across files and
-    returned so withdrawn notices can be dropped from the final corpus.
-    """
-
-    bronze: list[dict[str, Any]] = []
-    records: list[TenderRecord] = []
-    tombstones: set[str] = set()
-    placsp_files = 0
-    placsp_entries = 0
-    for path in discover_raw_files(raw_dir):
-        source_hint = path.parent.name.lower()
-        if path.suffix.lower() == ".zip":
-            payloads, deleted, atoms = iter_placsp_zip(path)
-            placsp_files += 1
-            placsp_entries += len(payloads)
-            tombstones |= deleted
-            bronze.extend(
-                {"source": "placsp", "source_file": str(path.relative_to(raw_dir)), "payload": payload}
-                for payload in payloads
-            )
-            records.extend(normalize_record(payload) for payload in payloads)
-            continue
-        if path.suffix.lower() in {".xml", ".atom"}:
-            parsed = parse_atom_file(path)
-            records.extend(parsed)
-            bronze.extend(
-                {"source": record.source, "source_file": str(path.relative_to(raw_dir)), "payload": record.raw}
-                for record in parsed
-            )
-            continue
-        for raw in read_jsonl(path):
-            payload = dict(raw)
-            payload.setdefault("_source", source_hint)
-            record = normalize_record(payload)
-            records.append(record)
-            bronze.append(
-                {"source": record.source, "source_file": str(path.relative_to(raw_dir)), "payload": payload}
-            )
-    ingestion = {
-        "placsp_zip_files": placsp_files,
-        "placsp_entries": placsp_entries,
-        "tombstone_ids": len(tombstones),
-    }
-    return {
-        "bronze": bronze,
-        "records": records,
-        "tombstone_ids": {ref.rsplit("/", 1)[-1] for ref in tombstones},
-        "ingestion": ingestion,
-    }
 
 
 def run_pipeline(
@@ -140,7 +74,9 @@ def run_pipeline(
         "tombstoned_removed": len(records) - len(alive_records),
         "updates_folded": folded_updates,
     }
-    write_jsonl(bronze_path / "records.jsonl", bronze_rows)
+    write_parquet(bronze_path / "records.parquet", bronze_frame(bronze_rows))
+    write_parquet(bronze_path / "rejections.parquet", rejection_frame(loaded["rejections"]))
+    write_json(bronze_path / "ingestion_report.json", ingestion_stats)
     write_jsonl(silver_path / "tenders.jsonl", (record.to_dict() for record in kept_records))
 
     classifier_config = config["classifier"]
