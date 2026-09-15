@@ -99,7 +99,7 @@ ejecutarla sin levantar el orquestador.
 | Contratos menores | Incorporar señales de contratación de menor importe | Python y formato oficial por determinar | Planificado |
 | Raw | Conservar bytes y procedencia sin sobrescrituras silenciosas | Sistema de ficheros local, checksum SHA-256 | Parcial |
 | Bronze | Representar el resultado del parsing y sus rechazos | Parquet | Planificado |
-| Silver | Mantener entidades canónicas tipadas | Polars y Parquet | Planificado |
+| Silver | Mantener entidades canónicas tipadas | Polars y Parquet | Contrato definido; migración de persistencia planificada |
 | Referencias | Resolver CPV y organismos mediante identificadores oficiales | CPV 2008 y DIR3 | CPV disponible; dimensiones planificadas |
 | Linkage | Detectar avisos equivalentes entre fuentes con evidencia | Python/Polars, reglas explicables y similitud textual | Baseline implementado con correcciones pendientes |
 | Enrichment semántico | Añadir etiquetas de negocio multilabel auditables | Modelo preentrenado versionado | Planificado |
@@ -109,7 +109,7 @@ ejecutarla sin levantar el orquestador.
 
 ## 5. Modelo Silver
 
-La entidad central prevista es `silver.procurement_events`. Su grano es un
+La entidad central definida es `silver.procurement_events`. Su grano es un
 evento o estado publicado por una fuente y asociado, cuando sea posible, a un
 procedimiento. Debe separar como mínimo:
 
