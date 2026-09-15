@@ -153,6 +153,34 @@ class BronzeTests(unittest.TestCase):
         rejected = read_parquet(self.output / "bronze/rejections.parquet")
         self.assertEqual(rejected["rejection_reason"].to_list(), ["non_finite_amount"])
 
+    def test_unpaired_surrogates_are_rejected_before_acceptance_and_parquet(self) -> None:
+        invalid_payloads = [
+            {**TED, "TI": "\ud800"},
+            {**TED, "ND": "\ud800"},
+            {**TED, "extra": {"nested": ["\ud800"]}},
+            {**TED, "\ud800": "invalid key"},
+            {**TED, "_source": "\ud800"},
+        ]
+        valid = {**TED, "extra": "🏛"}
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                self.write_raw("ted/surrogate.jsonl", json.dumps(payload) + "\n" + json.dumps(valid) + "\n")
+                result = run_pipeline(raw_dir=self.raw, output_root=self.output)
+                self.assert_counts(result["manifest"]["ingestion"], 2, 1, 1)
+                self.assertFalse(result["manifest"]["ingestion"]["passed"])
+                accepted = read_parquet(self.output / "bronze/records.parquet")
+                rejected = read_parquet(self.output / "bronze/rejections.parquet")
+                self.assertEqual(accepted.height, 1)
+                self.assertEqual(json.loads(accepted["payload_json"][0]), valid)
+                self.assertEqual(rejected.height, 1)
+                rejection = rejected.row(0, named=True)
+                expected_source = "ted" if payload["_source"] == "ted" else r"\ud800"
+                self.assertEqual(rejection["source"], expected_source)
+                self.assertEqual(rejection["source_file"], "ted/surrogate.jsonl")
+                self.assertEqual(rejection["record_locator"], "line:1")
+                self.assertEqual(rejection["rejection_reason"], "invalid_unicode_payload")
+                self.assertEqual(rejection["rejection_scope"], "record")
+
     def test_parquet_roundtrip_and_reports_are_reproducible(self) -> None:
         payload = {**TED, "extra": {"nested": [1, True, None, "á"]}}
         self.write_raw("ted/sample.jsonl", json.dumps(payload) + "\n{broken\n")

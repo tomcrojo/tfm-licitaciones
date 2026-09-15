@@ -22,6 +22,9 @@ vacío. No se infiere un Struct desde payloads heterogéneos:
 | `source_record_id` | string/null | Identificador publicado; en Atom conserva el URI completo |
 | `payload_json` | string | Objeto source-specific serializado como JSON UTF-8 con claves ordenadas |
 
+El payload se serializa una vez y se verifica su codificación UTF-8 antes de
+aceptar el candidato; Parquet reutiliza esa serialización validada. Los
+surrogates Unicode aislados se rechazan, incluso en campos anidados o claves.
 `json.loads(payload_json)` recupera el objeto del adaptador. TED conserva sus
 campos heterogéneos; Atom conserva el payload CODICE plano y `_atom_file` cuando
 procede de un ZIP. Este esquema no sustituye al contrato canónico Silver.
@@ -31,12 +34,15 @@ la evidencia Raw actual no proporciona.
 
 `bronze/rejections.parquet` utiliza las mismas cinco columnas de procedencia,
 más `rejection_reason` y `rejection_scope`, ambas string; no contiene
-`payload_json`. Los motivos incluyen `invalid_json`, `expected_json_object`,
+`payload_json`. Los motivos incluyen `invalid_json`, `invalid_unicode_payload`, `expected_json_object`,
 `unsupported_source`, `missing_tender_id`, `missing_title`, `invalid_atom_id`,
 `invalid_xml`, `expected_atom_feed`, `invalid_zip`, `unreadable_zip_member`,
 `no_atom_members`, `non_finite_amount` y `missing_tombstone_ref`. El contenido original se consulta
 en Raw mediante su procedencia. Sin ID se conserva la posición; para un
 documento ilegible la posición y el ID son nulos.
+Si la propia etiqueta de fuente contiene surrogates aislados, su procedencia
+los representa como escapes `\ud800` para poder persistir el rechazo; Raw
+conserva la representación original.
 
 `bronze/ingestion_report.json` y `manifest.ingestion` contienen los mismos
 conteos agregados y `by_source`:
