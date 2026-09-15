@@ -178,7 +178,9 @@ class LinkageTests(unittest.TestCase):
         self.assertEqual(set(result.assignments), {("ted", "X-1"), ("placsp", "X-1"), ("placsp", "Y-9")})
         canonical = [key for key, assignment in result.assignments.items() if assignment["is_canonical"]]
         self.assertEqual(canonical, [("ted", "X-1")])
-        # duplicate_of provably points at the canonical, not at the record itself.
+        # duplicate_of provably points at the canonical (see Y-9 -> X-1); for the
+        # colliding ("placsp", "X-1") row the bare tender_id cannot disambiguate,
+        # so is_canonical is the authoritative flag (schema limitation, see PR).
         self.assertEqual(result.assignments[("placsp", "Y-9")]["duplicate_of"], "X-1")
 
     def test_empty_input_produces_empty_result(self) -> None:
@@ -197,6 +199,34 @@ class LinkageTests(unittest.TestCase):
                 "window_days": 7,
             },
         )
+
+    def test_blocking_excludes_different_buyer_and_cpv_division(self) -> None:
+        title = "Suministro de material de oficina y papeleria"
+        different_division = link_duplicates(
+            [
+                self._record("A-1", title, day=8, cpv="45212200"),
+                self._record("B-2", title, day=9, source="placsp", cpv="30190000"),
+            ],
+            threshold=0.6,
+        )
+        self.assertEqual(different_division.stats["candidate_pairs"], 0)
+        different_buyer = link_duplicates(
+            [
+                self._record("A-1", title, day=8, buyer="Ayuntamiento Uno"),
+                self._record("B-2", title, day=9, source="placsp", buyer="Ayuntamiento Dos"),
+            ],
+            threshold=0.6,
+        )
+        self.assertEqual(different_buyer.stats["candidate_pairs"], 0)
+        # Same division (48), different full CPV code: still one candidate.
+        same_division = link_duplicates(
+            [
+                self._record("A-1", title, day=8, cpv="48000000"),
+                self._record("B-2", title, day=9, source="placsp", cpv="48900000"),
+            ],
+            threshold=0.6,
+        )
+        self.assertEqual(same_division.stats["candidate_pairs"], 1)
 
     def test_same_block_dissimilar_titles_do_not_link(self) -> None:
         first = self._record(
