@@ -15,3 +15,6 @@ data/bronze/records.jsonl
 data/silver/tenders.jsonl
 data/gold/opportunities.jsonl
 data/gold/opportunities.csv
+
+# Dimensiones de referencia regenerables desde config/reference
+data/reference/
