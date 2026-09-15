@@ -1,0 +1,10 @@
+{
+  "source": "boe",
+  "raw_path": "boe-sample.jsonl",
+  "sha256": "bf74a2f667ff3d5c3ca2e76b64ce5f75c4db3601c16e49adad3cf95d6580f993",
+  "retrieved_at": "2026-02-01T12:30:45.123456+00:00",
+  "partition": null,
+  "window_start": null,
+  "window_end": null,
+  "version": 1
+}

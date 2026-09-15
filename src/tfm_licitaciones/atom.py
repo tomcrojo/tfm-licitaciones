@@ -132,7 +132,7 @@ def parse_placsp_zip_batch(path: Path) -> AtomBatch:
     location = {"source_member": None, "record_locator": None, "source_record_id": None}
     try:
         with zipfile.ZipFile(path) as archive:
-            for member in archive.infolist():
+            for member_index, member in enumerate(archive.infolist(), 1):
                 if member.is_dir() or not member.filename.lower().endswith(".atom"):
                     continue
                 result.atom_files += 1
@@ -140,8 +140,11 @@ def parse_placsp_zip_batch(path: Path) -> AtomBatch:
                     batch = parse_atom_batch(archive.read(member), member.filename)
                 except (zipfile.BadZipFile, RuntimeError, NotImplementedError, zlib.error, EOFError):
                     result.rejections.append({**location, "source_member": member.filename,
+                                              "source_member_index": member_index,
                                               "rejection_reason": "unreadable_zip_member", "rejection_scope": "document"})
                     continue
+                for row in batch.entries + batch.rejections:
+                    row["source_member_index"] = member_index
                 result.entries.extend(batch.entries)
                 result.rejections.extend(batch.rejections)
                 result.tombstones |= batch.tombstones

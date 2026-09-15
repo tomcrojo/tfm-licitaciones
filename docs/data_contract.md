@@ -6,6 +6,44 @@ que todavía utiliza el pipeline. El modelo y el esquema tipado de
 escriben `TenderRecord` en JSONL. Esa migración se hará por límites en cambios
 posteriores; no se presenta aquí como terminada.
 
+## Raw: evidencia de recuperación por artefacto
+
+Cada fichero que entra en Bronze requiere un sidecar `<fichero>.provenance.json`.
+`RawArtifact` en `src/tfm_licitaciones/raw_provenance.py` define esta evidencia
+inmutable, independiente del estado operativo de ventanas y del manifest Gold:
+
+| Campo | Semántica |
+| --- | --- |
+| `version` | Versión del sidecar, actualmente `1` |
+| `source` | Fuente que recuperó el artefacto (`ted`, `placsp`, `boe`) |
+| `raw_path` | Ruta relativa al directorio Raw, con separadores `/` |
+| `sha256` | SHA-256 hexadecimal de los bytes del fichero completo |
+| `retrieved_at` | Finalización de la recuperación del artefacto; ISO 8601 con zona, escrito en UTC |
+| `partition` | Identidad lógica del lote/partición, o null si no aplica |
+| `window_start`, `window_end` | Límites inclusivos ISO de la ventana, ambos null si no aplica |
+
+TED conserva su lote JSONL por ventana solicitada: `partition=YYYYMMDD-YYYYMMDD`
+y `retrieved_at` corresponde al final de la recuperación del lote agregado,
+antes de serializarlo. No representa la publicación del aviso ni el instante
+individual de cada página HTTP. OpenPLACSP conserva el ZIP mensual, con
+`partition=YYYYMM` y los límites del mes completo, incluso cuando se solicita
+solo parte del mes; el timestamp se captura al terminar la transferencia.
+
+Una descarga idéntica reutiliza el fichero y su primera evidencia. Una descarga
+distinta bajo la misma identidad conserva la versión anterior y publica la
+nueva como `<nombre>-<sha256>.<extensión>`, con su propio sidecar y timestamp.
+Bronze comprueba ruta y checksum antes de parsear. Evidencia ausente, inválida
+o que no coincide con los bytes detiene la transformación; no se inventan
+rechazos de registros cuyo origen no puede verificarse. Ni la transformación,
+ni el manifest del run, ni el mtime proporcionan `retrieved_at`.
+
+`ingestion_state` sigue siendo estado de ejecución. No se duplica allí
+una segunda autoridad de recuperación: sus timestamps operativos y de
+aceptación de cambios no sustituyen al sidecar. La integración de completitud
+de ventanas sigue pendiente. Para datos históricos, solo una evidencia de
+descarga vinculada al mismo fichero y checksum puede justificar un sidecar;
+sin ella se necesita una nueva recuperación en un directorio Raw separado.
+
 ## Bronze: parsing source-specific en Parquet
 
 `bronze/records.parquet` es la salida primaria de registros aceptados antes del
@@ -18,8 +56,11 @@ vacío. No se infiere un Struct desde payloads heterogéneos:
 | `source` | string | Fuente del adaptador (`ted`, `placsp`, `boe`) |
 | `source_file` | string | Ruta relativa al directorio Raw del run |
 | `source_member` | string/null | Nombre del miembro Atom cuando procede de un ZIP |
+| `source_member_index` | uint32/null | Posición del miembro en el directorio central ZIP, desde 1, incluyendo miembros no Atom |
 | `record_locator` | string | Línea JSONL (`line:N`) o posición de entrada Atom (`entry:N`), desde 1 |
 | `source_record_id` | string/null | Identificador publicado; en Atom conserva el URI completo |
+| `raw_sha256` | string | Checksum heredado del sidecar verificado del fichero Raw; en ZIP identifica el contenedor |
+| `raw_retrieved_at` | timestamp[us, UTC] | Instante heredado del mismo sidecar, sin consultar el reloj de transformación |
 | `payload_json` | string | Objeto source-specific serializado como JSON UTF-8 con claves ordenadas |
 
 El payload se serializa una vez y se verifica su codificación UTF-8 antes de
@@ -28,14 +69,18 @@ surrogates Unicode aislados se rechazan, incluso en campos anidados o claves.
 `json.loads(payload_json)` recupera el objeto del adaptador. TED conserva sus
 campos heterogéneos; Atom conserva el payload CODICE plano y `_atom_file` cuando
 procede de un ZIP. Este esquema no sustituye al contrato canónico Silver.
-La reproducción utiliza el fichero Raw, el miembro/localizador y el SHA-256
-de `raw_files` en el manifest Gold. No se añade un timestamp de descarga que
-la evidencia Raw actual no proporciona.
+La reproducción utiliza `source_file` + `raw_sha256` para identificar el
+artefacto y su sidecar determinista, y miembro/índice/localizador para encontrar
+el registro. El índice desambigua miembros con el mismo nombre dentro de un
+ZIP. No se crean sidecars ni checksums independientes por miembro. Fuente y
+partición/ventana del artefacto se consultan en su sidecar; no se copian ventanas
+en cada fila. En la futura migración, `ProcurementEvent.ingested_at` recibirá
+`raw_retrieved_at`. La persistencia Silver sigue sin cambios.
 
-`bronze/rejections.parquet` utiliza las mismas cinco columnas de procedencia,
+`bronze/rejections.parquet` utiliza las mismas columnas de procedencia,
 más `rejection_reason` y `rejection_scope`, ambas string; no contiene
 `payload_json`. Los motivos incluyen `invalid_json`, `invalid_unicode_payload`, `expected_json_object`,
-`unsupported_source`, `missing_tender_id`, `missing_title`, `invalid_atom_id`,
+`unsupported_source`, `source_mismatch`, `missing_tender_id`, `missing_title`, `invalid_atom_id`,
 `invalid_xml`, `expected_atom_feed`, `invalid_zip`, `unreadable_zip_member`,
 `no_atom_members`, `non_finite_amount` y `missing_tombstone_ref`. El contenido original se consulta
 en Raw mediante su procedencia. Sin ID se conserva la posición; para un
@@ -43,6 +88,11 @@ documento ilegible la posición y el ID son nulos.
 Si la propia etiqueta de fuente contiene surrogates aislados, su procedencia
 los representa como escapes `\ud800` para poder persistir el rechazo; Raw
 conserva la representación original.
+Si una etiqueta de fuente soportada del payload contradice la fuente del
+sidecar, el registro se rechaza con `source_mismatch`. El rechazo conserva
+esa etiqueta y su vínculo al artefacto, cuya fuente autoritativa está en el
+sidecar. Los errores de documento y de control también heredan checksum y
+timestamp; el miembro/índice es null cuando no se llegó a abrir el contenedor.
 
 `bronze/ingestion_report.json` y `manifest.ingestion` contienen los mismos
 conteos agregados y `by_source`:

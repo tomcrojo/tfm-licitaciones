@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tfm_licitaciones.models import TenderRecord
 from tfm_licitaciones.pipeline import fold_latest_updates, run_pipeline
+from raw_fixtures import evidence_for_fixture
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -55,6 +56,7 @@ class PipelineTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            evidence_for_fixture(raw.parent.parent, raw / "sample.jsonl", "ted")
             result = run_pipeline(raw_dir=raw.parent.parent, output_root=root / "data")
             self.assertTrue(result["quality"]["passed"])
             self.assertTrue((root / "data" / "bronze" / "records.parquet").exists())
@@ -90,6 +92,8 @@ class PipelineTests(unittest.TestCase):
                 encoding="utf-8",
             )
             shutil.copy(FIXTURES / "raw" / "placsp" / "placsp-202601.zip", raw / "placsp" / "placsp-202601.zip")
+            evidence_for_fixture(raw, raw / "ted" / "sample.jsonl", "ted")
+            evidence_for_fixture(raw, raw / "placsp" / "placsp-202601.zip", "placsp")
             result = run_pipeline(raw_dir=raw, output_root=root / "data")
             counts = result["manifest"]["counts"]
             # 3 raw entries (1 TED + 2 PLACSP), tombstone keeps both PLACSP alive.

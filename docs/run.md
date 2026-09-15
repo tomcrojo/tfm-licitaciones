@@ -17,6 +17,8 @@ uv run --with-editable . python -m unittest discover -s tests -v
 
 La suite utiliza fixtures locales y no necesita consultar las fuentes
 oficiales.
+Los sidecars de `tests/fixtures/raw` usan un timestamp de recuperación
+**sintético**, fijado para las pruebas; no documentan descargas históricas reales.
 
 ## Ejecución con fixtures
 
@@ -81,13 +83,41 @@ uv run --with-editable . python -m tfm_licitaciones.cli report
 
 El corpus raw no se versiona. El manifest Gold conserva rutas, tamaños y
 checksums de los inputs utilizados en la última ejecución publicada.
+Cada nueva descarga conserva además `<fichero>.provenance.json` junto al Raw.
+Copie ambos al mover un corpus, manteniendo sus rutas relativas dentro de Raw.
+La transformación verifica este sidecar y hereda su `retrieved_at` y `sha256`
+en los Parquet de registros y rechazos. No utiliza la fecha del manifest.
+
+### Corpus anteriores sin evidencia de recuperación
+
+`run` y la reutilización del caché OpenPLACSP fallan explícitamente si falta
+el sidecar o si no coincide con el fichero. No hay backfill automático del
+timestamp. Para recuperar un corpus histórico se necesita evidencia verificable
+del instante de descarga **y del mismo checksum y fichero**; por ejemplo, un
+registro original de descarga cuya identidad permita establecer ese vínculo.
+Un `downloaded_at` operativo, especialmente el de aceptación de una corrección,
+no basta por sí solo. Sin evidencia, descargue de nuevo en un directorio vacío:
+
+```bash
+uv run --locked --with-editable . python -m tfm_licitaciones.cli ingest \
+  --start 2026-01-01 --end 2026-01-31 --source placsp \
+  --raw-dir /tmp/tfm-licitaciones-raw-con-evidencia
+```
+
+Esta nueva recuperación tiene su propio timestamp; no reconstruye el antiguo.
+Un checksum distinto para la misma partición produce un fichero adicional con
+sufijo SHA-256 y sidecar propio. La publicación usa ficheros temporales y enlaces
+locales sin sobrescritura: payload y sidecar no forman una transacción de dos
+ficheros. Una interrupción puede dejar un payload sin sidecar; el siguiente run
+lo detecta y exige recuperar la evidencia o descargar en un directorio nuevo.
 
 ## Comportamiento y límites de la versión 0.1
 
 - TED se consulta por páginas y ventanas acotadas, con retries y throttle.
 - La configuración actual de TED incluye términos tecnológicos.
 - OpenPLACSP descarga ZIP mensuales, los valida antes de moverlos a su destino
-  y reutiliza un ZIP existente si sigue siendo legible.
+  y reutiliza un ZIP existente si es legible y su evidencia coincide. No vuelve
+  a consultar automáticamente meses ya cacheados para buscar correcciones.
 - Un mes de OpenPLACSP que agota los reintentos se registra en logs, pero la
   CLI puede continuar con el resto. Todavía no existe un estado persistente de
   completitud de ventana.
