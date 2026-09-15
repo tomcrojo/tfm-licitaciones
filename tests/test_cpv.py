@@ -18,8 +18,10 @@ from tfm_licitaciones.cpv import (
 )
 from tfm_licitaciones.io import read_parquet, write_parquet
 
-# Codes whose structural parent is absent from the official CPV 2008 table.
+# Structural parents absent from the official CPV 2008 table (11 clusters,
+# 35 affected codes, each skipping exactly one level).
 OFFICIAL_MISSING_INTERMEDIATES = {
+    "30192120",
     "34511000",
     "35611000",
     "35612000",
@@ -27,9 +29,11 @@ OFFICIAL_MISSING_INTERMEDIATES = {
     "38527000",
     "39250000",
     "42924000",
+    "44115300",
+    "44613100",
     "60110000",
 }
-OFFICIAL_SKIP_LEVEL_CHILDREN = 32
+OFFICIAL_GAP_CHILDREN = 35
 
 
 def write_source(path: Path, rows: list[tuple[str, str, str]]) -> Path:
@@ -43,26 +47,36 @@ def write_source(path: Path, rows: list[tuple[str, str, str]]) -> Path:
 
 
 class CpvLevelTests(unittest.TestCase):
-    """Verify the official level semantics derived from the zero suffix."""
+    """Verify the level and parent semantics derived from the code string."""
 
-    def test_level_matches_zero_suffix_rule(self) -> None:
+    def test_level_comes_from_last_significant_position(self) -> None:
         self.assertEqual(cpv_level("03000000"), 1)
         self.assertEqual(cpv_level("03100000"), 2)
         self.assertEqual(cpv_level("03110000"), 3)
         self.assertEqual(cpv_level("03111000"), 4)
-        self.assertEqual(cpv_level("03111100"), 5)
+        self.assertEqual(cpv_level("03212200"), 5)
+        self.assertEqual(cpv_level("03212210"), 6)
+        self.assertEqual(cpv_level("03212211"), 7)
 
-    def test_divisions_with_zero_second_digit_keep_level_one(self) -> None:
+    def test_division_block_is_read_as_a_whole(self) -> None:
         self.assertEqual(cpv_level("30000000"), 1)
-        self.assertEqual(cpv_level("30100000"), 2)
-        self.assertEqual(structural_parent_code("30100000"), "30000000")
+        self.assertEqual(cpv_level("14000000"), 1)
+        self.assertEqual(cpv_level("09000000"), 1)
+        self.assertEqual(cpv_level("60100000"), 2)
+        self.assertIsNone(structural_parent_code("30000000"))
+        self.assertIsNone(structural_parent_code("14000000"))
+        self.assertEqual(structural_parent_code("60100000"), "60000000")
 
-    def test_structural_parent_truncates_and_pads(self) -> None:
+    def test_structural_parent_zeroes_last_significant_digit(self) -> None:
         self.assertIsNone(structural_parent_code("03000000"))
         self.assertEqual(structural_parent_code("03100000"), "03000000")
         self.assertEqual(structural_parent_code("03110000"), "03100000")
         self.assertEqual(structural_parent_code("03111000"), "03110000")
-        self.assertEqual(structural_parent_code("03111100"), "03111000")
+        self.assertEqual(structural_parent_code("03212200"), "03212000")
+        self.assertEqual(structural_parent_code("03212210"), "03212200")
+        self.assertEqual(structural_parent_code("03212211"), "03212210")
+        self.assertEqual(structural_parent_code("03212220"), "03212200")
+        self.assertEqual(structural_parent_code("30192121"), "30192120")
 
 
 class SyntheticCpvDimensionTests(unittest.TestCase):
@@ -72,31 +86,54 @@ class SyntheticCpvDimensionTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
 
-    def test_levels_parents_and_leaves(self) -> None:
+    def test_deep_chain_keeps_seven_levels_and_internal_nodes(self) -> None:
         source = write_source(
             self.tmp / "cpv.csv",
             [
                 ("03000000", "Division.", "Division."),
-                ("03100000", "Group.", "Group."),
-                ("03110000", "Class.", "Class."),
-                ("03111000", "Category.", "Category."),
-                ("03111100", "Detail.", "Detail."),
-                ("03112000", "Childless category.", "Childless category."),
+                ("03200000", "Group.", "Group."),
+                ("03210000", "Class.", "Class."),
+                ("03212000", "Category.", "Category."),
+                ("03212200", "Level 5.", "Level 5."),
+                ("03212210", "Level 6.", "Level 6."),
+                ("03212211", "Level 7.", "Level 7."),
+                ("03212220", "Sibling level 6.", "Sibling level 6."),
             ],
         )
         frame = build_cpv_dimension(source)
-        by_code = {row["cpv_code"]: row for row in frame.iter_rows(named=True)}
-        self.assertEqual(by_code["03000000"]["level"], 1)
-        self.assertIsNone(by_code["03000000"]["parent_code"])
-        self.assertFalse(by_code["03000000"]["is_leaf"])
-        self.assertEqual(by_code["03100000"]["parent_code"], "03000000")
-        self.assertEqual(by_code["03111000"]["parent_code"], "03110000")
-        self.assertEqual(by_code["03111100"]["parent_code"], "03111000")
-        self.assertTrue(by_code["03111100"]["is_leaf"])
-        self.assertTrue(by_code["03112000"]["is_leaf"])
-        self.assertFalse(by_code["03111000"]["is_leaf"])
+        rows = {row["cpv_code"]: row for row in frame.iter_rows(named=True)}
+        self.assertEqual(rows["03212200"]["level"], 5)
+        self.assertEqual(rows["03212210"]["level"], 6)
+        self.assertEqual(rows["03212211"]["level"], 7)
+        self.assertEqual(rows["03212200"]["parent_code"], "03212000")
+        self.assertEqual(rows["03212210"]["parent_code"], "03212200")
+        self.assertEqual(rows["03212211"]["parent_code"], "03212210")
+        self.assertEqual(rows["03212220"]["parent_code"], "03212200")
+        self.assertFalse(rows["03212200"]["is_leaf"])
+        self.assertFalse(rows["03212210"]["is_leaf"])
+        self.assertTrue(rows["03212211"]["is_leaf"])
+        self.assertTrue(rows["03212220"]["is_leaf"])
 
     def test_missing_intermediate_parent_resolves_to_nearest_ancestor(self) -> None:
+        source = write_source(
+            self.tmp / "cpv.csv",
+            [
+                ("03000000", "Division.", "Division."),
+                ("03200000", "Group.", "Group."),
+                ("03210000", "Class.", "Class."),
+                ("03212000", "Category.", "Category."),
+                ("03212200", "Level 5.", "Level 5."),
+                ("03212211", "Level 7 without level 6.", "Level 7 without level 6."),
+            ],
+        )
+        frame = build_cpv_dimension(source)
+        rows = {row["cpv_code"]: row for row in frame.iter_rows(named=True)}
+        self.assertEqual(rows["03212211"]["parent_code"], "03212200")
+        self.assertEqual(rows["03212211"]["level"], 7)
+        self.assertTrue(rows["03212211"]["is_leaf"])
+        self.assertFalse(rows["03212200"]["is_leaf"])
+
+    def test_multi_level_gap_resolves_to_nearest_published_ancestor(self) -> None:
         source = write_source(
             self.tmp / "cpv.csv",
             [
@@ -106,20 +143,20 @@ class SyntheticCpvDimensionTests(unittest.TestCase):
             ],
         )
         frame = build_cpv_dimension(source)
-        by_code = {row["cpv_code"]: row for row in frame.iter_rows(named=True)}
-        self.assertEqual(by_code["55123100"]["parent_code"], "55100000")
-        self.assertEqual(by_code["55123100"]["level"], 5)
-        self.assertTrue(by_code["55123100"]["is_leaf"])
-        self.assertFalse(by_code["55100000"]["is_leaf"])
+        rows = {row["cpv_code"]: row for row in frame.iter_rows(named=True)}
+        self.assertEqual(rows["55123100"]["parent_code"], "55100000")
+        self.assertEqual(rows["55123100"]["level"], 5)
+        self.assertTrue(rows["55123100"]["is_leaf"])
+        self.assertFalse(rows["55100000"]["is_leaf"])
 
-    def test_ancestry_without_existing_root_fails(self) -> None:
+    def test_ancestry_without_published_root_fails(self) -> None:
         source = write_source(
             self.tmp / "cpv.csv",
-            [("99000001", "Detail.", "Detail.")],
+            [("99123400", "Detail.", "Detail.")],
         )
         with self.assertRaises(ValueError) as ctx:
             build_cpv_dimension(source)
-        self.assertIn("99000001", str(ctx.exception))
+        self.assertIn("99123400", str(ctx.exception))
 
     def test_duplicate_codes_fail(self) -> None:
         source = write_source(
@@ -130,7 +167,7 @@ class SyntheticCpvDimensionTests(unittest.TestCase):
             build_cpv_dimension(source)
         self.assertIn("03000000", str(ctx.exception))
 
-    def test_invalid_codes_fail(self) -> None:
+    def test_malformed_codes_fail(self) -> None:
         source = write_source(
             self.tmp / "cpv.csv",
             [("1234567", "Short.", "Short."), ("123456789", "Long.", "Long."), ("1234567x", "Text.", "Text.")],
@@ -140,6 +177,16 @@ class SyntheticCpvDimensionTests(unittest.TestCase):
         self.assertIn("1234567", str(ctx.exception))
         self.assertIn("123456789", str(ctx.exception))
         self.assertIn("1234567x", str(ctx.exception))
+
+    def test_interior_zero_and_all_zero_codes_fail(self) -> None:
+        source = write_source(
+            self.tmp / "cpv.csv",
+            [("03210200", "Interior zero.", "Interior zero."), ("00000000", "All zero.", "All zero.")],
+        )
+        with self.assertRaises(ValueError) as ctx:
+            build_cpv_dimension(source)
+        self.assertIn("03210200", str(ctx.exception))
+        self.assertIn("00000000", str(ctx.exception))
 
     def test_missing_required_column_fails(self) -> None:
         path = self.tmp / "bad.csv"
@@ -213,7 +260,7 @@ class OfficialCpvTableTests(unittest.TestCase):
         level_counts = self.frame.group_by("level").len().sort("level")
         self.assertEqual(
             {row["level"]: row["len"] for row in level_counts.iter_rows(named=True)},
-            {1: 45, 2: 272, 3: 1002, 4: 2379, 5: 5756},
+            {1: 45, 2: 272, 3: 1002, 4: 2379, 5: 3140, 6: 1811, 7: 805},
         )
 
     def test_codes_are_sorted_strings_with_leading_zeroes(self) -> None:
@@ -238,7 +285,7 @@ class OfficialCpvTableTests(unittest.TestCase):
             while current["parent_code"] is not None:
                 current = rows[current["parent_code"]]
                 hops += 1
-                self.assertLess(hops, 5 + 1)
+                self.assertLessEqual(hops, 6)
             self.assertEqual(current["level"], 1)
 
     def test_leaf_flags_match_children_existence(self) -> None:
@@ -248,23 +295,51 @@ class OfficialCpvTableTests(unittest.TestCase):
         }
         for code, row in rows.items():
             self.assertEqual(row["is_leaf"], code not in parents_with_children)
-        self.assertTrue(self.frame.filter(pl.col("level") == 5)["is_leaf"].all())
+        self.assertTrue(self.frame.filter(pl.col("level") == 7)["is_leaf"].all())
 
-    def test_official_gaps_resolve_to_nearest_existing_ancestor(self) -> None:
+    def test_internal_nodes_exist_below_category_level(self) -> None:
         rows = {row["cpv_code"]: row for row in self.frame.iter_rows(named=True)}
-        skip_children = [
+        self.assertEqual(rows["03212200"]["level"], 5)
+        self.assertEqual(rows["03212200"]["parent_code"], "03212000")
+        self.assertFalse(rows["03212200"]["is_leaf"])
+        self.assertEqual(rows["03212210"]["level"], 6)
+        self.assertEqual(rows["03212210"]["parent_code"], "03212200")
+        self.assertFalse(rows["03212210"]["is_leaf"])
+        self.assertEqual(rows["03212211"]["level"], 7)
+        self.assertEqual(rows["03212211"]["parent_code"], "03212210")
+        self.assertTrue(rows["03212211"]["is_leaf"])
+        self.assertEqual(rows["03212220"]["level"], 6)
+        self.assertEqual(rows["03212220"]["parent_code"], "03212200")
+        self.assertTrue(rows["03212220"]["is_leaf"])
+        self.assertEqual(rows["30000000"]["level"], 1)
+        self.assertIsNone(rows["30000000"]["parent_code"])
+        self.assertEqual(rows["60100000"]["level"], 2)
+        self.assertEqual(rows["60100000"]["parent_code"], "60000000")
+
+    def test_official_gaps_resolve_to_nearest_published_ancestor(self) -> None:
+        rows = {row["cpv_code"]: row for row in self.frame.iter_rows(named=True)}
+        gap_children = [
             code
             for code, row in rows.items()
             if (parent := structural_parent_code(code)) is not None and parent not in rows
         ]
-        self.assertEqual(len(skip_children), OFFICIAL_SKIP_LEVEL_CHILDREN)
+        self.assertEqual(len(gap_children), OFFICIAL_GAP_CHILDREN)
         self.assertEqual(
-            {structural_parent_code(code) for code in skip_children},
+            {structural_parent_code(code) for code in gap_children},
             OFFICIAL_MISSING_INTERMEDIATES,
         )
-        self.assertEqual(rows["39254000"]["parent_code"], "39200000")
-        self.assertEqual(rows["35611100"]["parent_code"], "35610000")
+        for code in gap_children:
+            derived = structural_parent_code(code)
+            self.assertEqual(
+                cpv_level(derived) - rows[rows[code]["parent_code"]]["level"], 1
+            )
         self.assertEqual(rows["60112000"]["parent_code"], "60100000")
+        self.assertEqual(rows["30192121"]["parent_code"], "30192100")
+        self.assertEqual(rows["39254000"]["parent_code"], "39200000")
+        self.assertFalse(rows["39254000"]["is_leaf"])
+        self.assertEqual(rows["44115310"]["parent_code"], "44115000")
+        self.assertEqual(rows["44613110"]["parent_code"], "44613000")
+        self.assertEqual(rows["35611100"]["parent_code"], "35610000")
 
     def test_known_labels_and_missing_english_labels(self) -> None:
         rows = {row["cpv_code"]: row for row in self.frame.iter_rows(named=True)}
@@ -288,7 +363,7 @@ class OfficialCpvTableTests(unittest.TestCase):
         restored = read_parquet(path)
         self.assertEqual(restored.schema, CPV_SCHEMA)
         self.assertTrue(restored.equals(self.frame))
-        self.assertIn("03111100", restored["cpv_code"].to_list())
+        self.assertIn("03212211", restored["cpv_code"].to_list())
 
 
 if __name__ == "__main__":
