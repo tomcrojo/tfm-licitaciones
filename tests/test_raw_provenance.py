@@ -252,7 +252,7 @@ class RawProvenanceTests(unittest.TestCase):
         with zipfile.ZipFile(path) as archive:
             self.assertEqual(archive.read(archive.infolist()[broken["source_member_index"] - 1]), b"<feed")
 
-    def test_placsp_fetch_cache_checks_evidence_and_never_redates(self) -> None:
+    def test_placsp_fetch_cache_checks_evidence_never_redates_and_repairs_an_orphan(self) -> None:
         content = zip_bytes([("feed.atom", FEED)])
         with mock.patch("tfm_licitaciones.fetch.urlopen", return_value=io.BytesIO(content)), \
              mock.patch("tfm_licitaciones.fetch.datetime") as clock:
@@ -266,9 +266,13 @@ class RawProvenanceTests(unittest.TestCase):
             self.assertEqual(fetch_placsp(START, END, self.config, self.raw), paths)
         self.assertEqual(provenance_path(path).read_bytes(), before)
         provenance_path(path).unlink()
-        with self.assertRaisesRegex(RawProvenanceError, "Missing or invalid"):
-            fetch_placsp(START, END, self.config, self.raw)
-        self.assertFalse(provenance_path(path).exists())
+        with mock.patch("tfm_licitaciones.fetch.urlopen", return_value=io.BytesIO(content)), \
+             mock.patch("tfm_licitaciones.fetch.datetime") as clock:
+            clock.now.return_value = LATER
+            self.assertEqual(fetch_placsp(START, END, self.config, self.raw), paths)
+        repaired = load_raw_artifact(self.raw, path)
+        self.assertEqual(repaired.timestamp, LATER)
+        self.assertEqual(repaired.sha256, file_sha256(path))
 
     def test_changed_zip_keeps_both_retrievals_and_same_named_members_distinct(self) -> None:
         first = self.download_zip(zip_bytes([("feed.atom", FEED)]))

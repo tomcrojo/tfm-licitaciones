@@ -15,7 +15,12 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .io import write_jsonl
-from .raw_provenance import RawProvenanceError, load_raw_artifact, persist_raw_artifact
+from .raw_provenance import (
+    RawProvenanceError,
+    load_raw_artifact,
+    persist_raw_artifact,
+    provenance_path,
+)
 
 
 def build_ted_query(country: str, technology_terms: list[str], start: date, end: date) -> str:
@@ -189,7 +194,9 @@ def fetch_placsp(start: date, end: date, config: dict[str, Any], raw_dir: Path) 
         url = f"{base_url}/{source['zip_pattern'].format(run_id=run_id)}"
         destination = raw_dir / "placsp" / f"placsp-{run_id}.zip"
         next_month = date(cursor.year + (cursor.month == 12), cursor.month % 12 + 1, 1)
-        if _is_valid_zip(destination):
+        valid_zip = _is_valid_zip(destination)
+        payload_without_evidence = valid_zip and not provenance_path(destination).exists()
+        if valid_zip and not payload_without_evidence:
             evidence = load_raw_artifact(raw_dir, destination)
             if (evidence.source, evidence.partition, evidence.window_start, evidence.window_end) != (
                 "placsp", run_id, cursor.isoformat(), (next_month - timedelta(days=1)).isoformat(),
