@@ -25,7 +25,7 @@ La versión 0.1 ejecuta un proceso batch local mediante una CLI:
 flowchart LR
     TED["TED API<br/>JSON"] --> RAW["Raw local<br/>JSONL"]
     PLACSP["OpenPLACSP<br/>ZIP · Atom · CODICE/XML"] --> RAW
-    RAW --> BRONZE["Bronze<br/>JSONL source-specific"]
+    RAW --> BRONZE["Bronze<br/>Parquet source-specific + rejects"]
     BRONZE --> SILVER["Silver<br/>TenderRecord · JSONL"]
     SILVER --> LINK["Linkage heurístico<br/>comprador · CPV · fecha · TF-IDF"]
     SILVER --> CLASS["Baseline<br/>keywords + CPV"]
@@ -40,8 +40,9 @@ calidad y escribe las salidas.
 
 Esta base tiene limitaciones conocidas: no mantiene estado de ventanas de
 ingesta, no garantiza la completitud de una descarga, usa el timestamp de
-actualización de PLACSP como fecha publicada, no contabiliza todos los rechazos
-y el enlace todavía puede comparar avisos de la misma fuente. Estas
+actualización de PLACSP como fecha publicada, separa el estado de ingesta de los
+gates de calidad Silver/Gold y el enlace todavía puede comparar avisos de la
+misma fuente. Estas
 limitaciones se corregirán en cambios separados y verificables.
 
 ## 3. Arquitectura objetivo P0
@@ -98,7 +99,7 @@ ejecutarla sin levantar el orquestador.
 | Adaptador OpenPLACSP | Descargar y validar ZIP; parsear Atom y CODICE | Python, `zipfile`, XML, TLS FNMT | Implementado para licitaciones; falta estado incremental |
 | Contratos menores | Incorporar señales de contratación de menor importe | Python y formato oficial por determinar | Planificado |
 | Raw | Conservar bytes y procedencia sin sobrescrituras silenciosas | Sistema de ficheros local, checksum SHA-256 | Parcial |
-| Bronze | Representar el resultado del parsing y sus rechazos | Parquet | Planificado |
+| Bronze | Representar el resultado del parsing y sus rechazos | Polars y Parquet | Implementado con métricas por fuente; payload source-specific en JSON string |
 | Silver | Mantener entidades canónicas tipadas | Polars y Parquet | Contrato definido; migración de persistencia planificada |
 | Referencias | Resolver CPV y organismos mediante identificadores oficiales | CPV 2008 y DIR3 | CPV disponible; dimensiones planificadas |
 | Linkage | Detectar avisos equivalentes entre fuentes con evidencia | Python/Polars, reglas explicables y similitud textual | Baseline implementado con correcciones pendientes |

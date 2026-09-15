@@ -6,6 +6,72 @@ que todavía utiliza el pipeline. El modelo y el esquema tipado de
 escriben `TenderRecord` en JSONL. Esa migración se hará por límites en cambios
 posteriores; no se presenta aquí como terminada.
 
+## Bronze: parsing source-specific en Parquet
+
+`bronze/records.parquet` es la salida primaria de registros aceptados antes del
+plegado de revisiones y de aplicar tombstones. `BRONZE_SCHEMA` en
+`src/tfm_licitaciones/bronze.py` fija todas las columnas, incluso para un lote
+vacío. No se infiere un Struct desde payloads heterogéneos:
+
+| Campo | Tipo Polars/Parquet | Semántica |
+| --- | --- | --- |
+| `source` | string | Fuente del adaptador (`ted`, `placsp`, `boe`) |
+| `source_file` | string | Ruta relativa al directorio Raw del run |
+| `source_member` | string/null | Nombre del miembro Atom cuando procede de un ZIP |
+| `record_locator` | string | Línea JSONL (`line:N`) o posición de entrada Atom (`entry:N`), desde 1 |
+| `source_record_id` | string/null | Identificador publicado; en Atom conserva el URI completo |
+| `payload_json` | string | Objeto source-specific serializado como JSON UTF-8 con claves ordenadas |
+
+`json.loads(payload_json)` recupera el objeto del adaptador. TED conserva sus
+campos heterogéneos; Atom conserva el payload CODICE plano y `_atom_file` cuando
+procede de un ZIP. Este esquema no sustituye al contrato canónico Silver.
+La reproducción utiliza el fichero Raw, el miembro/localizador y el SHA-256
+de `raw_files` en el manifest Gold. No se añade un timestamp de descarga que
+la evidencia Raw actual no proporciona.
+
+`bronze/rejections.parquet` utiliza las mismas cinco columnas de procedencia,
+más `rejection_reason` y `rejection_scope`, ambas string; no contiene
+`payload_json`. Los motivos incluyen `invalid_json`, `expected_json_object`,
+`unsupported_source`, `missing_tender_id`, `missing_title`, `invalid_atom_id`,
+`invalid_xml`, `expected_atom_feed`, `invalid_zip`, `unreadable_zip_member`,
+`no_atom_members`, `non_finite_amount` y `missing_tombstone_ref`. El contenido original se consulta
+en Raw mediante su procedencia. Sin ID se conserva la posición; para un
+documento ilegible la posición y el ID son nulos.
+
+`bronze/ingestion_report.json` y `manifest.ingestion` contienen los mismos
+conteos agregados y `by_source`:
+
+- `parsed`: candidatos examinados, incluyendo los que no pueden parsearse;
+  una línea JSONL no vacía o un elemento Atom `entry` es un candidato;
+- `accepted`: candidatos con payload soportado, identificador y título,
+  escritos en `records.parquet`;
+- `rejected`: candidatos descartados con motivo y scope `record`;
+- `document_errors`: documentos/contenedores ilegibles o incompatibles,
+  scope `document`; no se inventa cuántas entradas contenían;
+- `control_errors`: controles de borrado sin `ref`, scope `control`;
+- `passed`: ausencia de rechazos y errores de documento/control.
+
+Se cumple `parsed = accepted + rejected`, también por fuente, y el número de
+filas en rechazos es `rejected + document_errors + control_errors`. Las líneas
+en blanco y los miembros ZIP que no son Atom no son candidatos. Los tombstones
+válidos son controles separados; se conserva la semántica Silver anterior:
+se aplican los de ZIP, mientras la ruta Atom/XML plano todavía no los aplica.
+`placsp_entries` ahora cuenta todos los candidatos de ZIP, incluidos rechazados;
+`atom_files` cuenta los documentos Atom intentados en ZIP y ficheros planos.
+
+La aceptación Bronze comprueba la estructura y los campos identificador/título,
+no certifica la validez de fechas, importes ni otros campos opcionales. Los
+adaptadores históricos `parse_atom_file`, `parse_placsp_atom` e
+`iter_placsp_zip` mantienen su forma de retorno para entradas válidas, pero
+lanzan `ValueError` ante rechazos; el pipeline usa sus variantes con resultados
+de parsing y continúa con los demás registros/documentos.
+
+**Límite de calidad:** `quality_passed` y el código de salida de la CLI siguen
+representando los gates Silver/Gold existentes. Pueden ser correctos aunque
+`ingestion.passed` sea falso; deben consultarse ambos estados. Integrar los
+rechazos en la decisión global de calidad queda para la tarea de quality gates,
+sin cambiar aquí umbrales ni sustituir los artefactos Gold históricos.
+
 ## Silver canónico: `procurement_events`
 
 ### Grano e identidad
@@ -160,9 +226,9 @@ artefacto versionado se conserva para representar fielmente el baseline.
 | Fechas PLACSP | `updated` se reutiliza como `published_date` | Separar publicación y actualización |
 | Linkage | La generación de candidatos no excluye la misma fuente | Exigir fuentes diferentes |
 | Bloques grandes | Los bloques por encima del límite se omiten | Subdividir o reportar como no evaluados |
-| Rechazos | Algunos errores pueden descartarse antes de quality | Contabilizar `parsed`, `accepted`, `rejected` y motivo |
+| Rechazos | Bronze los contabiliza; `quality_passed` solo evalúa Silver/Gold | Integrar el estado de ingesta en la decisión global de calidad |
 | Completitud | Una partición que falla puede no impedir el run | Registrar esperadas/descargadas y estado incompleto |
-| Persistencia | Bronze, Silver y Gold principales usan JSONL/CSV | Migrar por límites a Parquet |
+| Persistencia | Bronze usa Parquet; Silver y Gold usan JSONL/CSV | Migrar las demás capas por límites a Parquet |
 | TED | La configuración aplica una query tecnológica | Hacer el filtro sectorial opcional y downstream |
 
 Estas limitaciones son trabajo pendiente conocido. No invalidan las pruebas del
