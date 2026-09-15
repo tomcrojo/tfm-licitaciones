@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 
 from .config import configured_path, load_config
+from .dir3 import build_dir3_units, fetch_dir3_units, persist_dir3_units
 from .fetch import fetch_placsp, fetch_raw_batch
 from .pipeline import run_pipeline
 
@@ -30,10 +31,16 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--config", type=Path)
     ingest.add_argument(
         "--source",
-        choices=["ted", "boe", "placsp"],
+        choices=["ted", "boe", "placsp", "dir3"],
         default="all",
-        help="limitar la ingesta a una fuente (por defecto, todas las habilitadas)",
+        help="limitar la ingesta a una fuente (por defecto, todas las habilitadas; "
+        "los datos de referencia DIR3 requieren --source dir3 explícito)",
     )
+
+    dir3 = subparsers.add_parser("dir3", help="construir la dimensión DIR3 de unidades orgánicas")
+    dir3.add_argument("--raw-dir", type=Path, help="directorio raw alternativo")
+    dir3.add_argument("--reference-dir", type=Path, help="directorio de referencia alternativo")
+    dir3.add_argument("--config", type=Path)
 
     report = subparsers.add_parser("report", help="mostrar el último informe de calidad")
     report.add_argument("--gold-dir", type=Path)
@@ -69,8 +76,36 @@ def main(argv: list[str] | None = None) -> int:
             placsp_paths = fetch_placsp(args.start, args.end, config, raw_dir)
             summary["placsp_files"] = len(placsp_paths)
             files.extend(str(path) for path in placsp_paths)
+        if args.source == "dir3":
+            # Reference data with an independent failure mode (F5/TSPD): only
+            # fetched when explicitly requested, never part of --source all.
+            dir3_paths = fetch_dir3_units(raw_dir, config)
+            summary["dir3_files"] = len(dir3_paths)
+            files.extend(str(path) for path in dir3_paths)
         summary["files"] = files
         print(json.dumps(summary, ensure_ascii=False))
+        return 0
+    if args.command == "dir3":
+        raw_dir = args.raw_dir or configured_path(config, "raw_dir")
+        if not raw_dir.is_absolute():
+            raw_dir = Path(config["_project_root"]) / raw_dir
+        reference_dir = args.reference_dir or configured_path(config, "reference_dir")
+        if not reference_dir.is_absolute():
+            reference_dir = Path(config["_project_root"]) / reference_dir
+        units, build = build_dir3_units(raw_dir)
+        outputs = persist_dir3_units(units, build, reference_dir)
+        print(
+            json.dumps(
+                {
+                    "row_count": build["manifest"]["row_count"],
+                    "rejected": sum(source["rejected"] for source in build["manifest"]["sources"]),
+                    "parents_unresolved": build["manifest"]["parents_unresolved"],
+                    "units": str(outputs["units"]),
+                    "manifest": str(outputs["manifest"]),
+                },
+                ensure_ascii=False,
+            )
+        )
         return 0
     gold_dir = args.gold_dir or configured_path(config, "gold_dir")
     report_path = gold_dir / "quality_report.json"

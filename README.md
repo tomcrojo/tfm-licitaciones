@@ -15,6 +15,8 @@ La versión actual es un punto de partida funcional, no la arquitectura final.
 Incluye:
 
 - descarga explícita desde TED y OpenPLACSP;
+- dimensión de referencia DIR3 de unidades orgánicas por ámbito (AGE, CCAA,
+  EELL, Universidades, Otras Instituciones y Justicia);
 - conservación local de los payloads descargados;
 - parsing de JSON, ZIP, Atom y CODICE/XML;
 - Bronze Parquet con procedencia, rechazos localizados y conteos de ingesta;
@@ -57,6 +59,12 @@ uv run --with-editable . python -m tfm_licitaciones.cli ingest \
 
 uv run --with-editable . python -m tfm_licitaciones.cli ingest \
   --start 2026-01-01 --end 2026-06-30 --source placsp
+
+uv run --with-editable . python -m tfm_licitaciones.cli ingest \
+  --start 2026-09-15 --end 2026-09-15 --source dir3
+
+# dimensión DIR3 offline a partir de data/raw/dir3 (ver docs/dir3-reference.md)
+uv run --with-editable . python -m tfm_licitaciones.cli dir3
 ```
 
 La [guía de ejecución](docs/run.md) explica las salidas y las limitaciones del
