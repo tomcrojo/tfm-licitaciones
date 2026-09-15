@@ -13,13 +13,14 @@ import os
 import re
 import tempfile
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 STATE_VERSION = 1
 _SOURCE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+_WINDOW_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class IngestionStatus(str, Enum):
@@ -66,6 +67,14 @@ class ChecksumMismatch:
 
 
 @dataclass
+class ErrorRecord:
+    """Window-level error attributed to one execution attempt."""
+
+    message: str
+    at: str | None = None
+
+
+@dataclass
 class WindowState:
     """Full inspectable state of one source window."""
 
@@ -78,7 +87,8 @@ class WindowState:
     downloaded_partitions: dict[str, PartitionState] = field(default_factory=dict)
     failures: dict[str, str] = field(default_factory=dict)
     checksum_mismatches: list[ChecksumMismatch] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
+    errors: list[ErrorRecord] = field(default_factory=list)
+    error_history: list[ErrorRecord] = field(default_factory=list)
     started_at: str | None = None
     finished_at: str | None = None
 
@@ -103,11 +113,24 @@ def _now_or_default(now: datetime | None) -> str:
     return now.isoformat() if now is not None else _utc_now()
 
 
+def _validate_window_bound(value: str, name: str) -> date:
+    """Validate one strict ISO calendar date (YYYY-MM-DD) and return it."""
+
+    if not isinstance(value, str) or not _WINDOW_PATTERN.match(value):
+        raise ValueError(f"{name} must be an ISO date string (YYYY-MM-DD): {value!r}")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} is not a real calendar date: {value!r}") from exc
+
+
 def new_window(source: str, window_start: str, window_end: str, expected_partitions: list[str]) -> WindowState:
     """Create a pending window state for one source."""
 
     _validate_source(source)
-    if window_end < window_start:
+    start = _validate_window_bound(window_start, "window_start")
+    end = _validate_window_bound(window_end, "window_end")
+    if end < start:
         raise ValueError("window_end must not be earlier than window_start")
     if len(set(expected_partitions)) != len(expected_partitions):
         raise ValueError("expected_partitions must not contain duplicates")
@@ -128,6 +151,8 @@ def window_path(state_dir: Path, source: str, window_start: str, window_end: str
     """Return the deterministic file path for one window state."""
 
     _validate_source(source)
+    _validate_window_bound(window_start, "window_start")
+    _validate_window_bound(window_end, "window_end")
     return Path(state_dir) / source / f"{window_start}__{window_end}.json"
 
 
@@ -183,6 +208,10 @@ def _state_from_payload(payload: dict[str, Any], path: Path) -> WindowState:
         )
         for item in payload.get("checksum_mismatches", [])
     ]
+
+    def _error_records(items: Any) -> list[ErrorRecord]:
+        return [ErrorRecord(message=item["message"], at=item.get("at")) for item in items]
+
     return WindowState(
         source=payload["source"],
         window_start=payload["window_start"],
@@ -193,7 +222,8 @@ def _state_from_payload(payload: dict[str, Any], path: Path) -> WindowState:
         downloaded_partitions=partitions,
         failures=dict(payload.get("failures", {})),
         checksum_mismatches=mismatches,
-        errors=list(payload.get("errors", [])),
+        errors=_error_records(payload.get("errors", [])),
+        error_history=_error_records(payload.get("error_history", [])),
         started_at=payload.get("started_at"),
         finished_at=payload.get("finished_at"),
     )
@@ -226,11 +256,19 @@ def save_window(state_dir: Path, state: WindowState) -> Path:
 
 
 def mark_running(state: WindowState, *, now: datetime | None = None) -> None:
-    """Start (or restart) execution of a window, clearing the previous finish."""
+    """Start (or restart) execution of a window for a fresh attempt.
+
+    Active window errors move to ``error_history`` and active partition
+    failures are cleared, so a rerun can recover and finalize as complete.
+    The audited history, downloaded partitions and mismatches persist.
+    """
 
     if state.status == IngestionStatus.RUNNING.value:
         raise ValueError("Cannot mark a running window as running")
     state.status = IngestionStatus.RUNNING.value
+    state.error_history.extend(state.errors)
+    state.errors = []
+    state.failures = {}
     state.started_at = _now_or_default(now)
     state.finished_at = None
 
@@ -249,6 +287,11 @@ def record_partition(
     - identical checksum: no-op, timestamps preserved (UNCHANGED);
     - different checksum for a known identity: the stored checksum is kept,
       a ChecksumMismatch is recorded (CHANGED) and nothing is overwritten.
+
+    Any successful observation of the expected partition, including an
+    unchanged checksum, clears an active partition failure from the current
+    attempt. Repeated observations of the same changed checksum record a
+    single mismatch; a different new checksum records a separate one.
     """
 
     if partition not in state.expected_partitions:
@@ -260,16 +303,22 @@ def record_partition(
         )
         state.failures.pop(partition, None)
         return PartitionChange.DOWNLOADED
+    state.failures.pop(partition, None)
     if known.checksum == checksum:
         return PartitionChange.UNCHANGED
-    state.checksum_mismatches.append(
-        ChecksumMismatch(
-            partition=partition,
-            previous_checksum=known.checksum,
-            new_checksum=checksum,
-            detected_at=_now_or_default(now),
-        )
+    already_recorded = any(
+        mismatch.partition == partition and mismatch.new_checksum == checksum
+        for mismatch in state.unresolved_mismatches
     )
+    if not already_recorded:
+        state.checksum_mismatches.append(
+            ChecksumMismatch(
+                partition=partition,
+                previous_checksum=known.checksum,
+                new_checksum=checksum,
+                detected_at=_now_or_default(now),
+            )
+        )
     return PartitionChange.CHANGED
 
 
@@ -316,17 +365,21 @@ def mark_failed(state: WindowState, message: str, *, now: datetime | None = None
     if state.status not in {IngestionStatus.PENDING.value, IngestionStatus.RUNNING.value}:
         raise ValueError(f"Cannot mark a {state.status} window as failed")
     state.status = IngestionStatus.FAILED.value
-    state.errors.append(message)
+    state.errors.append(ErrorRecord(message=message, at=_now_or_default(now)))
     state.finished_at = _now_or_default(now)
 
 
 def finalize_window(state: WindowState, *, now: datetime | None = None) -> str:
     """Derive the final status of a window from its recorded evidence.
 
-    failed     some download failed, the run errored, or an unresolved payload
-               change exists for a partition identity;
+    failed     some download failed this attempt, the run has active window
+               errors, or an unresolved payload change exists for a partition
+               identity;
     incomplete expected partitions are missing without any recorded failure;
     complete   every expected partition is downloaded with a stable identity.
+
+    Historical errors from previous attempts stay in ``error_history`` and do
+    not affect the status of the current attempt.
     """
 
     if state.status not in {IngestionStatus.PENDING.value, IngestionStatus.RUNNING.value}:
@@ -356,6 +409,7 @@ def summary(state: WindowState) -> dict[str, Any]:
         "failed_partitions": sorted(state.failures),
         "unresolved_mismatches": [m.partition for m in state.unresolved_mismatches],
         "errors": len(state.errors),
+        "error_history": len(state.error_history),
         "started_at": state.started_at,
         "finished_at": state.finished_at,
     }
