@@ -103,6 +103,8 @@ class ProcurementEvent:
             raise ValueError("cpv_codes must not contain empty values")
         if len(set(self.cpv_codes)) != len(self.cpv_codes):
             raise ValueError("cpv_codes must not contain duplicates")
+        if self.ingested_at is None:
+            raise ValueError("ingested_at must not be null")
         for field_name in ("source_updated_at", "deadline", "ingested_at"):
             value = getattr(self, field_name)
             if value is None:
