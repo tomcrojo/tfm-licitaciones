@@ -81,8 +81,7 @@
   },
   "linkage": {
     "window_days": 7,
-    "threshold": 0.75,
-    "max_pairs_per_block": 500
+    "threshold": 0.75
   },
   "quality": {
     "max_title_null_share": 0.05,

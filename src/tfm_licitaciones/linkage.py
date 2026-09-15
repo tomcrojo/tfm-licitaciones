@@ -80,17 +80,23 @@ def link_duplicates(
     *,
     window_days: int = 7,
     threshold: float = 0.75,
-    max_pairs_per_block: int = 500,
 ) -> LinkageResult:
     """Group records that describe the same procedure across sources.
 
-    Blocking uses the normalized buyer plus the CPV division; candidate
-    pairs must fall inside a publication window and are then scored by
-    TF-IDF cosine similarity over title tokens. Summaries are structurally
-    different across sources (TED descriptions vs PLACSP metadata lines),
-    so only titles participate in the score. Linked pairs are merged with
+    Blocking uses the normalized buyer plus the CPV division. Only records
+    from different sources may become candidate pairs, and candidates must
+    fall inside a publication window whose ends are inclusive; they are
+    then scored by TF-IDF cosine similarity over title tokens. Summaries
+    are structurally different across sources (TED descriptions vs PLACSP
+    metadata lines), so only titles participate in the score. Every
+    candidate inside the window is evaluated, regardless of block size,
+    so no block is ever silently skipped. Linked pairs are merged with
     union-find and each group keeps one canonical notice chosen by
-    earliest publication date, then longest title.
+    earliest publication date, then longest title, then source and tender
+    id. Group numbers are assigned after sorting groups by their smallest
+    ``(source, tender_id)`` member, so they do not depend on input order.
+    Records without a publication date can never be window-checked and are
+    therefore never candidates; ``stats`` reports how many were excluded.
     """
 
     blocks: defaultdict[tuple[str, str], list[int]] = defaultdict(list)
@@ -110,6 +116,7 @@ def link_duplicates(
         parents[find(left)] = find(right)
 
     candidate_pairs = 0
+    evaluated_pairs = 0
     linked_pairs = 0
     window = timedelta(days=window_days)
     for indexes in blocks.values():
@@ -121,19 +128,22 @@ def link_duplicates(
         for position, index in enumerate(dated):
             published = records[index].published_date
             for other in dated[position + 1 :]:
+                if records[other].source == records[index].source:
+                    continue
                 if (records[other].published_date - published) > window:
                     break
                 pair_targets.append((index, other))
         candidate_pairs += len(pair_targets)
-        if not pair_targets or len(pair_targets) > max_pairs_per_block:
+        if not pair_targets:
             continue
         involved = sorted({index for pair in pair_targets for index in pair})
-        vectors = _tfidf_vectors([records[index].title for index in involved])
+        vectors = _tfidf_vectors([records[index].title or "" for index in involved])
         lookup = dict(zip(involved, vectors))
         for left, right in pair_targets:
             left_vector, right_vector = lookup[left], lookup[right]
             if not left_vector or not right_vector:
                 continue
+            evaluated_pairs += 1
             similarity = sum(
                 weight * right_vector[index] for index, weight in left_vector.items() if index in right_vector
             )
@@ -144,20 +154,19 @@ def link_duplicates(
     groups: defaultdict[int, list[int]] = defaultdict(list)
     for index in range(len(records)):
         groups[find(index)].append(index)
+    linked = sorted(
+        (members for members in groups.values() if len(members) > 1),
+        key=lambda members: min((records[index].source, records[index].tender_id) for index in members),
+    )
     assignments: dict[tuple[str, str], dict[str, Any]] = {}
-    linked_groups = 0
-    group_counter = 0
-    for members in groups.values():
-        if len(members) < 2:
-            continue
-        linked_groups += 1
-        group_counter += 1
+    for group_counter, members in enumerate(linked, start=1):
         canonical = min(
             members,
             key=lambda index: (
                 records[index].published_date or date.max,
-                -len(records[index].title),
+                -len(records[index].title or ""),
                 records[index].tender_id,
+                records[index].source,
             ),
         )
         for index in members:
@@ -169,9 +178,11 @@ def link_duplicates(
             }
     stats = {
         "candidate_pairs": candidate_pairs,
+        "evaluated_pairs": evaluated_pairs,
         "linked_pairs": linked_pairs,
-        "linked_groups": linked_groups,
-        "duplicated_records": sum(len(members) - 1 for members in groups.values() if len(members) > 1),
+        "linked_groups": len(linked),
+        "duplicated_records": sum(len(members) - 1 for members in linked),
+        "records_without_date": sum(record.published_date is None for record in records),
         "threshold": threshold,
         "window_days": window_days,
     }
