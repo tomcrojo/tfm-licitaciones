@@ -1,4 +1,4 @@
-"""Small deterministic JSONL and CSV persistence helpers."""
+"""Small deterministic JSONL, CSV and Parquet persistence helpers."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import json
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
+
+import polars as pl
 
 
 def read_jsonl(path: Path) -> Iterator[dict[str, Any]]:
@@ -53,3 +55,18 @@ def write_json(path: Path, value: Any) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def write_parquet(path: Path, rows: Iterable[dict[str, Any]]) -> int:
+    """Write rows to Parquet with inferred typed columns and return row count."""
+
+    frame = pl.DataFrame(list(rows))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.write_parquet(path)
+    return frame.height
+
+
+def read_parquet(path: Path) -> list[dict[str, Any]]:
+    """Read a Parquet file into dicts of Python-native typed values."""
+
+    return pl.read_parquet(path).to_dicts()
