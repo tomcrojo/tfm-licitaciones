@@ -57,16 +57,15 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def write_parquet(path: Path, rows: Iterable[dict[str, Any]]) -> int:
-    """Write rows to Parquet with inferred typed columns and return row count."""
+def write_parquet(path: Path, frame: pl.DataFrame) -> int:
+    """Write a typed DataFrame to Parquet and return the row count."""
 
-    frame = pl.DataFrame(list(rows))
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.write_parquet(path)
     return frame.height
 
 
-def read_parquet(path: Path) -> list[dict[str, Any]]:
-    """Read a Parquet file into dicts of Python-native typed values."""
+def read_parquet(path: Path) -> pl.DataFrame:
+    """Read a Parquet file into a typed DataFrame."""
 
-    return pl.read_parquet(path).to_dicts()
+    return pl.read_parquet(path)
