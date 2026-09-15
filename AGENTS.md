@@ -6,18 +6,19 @@ This repository is a UCM Master's TFM about a reproducible DataOps platform for 
 
 The implementation must remain understandable and defensible by the author. Agent throughput is useful only when changes stay reviewable.
 
-## Read this before changing anything
+## Context loading
 
-Before implementation, read the smallest set of files needed to understand the assigned task. At minimum:
+Always read `AGENTS.md` first. Then load only the context needed for the assigned change instead of reading the whole repository by ritual.
 
-1. `AGENTS.md`.
-2. `README.md`.
-3. The current architecture document (`docs/architecture-v2.md` when present on the branch; otherwise `docs/architecture.md`).
-4. `docs/data_contract.md` for any schema/data-model change.
-5. The files and tests directly touched by the task.
-6. `docs/propuesta/propuesta-enviada.md` if the task could change the academic scope of the TFM.
+Useful sources of truth when relevant:
 
-Do not assume an old README or prototype document overrides newer architecture decisions. If documents disagree, state the conflict before coding.
+- `README.md` for the current project surface and commands;
+- `docs/architecture-v2.md` once merged, otherwise `docs/architecture.md`, for architecture decisions;
+- `docs/data_contract.md` for schema/data-model changes;
+- the directly affected implementation and tests;
+- `docs/propuesta/propuesta-enviada.md` when a change could alter the academic scope of the TFM.
+
+Do not assume an old README or prototype document overrides newer architecture decisions. If relevant documents disagree in a way that blocks the task, surface the conflict rather than silently choosing one.
 
 ## Source-of-truth order
 
@@ -51,18 +52,38 @@ Each agent should normally deliver exactly one targeted PR representing one feat
 
 A healthy PR should be understandable from its diff without requiring the reviewer to reconstruct the whole repository.
 
-## Agent loop
+## Execution contract
 
-For every task:
+Within the assigned scope, work autonomously. Do not wait for approval after every local decision.
 
-1. Inspect the relevant code/docs/tests.
-2. State a short plan before editing: what will change, what will not change, and why.
-3. Implement only the assigned scope.
-4. Add or update tests that prove the intended behavior.
-5. Run the narrowest relevant tests first, then the full offline suite when feasible.
-6. Self-review the diff for accidental scope expansion, dead code, duplicated logic, and misleading claims.
-7. Open or update one PR.
-8. In the PR body, document what changed, test commands, data/schema impact, limitations, and follow-ups.
+Use this verification loop until the task is actually complete:
+
+```text
+inspect relevant context
+        ↓
+implement
+        ↓
+run the narrowest useful checks
+        ↓
+inspect results and diff
+        ↓
+fix defects / rerun
+        ↓
+full offline verification when feasible
+        ↓
+final scope + correctness self-review
+        ↓
+open or update one PR
+```
+
+Ask the user only when one of these is true:
+
+- a required product or academic requirement is genuinely missing;
+- there is a real architectural fork that changes a public contract or the agreed architecture;
+- an irreversible or external action requires approval;
+- available evidence cannot support a required claim.
+
+Do not stop at the first passing test if the final diff still contains obvious scope creep, duplicated logic, dead code, misleading claims, or an unverified path.
 
 If implementation uncovers a separate bug or architectural question, mention it under `Follow-ups` instead of silently absorbing it.
 
