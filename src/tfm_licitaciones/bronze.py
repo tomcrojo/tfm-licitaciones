@@ -30,12 +30,10 @@ REJECTION_SCHEMA = {
 
 
 def bronze_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
-    """Encode heterogeneous payloads losslessly without inferred Struct schemas."""
+    """Persist the JSON serialization already validated at acceptance."""
 
     return pl.DataFrame(
-        [{**{key: row.get(key) for key in PROVENANCE_SCHEMA},
-          "payload_json": json.dumps(row["payload"], ensure_ascii=False, sort_keys=True, allow_nan=False)}
-         for row in rows],
+        [{key: row[key] for key in BRONZE_SCHEMA} for row in rows],
         schema=BRONZE_SCHEMA,
     )
 
@@ -82,8 +80,17 @@ def load_raw_records(raw_dir: Path) -> dict[str, Any]:
     def accept(candidate: dict[str, Any]) -> None:
         payload = candidate["payload"]
         location = {key: candidate.get(key) for key in PROVENANCE_SCHEMA}
-        source = location["source"]
+        # Even malformed source labels must remain representable in rejection
+        # provenance. Raw retains the original escaped Unicode code units.
+        source = location["source"].encode("utf-8", errors="backslashreplace").decode("utf-8")
+        location["source"] = source
         sources.add(source)
+        payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        try:
+            payload_json.encode("utf-8")
+        except UnicodeEncodeError:
+            rejections.append({**location, "rejection_reason": "invalid_unicode_payload", "rejection_scope": "record"})
+            return
         if source not in {"ted", "placsp", "boe"}:
             reason = "unsupported_source"
         else:
@@ -97,7 +104,7 @@ def load_raw_records(raw_dir: Path) -> dict[str, Any]:
         if reason:
             rejections.append({**location, "rejection_reason": reason, "rejection_scope": "record"})
         else:
-            bronze.append({**location, "payload": payload})
+            bronze.append({**location, "payload": payload, "payload_json": payload_json})
             records.append(record)
 
     for path in discover_raw_files(raw_dir):
