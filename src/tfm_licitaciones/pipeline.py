@@ -90,7 +90,6 @@ def run_pipeline(
         kept_records,
         window_days=int(linkage_config.get("window_days", 7)),
         threshold=float(linkage_config.get("threshold", 0.75)),
-        max_pairs_per_block=int(linkage_config.get("max_pairs_per_block", 500)),
     )
     enriched: list[OpportunityRecord] = []
     for item in opportunities:

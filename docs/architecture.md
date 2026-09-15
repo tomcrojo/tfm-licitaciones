@@ -153,8 +153,8 @@ Las reglas operativas son:
 El linkage solo compara registros de fuentes distintas. La generación de
 candidatos utilizará señales estructuradas comprensibles —comprador, CPV y
 ventana temporal— y una similitud textual para ordenar o decidir candidatos.
-Los bloques demasiado grandes se subdividen cuando exista una señal segura o
-se registran como no evaluados; nunca desaparecen de las métricas.
+Todos los candidatos cruzados dentro de la ventana se evalúan, sin recorte
+ni muestreo por tamaño de bloque; nunca desaparecen de las métricas.
 
 CPV seguirá siendo la clasificación oficial primaria. El enriquecimiento
 semántico añadirá etiquetas de negocio generalistas y multilabel, conservando

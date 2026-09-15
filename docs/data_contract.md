@@ -333,8 +333,6 @@ artefacto versionado se conserva para representar fielmente el baseline.
 | Área | Situación actual | Corrección prevista |
 | --- | --- | --- |
 | Fechas PLACSP | `updated` se reutiliza como `published_date` | Separar publicación y actualización |
-| Linkage | La generación de candidatos no excluye la misma fuente | Exigir fuentes diferentes |
-| Bloques grandes | Los bloques por encima del límite se omiten | Subdividir o reportar como no evaluados |
 | Rechazos | Bronze los contabiliza; `quality_passed` solo evalúa Silver/Gold | Integrar el estado de ingesta en la decisión global de calidad |
 | Completitud | Una partición que falla puede no impedir el run | Registrar esperadas/descargadas y estado incompleto |
 | Persistencia | Bronze usa Parquet; Silver y Gold usan JSONL/CSV | Migrar las demás capas por límites a Parquet |
