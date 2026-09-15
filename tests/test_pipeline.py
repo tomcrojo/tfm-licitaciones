@@ -102,6 +102,8 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(counts["gold"], 3)
             linkage = result["manifest"]["linkage"]
             self.assertGreaterEqual(linkage["linked_pairs"], 1)
+            self.assertIn("evaluated_pairs", linkage)
+            self.assertIn("records_without_date", linkage)
             groups = [item for item in result["opportunities"] if item.dup_group is not None]
             self.assertTrue(groups)
             canonical = [item for item in groups if item.is_canonical]

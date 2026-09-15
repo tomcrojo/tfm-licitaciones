@@ -89,14 +89,19 @@ def link_duplicates(
     then scored by TF-IDF cosine similarity over title tokens. Summaries
     are structurally different across sources (TED descriptions vs PLACSP
     metadata lines), so only titles participate in the score. Every
-    candidate inside the window is evaluated, regardless of block size,
-    so no block is ever silently skipped. Linked pairs are merged with
-    union-find and each group keeps one canonical notice chosen by
-    earliest publication date, then longest title, then source and tender
-    id. Group numbers are assigned after sorting groups by their smallest
-    ``(source, tender_id)`` member, so they do not depend on input order.
-    Records without a publication date can never be window-checked and are
-    therefore never candidates; ``stats`` reports how many were excluded.
+    cross-source pair inside the window is counted as a candidate and no
+    block is ever skipped for size; pairs whose side has an empty or
+    untokenizable title are counted but not scored, so ``evaluated_pairs``
+    may be lower than ``candidate_pairs``. Linked pairs are merged with
+    union-find, so same-source records may share a group when a record
+    from another source bridges them, but never through a direct
+    same-source pair. Each group keeps one canonical notice chosen by
+    earliest publication date, then longest title, then tender id and
+    source. Group numbers are assigned after sorting groups by their
+    smallest ``(source, tender_id)`` member, so they do not depend on
+    input order. Records without a publication date can never be
+    window-checked and are therefore never candidates; ``stats`` reports
+    how many were excluded.
     """
 
     blocks: defaultdict[tuple[str, str], list[int]] = defaultdict(list)
@@ -124,14 +129,16 @@ def link_duplicates(
             (index for index in indexes if records[index].published_date is not None),
             key=lambda index: records[index].published_date,
         )
+        if len({records[index].source for index in dated}) < 2:
+            continue
         pair_targets: list[tuple[int, int]] = []
         for position, index in enumerate(dated):
             published = records[index].published_date
             for other in dated[position + 1 :]:
-                if records[other].source == records[index].source:
-                    continue
                 if (records[other].published_date - published) > window:
                     break
+                if records[other].source == records[index].source:
+                    continue
                 pair_targets.append((index, other))
         candidate_pairs += len(pair_targets)
         if not pair_targets:

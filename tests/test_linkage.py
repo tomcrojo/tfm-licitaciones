@@ -148,6 +148,8 @@ class LinkageTests(unittest.TestCase):
         cases = [
             ("", "Migración a plataforma cloud"),
             ("de la el y", "Migración a plataforma cloud"),
+            ("   ", "Migración a plataforma cloud"),
+            (None, "Migración a plataforma cloud"),
         ]
         for left_title, right_title in cases:
             with self.subTest(title=left_title):
@@ -168,12 +170,16 @@ class LinkageTests(unittest.TestCase):
         self.assertEqual(result.assignments, {})
 
     def test_same_tender_id_across_sources_keeps_distinct_assignments(self) -> None:
-        ted = self._record("X-1", "Migración a plataforma cloud", day=8, source="ted")
-        placsp = self._record("X-1", "Migración a plataforma cloud", day=9, source="placsp")
-        result = link_duplicates([ted, placsp], threshold=0.6)
-        self.assertEqual(set(result.assignments), {("ted", "X-1"), ("placsp", "X-1")})
-        self.assertTrue(result.assignments[("ted", "X-1")]["is_canonical"])
-        self.assertEqual(result.assignments[("placsp", "X-1")]["duplicate_of"], "X-1")
+        title = "Migración a plataforma cloud"
+        ted = self._record("X-1", title, day=8, source="ted")
+        placsp_same_id = self._record("X-1", title, day=9, source="placsp")
+        placsp_other_id = self._record("Y-9", title, day=9, source="placsp")
+        result = link_duplicates([ted, placsp_same_id, placsp_other_id], threshold=0.6)
+        self.assertEqual(set(result.assignments), {("ted", "X-1"), ("placsp", "X-1"), ("placsp", "Y-9")})
+        canonical = [key for key, assignment in result.assignments.items() if assignment["is_canonical"]]
+        self.assertEqual(canonical, [("ted", "X-1")])
+        # duplicate_of provably points at the canonical, not at the record itself.
+        self.assertEqual(result.assignments[("placsp", "Y-9")]["duplicate_of"], "X-1")
 
     def test_empty_input_produces_empty_result(self) -> None:
         result = link_duplicates([])
@@ -192,18 +198,35 @@ class LinkageTests(unittest.TestCase):
             },
         )
 
-    def test_different_procedures_do_not_link(self) -> None:
+    def test_same_block_dissimilar_titles_do_not_link(self) -> None:
         first = self._record(
-            "A-1", "Mantenimiento de instalaciones deportivas municipales", buyer="Ayuntamiento de Cuenca",
-            day=8, cpv="45212200",
+            "A-1", "Mantenimiento de instalaciones deportivas municipales", day=8,
         )
         second = self._record(
-            "B-2", "Suministro de material de oficina y papelería", buyer="Ayuntamiento de Cuenca",
-            day=9, source="placsp", cpv="30190000",
+            "B-2", "Suministro de material de oficina y papeleria", day=9, source="placsp",
         )
         result = link_duplicates([first, second], threshold=0.6)
+        # Same block, cross-source, in window: rejected by score, not by blocking.
+        self.assertEqual(result.stats["candidate_pairs"], 1)
+        self.assertEqual(result.stats["evaluated_pairs"], 1)
         self.assertEqual(result.stats["linked_pairs"], 0)
         self.assertEqual(result.assignments, {})
+
+    def test_similarity_threshold_is_inclusive(self) -> None:
+        first = self._record("A-1", "Migración a plataforma cloud", day=8, source="ted")
+        second = self._record("B-2", "Migración a plataforma cloud", day=9, source="placsp")
+        result = link_duplicates([first, second], threshold=1.0)
+        self.assertEqual(result.stats["evaluated_pairs"], 1)
+        self.assertEqual(result.stats["linked_pairs"], 1)
+
+    def test_canonical_final_tiebreak_uses_tender_id_before_source(self) -> None:
+        ted = self._record("A-2", "Obra del puente nuevo", day=9, source="ted")
+        placsp = self._record("A-1", "Obra del puente viejo", day=9, source="placsp")
+        result = link_duplicates([ted, placsp], threshold=0.4)
+        self.assertEqual(result.stats["linked_pairs"], 1)
+        # Same date and equal title length: the smaller tender id wins.
+        self.assertTrue(result.assignments[("placsp", "A-1")]["is_canonical"])
+        self.assertEqual(result.assignments[("ted", "A-2")]["duplicate_of"], "A-1")
 
 
 if __name__ == "__main__":
