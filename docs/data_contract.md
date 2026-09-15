@@ -1,11 +1,107 @@
-# Contrato de datos actual
+# Contratos de datos
 
-Este documento describe la implementación 0.1. La arquitectura objetivo y el
-futuro contrato `procurement_events` se recogen en
-[architecture.md](architecture.md). Mantener ambos estados separados evita
-presentar como implementado un modelo que todavía está en migración.
+Este documento separa el contrato canónico ya definido de la persistencia 0.1
+que todavía utiliza el pipeline. El modelo y el esquema tipado de
+`silver.procurement_events` existen en código, pero TED y OpenPLACSP aún
+escriben `TenderRecord` en JSONL. Esa migración se hará por límites en cambios
+posteriores; no se presenta aquí como terminada.
 
-## Silver: `TenderRecord`
+## Silver canónico: `procurement_events`
+
+### Grano e identidad
+
+Una fila representa un evento o estado publicado por una fuente, no el estado
+final completo de un expediente. Un procedimiento puede tener varios eventos:
+anuncio, corrección, adjudicación o anulación, entre otros. Esto permite
+reconstruir su evolución sin sobrescribir evidencia anterior.
+
+Cada adaptador es responsable de construir identificadores deterministas:
+
+- `event_id` identifica de forma única el evento dentro de la plataforma. Se
+  deriva de la identidad inmutable publicada por la fuente y se prefija con la
+  fuente. Si una fuente reutiliza el mismo identificador para varias versiones,
+  la clave incluye su marcador de versión o timestamp de actualización.
+- `procedure_id` agrupa eventos del mismo expediente cuando la fuente permite
+  identificarlo. También queda prefijado por la fuente y puede ser nulo.
+- Reprocesar el mismo payload debe producir el mismo `event_id`.
+- Los identificadores de fuentes diferentes no se unifican en Silver. El
+  linkage posterior conserva la evidencia de esa decisión.
+
+Ejemplos ilustrativos de forma, no formatos que deban analizarse por posición:
+`ted:event:123-2026` y `placsp:procedure:10000101`.
+
+### Esquema
+
+El orden y los tipos físicos están definidos en `PROCUREMENT_EVENT_SCHEMA`.
+Solo `event_id`, `source`, `source_event_type` e `ingested_at` son obligatorios;
+`cpv_codes` es una lista no nula que puede estar vacía. Los demás campos son
+nulos cuando la fuente no publica el dato o su semántica todavía no puede
+establecerse de forma fiable.
+
+| Campo | Tipo Polars/Parquet | Semántica |
+| --- | --- | --- |
+| `event_id` | string | Clave determinista del evento, con namespace de fuente |
+| `procedure_id` | string/null | Clave del expediente en esa fuente |
+| `source` | string | Sistema oficial que publicó el evento |
+| `source_event_type` | string | Tipo extensible y explícito, por ejemplo `notice`, `notice_revision`, `award` o `tombstone` |
+| `buyer_id` | string/null | Identificador oficial del comprador cuando existe, preferentemente DIR3 en España |
+| `buyer_name` | string/null | Denominación publicada del comprador |
+| `title` | string/null | Título del evento o expediente |
+| `description` | string/null | Descripción publicada |
+| `cpv_codes` | list[string] | Todos los códigos CPV publicados, en orden estable y sin duplicados |
+| `estimated_value` | decimal(20,2)/null | Presupuesto o valor estimado; no es el importe adjudicado |
+| `awarded_value` | decimal(20,2)/null | Importe adjudicado cuando el evento lo publica |
+| `currency` | string/null | Código ISO 4217 asociado a los importes |
+| `publication_date` | date/null | Fecha oficial de publicación del evento |
+| `source_updated_at` | timestamp[us, UTC]/null | Momento en que la fuente declara haber actualizado el evento |
+| `deadline` | timestamp[us, UTC]/null | Fin del plazo cuando la fuente aporta hora y zona interpretables |
+| `status` | string/null | Estado publicado; su armonización entre fuentes es posterior |
+| `nuts_code` | string/null | Código territorial oficial; nunca se rellena desde un nombre libre |
+| `country` | string/null | Código ISO 3166-1 alpha-2 |
+| `source_url` | string/null | URL pública del evento o expediente |
+| `ingested_at` | timestamp[us, UTC] | Timestamp de recuperación heredado de la evidencia Raw |
+
+`publication_date` no puede derivarse de `source_updated_at`: representan
+hechos diferentes. Los timestamps aceptados por el modelo deben incluir zona y
+se normalizan a UTC. Los importes usan decimal de precisión fija para evitar
+introducir errores binarios en agregaciones monetarias.
+
+`source_event_type` no es todavía una enumeración cerrada porque las fuentes
+publican ciclos de vida diferentes. El adaptador debe documentar los valores
+que emite y no usar `status` como sustituto del tipo de evento.
+
+### Revisiones y tombstones
+
+Una revisión obtiene su propio `event_id`, conserva el mismo `procedure_id` y
+usa un `source_event_type` explícito. Un tombstone también es una fila: puede
+tener vacíos los atributos descriptivos, pero conserva identidad, fuente y
+timestamps. No borra físicamente los eventos anteriores. Una vista posterior
+podrá calcular el estado vigente sin perder el historial.
+
+La implementación 0.1 todavía pliega revisiones de OpenPLACSP y elimina los
+identificadores tombstoned. Esa conducta se mantiene por compatibilidad hasta
+que la transformación Bronze→Silver adopte este contrato.
+
+### Frontera de compatibilidad
+
+`TenderRecord` continúa siendo el modelo consumido por el pipeline actual.
+`procurement_event_from_tender` permite migrarlo de forma gradual, pero exige
+que el adaptador entregue `event_id`, `procedure_id`, tipo de evento y las tres
+decisiones temporales. No copia automáticamente `published_date`, porque en el
+adaptador OpenPLACSP 0.1 ese campo procede de `updated`.
+
+La conversión conserva el único CPV actual dentro de la lista, interpreta el
+importe actual como valor estimado y no convierte el texto libre `region` en
+`nuts_code`. `procurement_events_frame` genera el `DataFrame` con el esquema
+completo incluso para un lote vacío, listo para la frontera Parquet ya
+disponible.
+
+El contrato no contiene supuestos sectoriales: CPV, comprador, territorio,
+fechas, importes y estado sirven para obras, restauración, sanidad, logística,
+energía, servicios profesionales o tecnología. Las etiquetas semánticas de
+negocio pertenecen a enriquecimiento, no a esta entidad canónica.
+
+## Silver 0.1 en producción local: `TenderRecord`
 
 Grano actual: una versión consolidada por `(source, tender_id)`. Las revisiones
 de OpenPLACSP se pliegan mediante el timestamp `updated` y los identificadores
