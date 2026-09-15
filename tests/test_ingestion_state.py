@@ -72,6 +72,30 @@ class NewWindowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             new_window("placsp", "2026-01-01", "2026-03-31", ["202601", "202601"])
 
+    def test_invalid_window_bounds_raise_including_path_traversal(self) -> None:
+        invalid_bounds = [
+            "",
+            "2026/01/01",
+            "2026-1-1",
+            "20260101",
+            "2026-13-01",
+            "2026-02-30",
+            "../../etc/passwd",
+            "2026-01-01/..",
+            "2026-01-01\x00",
+            "not-a-date",
+        ]
+        for bad in invalid_bounds:
+            with self.subTest(bound=bad):
+                with self.assertRaises(ValueError):
+                    new_window("placsp", bad, "2026-03-31", PARTITIONS)
+                with self.assertRaises(ValueError):
+                    new_window("placsp", "2026-01-01", bad, PARTITIONS)
+                with self.assertRaises(ValueError):
+                    window_path(Path("/tmp/state"), "placsp", bad, "2026-03-31")
+                with self.assertRaises(ValueError):
+                    window_path(Path("/tmp/state"), "placsp", "2026-01-01", bad)
+
 
 class PersistenceTests(unittest.TestCase):
     """Validate reproducible save/load round trips."""
@@ -238,6 +262,16 @@ class IdempotencyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             accept_payload_change(state, "202601", "sha256:not-recorded")
 
+    def test_repeated_changed_checksum_observations_are_deduplicated(self) -> None:
+        state = _new_state()
+        _download_all(state)
+        self.assertEqual(record_partition(state, "202601", "sha256:changed", now=FIXED_NOW), PartitionChange.CHANGED)
+        self.assertEqual(record_partition(state, "202601", "sha256:changed", now=FIXED_NOW), PartitionChange.CHANGED)
+        self.assertEqual(len(state.unresolved_mismatches), 1)
+        self.assertEqual(record_partition(state, "202601", "sha256:other", now=FIXED_NOW), PartitionChange.CHANGED)
+        self.assertEqual(len(state.unresolved_mismatches), 2)
+        self.assertEqual({m.new_checksum for m in state.unresolved_mismatches}, {"sha256:changed", "sha256:other"})
+
     def test_unexpected_partition_raises(self) -> None:
         state = _new_state()
         with self.assertRaises(ValueError):
@@ -281,12 +315,64 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(state.failures, {})
         self.assertEqual(finalize_window(state, now=FIXED_NOW), IngestionStatus.COMPLETE.value)
 
+    def test_successful_unchanged_retry_clears_partition_failure(self) -> None:
+        state = _new_state()
+        mark_running(state, now=FIXED_NOW)
+        _download_all(state)
+        original = state.downloaded_partitions["202601"].checksum
+        record_partition_failure(state, "202601", "HTTP 503")
+        result = record_partition(state, "202601", original, now=FIXED_NOW)
+        self.assertEqual(result, PartitionChange.UNCHANGED)
+        self.assertEqual(state.failures, {})
+        self.assertEqual(finalize_window(state, now=FIXED_NOW), IngestionStatus.COMPLETE.value)
+
+    def test_failed_window_recovers_and_keeps_error_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = _new_state()
+            mark_running(state, now=FIXED_NOW)
+            _download_all(state)
+            mark_failed(state, "TLS handshake failed", now=FIXED_NOW)
+            save_window(root, state)
+
+            rerun = load_window(root, "placsp", "2026-01-01", "2026-03-31")
+            assert rerun is not None
+            mark_running(rerun, now=FIXED_NOW)
+            self.assertEqual(rerun.errors, [])
+            self.assertEqual(len(rerun.error_history), 1)
+            self.assertEqual(rerun.error_history[0].message, "TLS handshake failed")
+            self.assertEqual(rerun.error_history[0].at, FIXED_NOW.isoformat())
+            for partition in PARTITIONS:
+                record_partition(rerun, partition, state.downloaded_partitions[partition].checksum, now=FIXED_NOW)
+            self.assertEqual(finalize_window(rerun, now=FIXED_NOW), IngestionStatus.COMPLETE.value)
+            save_window(root, rerun)
+
+            reloaded = load_window(root, "placsp", "2026-01-01", "2026-03-31")
+            assert reloaded is not None
+            self.assertEqual(reloaded.status, IngestionStatus.COMPLETE.value)
+            self.assertEqual(reloaded.errors, [])
+            self.assertEqual([record.message for record in reloaded.error_history], ["TLS handshake failed"])
+            self.assertEqual(summary(reloaded)["error_history"], 1)
+
+    def test_mark_running_clears_stale_partition_failures(self) -> None:
+        state = _new_state()
+        mark_running(state, now=FIXED_NOW)
+        record_partition(state, "202601", "sha256:a", now=FIXED_NOW)
+        record_partition_failure(state, "202602", "HTTP 503")
+        self.assertEqual(finalize_window(state, now=FIXED_NOW), IngestionStatus.FAILED.value)
+        mark_running(state, now=FIXED_NOW)
+        self.assertEqual(state.failures, {})
+        self.assertEqual(finalize_window(state, now=FIXED_NOW), IngestionStatus.INCOMPLETE.value)
+        self.assertEqual(state.missing_partitions, ["202602", "202603"])
+
     def test_mark_failed_records_error_and_timestamp(self) -> None:
         state = _new_state()
         mark_running(state, now=FIXED_NOW)
         mark_failed(state, "TLS handshake failed", now=FIXED_NOW)
         self.assertEqual(state.status, IngestionStatus.FAILED.value)
-        self.assertEqual(state.errors, ["TLS handshake failed"])
+        self.assertEqual(len(state.errors), 1)
+        self.assertEqual(state.errors[0].message, "TLS handshake failed")
+        self.assertEqual(state.errors[0].at, FIXED_NOW.isoformat())
         self.assertEqual(state.finished_at, FIXED_NOW.isoformat())
 
     def test_invalid_transitions_raise(self) -> None:
