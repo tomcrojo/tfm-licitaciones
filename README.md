@@ -21,7 +21,7 @@ El producto final es un feed de oportunidades: una empresa puede definir qué ve
 
 ### Estado actual y dirección v2
 
-El corpus actualmente versionado se construyó con 9.905 avisos TED de España obtenidos mediante una query tecnológica y 129.090 avisos PLACSP de seis meses de sindicación 643. Esa query tecnológica describe el corpus inicial, no el alcance objetivo de la plataforma. La arquitectura v2 elimina ese filtro como requisito: los backfills e incrementales deben poder ingerir contratación general y aplicar segmentación, clasificación y matching downstream.
+El corpus inicial se construyó con 9.905 avisos TED de España obtenidos mediante una query tecnológica y 129.090 avisos PLACSP de seis meses de sindicación 643. Esa query tecnológica describe el corpus inicial, no el alcance objetivo de la plataforma. La arquitectura v2 elimina ese filtro como requisito: los backfills e incrementales deben poder ingerir contratación general y aplicar segmentación, clasificación y matching downstream.
 
 La implementación actual ya incluye:
 
