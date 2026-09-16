@@ -14,7 +14,8 @@ produced the measured evidence behind the production engine decision:
 
 - **Polars wins canonical Silver in the measured single-node envelope**
   (large profile: ~13 s Polars vs ~33 s Spark `local[16]` vs ~43 s
-  standalone 3×(4 cores/4 GiB), exact semantic parity everywhere).
+  standalone 3×(4 cores/4 GiB), exact parity in every measured
+  run/profile within the synthetic contract).
 - Spark local and same-host standalone are slower **at this scale**; the
   comparison was adversarially audited (no Python UDFs, no large collect,
   one typed JSON decode per branch, AQE on, common zstd codec, recorded
@@ -32,6 +33,7 @@ are dated evidence of the runs as executed.
 experiments/silver_engine_comparison/
 ├── README.md                  # this file
 ├── bench_engines.py           # 3-engine runner (fresh spawn child per engine)
+├── workload.py                # historical workload pin + fingerprint (e69016f generator)
 ├── engines/
 │   ├── python_row_reference.py  # FROZEN python-row baseline (e69016f semantics, no prod imports)
 │   ├── polars_candidate.py    # native Polars candidate (synthetic contract only)
@@ -44,6 +46,7 @@ experiments/silver_engine_comparison/
 │   └── engines-small-seed7-2026-09-16.json   # small-profile metrics JSON
 └── tests/
     ├── test_engine_parity.py       # parity/collision/guard tests (Spark parts skip without PySpark)
+    ├── test_workload_fingerprint.py  # historical workload pin tests
     └── test_no_production_imports.py  # src/ never imports experiments/; experiment never uses prod Silver facade
 ```
 
@@ -94,12 +97,51 @@ frozen module imports nothing from `tfm_licitaciones` (stdlib + polars
 only); static and dynamic regression tests enforce that a future
 production refactor cannot silently change it.
 
-Intentionally shared (harness, not baseline semantics): the synthetic
-dataset generator (`tfm_licitaciones.bench_silver`), the Bronze frame
+Intentionally shared (harness, not baseline semantics): the Bronze frame
 constructors (`tfm_licitaciones.bronze`) and the parity comparator
 (`tfm_licitaciones.silver_parity`). If production ever changes the
 canonical schema, parity will fail loudly instead of moving the historical
 baseline.
+
+## Historical workload pin (reproducibility)
+
+Freezing the baseline is not enough: the measured workload itself comes
+from the live generator `tfm_licitaciones.bench_silver` (`PROFILES`,
+`dataset_profile`, `write_bronze_parts`). A future generator change that
+keeps the same row counts but alters payloads would silently move what
+`--profile small --seed 7` denotes. Instead of copying the ~700-line
+generator, the experiment pins it cheaply:
+
+- generator commit: `e69016f62fb985639e17153e24b3a570f2f39c20` (verified:
+  `bench_silver.py`/`bronze.py` are byte-identical between that commit and
+  this branch);
+- deterministic fingerprint over canonicalized logical Bronze row values
+  (payload + provenance, never Parquet writer bytes) for the pinned
+  workloads `tiny`/`small` with `seed=7` (see `workload.py`:
+  `HISTORICAL_WORKLOADS`).
+
+`bench_engines.run_comparison` asserts the pin for those workloads before
+measuring, and `tests/test_workload_fingerprint.py` asserts it in CI
+(including a sensitivity test proving the digest moves on a
+count-preserving content change). Any other profile/seed runs unchecked so
+exploratory runs stay possible.
+
+## Errata (reports stay byte-identical)
+
+The three dated reports are preserved verbatim as executed; verified
+against the pre-curation blobs. One verified inconsistency, documented
+here instead of editing the artifact:
+
+- `reports/silver-distributed-2026-09-16.md` §Topología shows a single
+  reproducible command with `--spark-driver-memory 3g
+  --spark-executor-memory 4g`. Checked against the retained evidence, that
+  configuration matches the **large** cluster run (`large-07-cluster.json`:
+  driver 3g / executor 4g, table `3×(4c/4g)`), but **not** the medium
+  cluster runs (`medium-07-cluster.json`, `medium-07-cluster3.json`:
+  driver 2g / executor 3g, matching the table's `3×(4c/3g)` label). The
+  table labels are correct; only the shared command block conflates the
+  two configs. To reproduce medium on the cluster use
+  `--spark-driver-memory 2g --spark-executor-memory 3g`.
 
 The historical conclusion is unchanged: Polars won canonical Silver in the
 measured single-node envelope; Spark local and same-host standalone were
@@ -129,4 +171,6 @@ uv run --with 'pyspark==4.0.1' --with-editable . \
 ```
 
 The default production suite (`python -m unittest discover -s tests`)
-never discovers this directory.
+never discovers this directory. CI (`.github/workflows/tests.yml`) runs
+both the production suite and this experiment suite without PySpark (Spark
+behavior tests skip there; run them locally with the pinned extra).

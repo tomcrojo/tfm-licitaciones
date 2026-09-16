@@ -341,6 +341,89 @@ class PolarsEngineTests(unittest.TestCase):
             )
         self.assertIn(COLLISION_EVENT, str(context.exception))
 
+    @staticmethod
+    def _frames_with(records_mod=None, tombstones_mod=None):
+        import json as _json
+
+        dataset = generate_bronze_in_memory(seed=7)
+        records, tombstones = dataset["records"], dataset["tombstones"]
+        if records_mod is not None:
+            records = records_mod(records, _json)
+        if tombstones_mod is not None:
+            tombstones = tombstones_mod(tombstones)
+        return bronze_frame(records), tombstone_frame(tombstones)
+
+    def test_missing_ted_notice_id_fails_explicitly(self) -> None:
+        def _drop_notice_id(records, _json):
+            mutated = []
+            for row in records:
+                if row["source"] == "ted":
+                    payload = _json.loads(row["payload_json"])
+                    payload.pop("ND", None)
+                    row = {**row, "payload_json": _json.dumps(payload, sort_keys=True)}
+                mutated.append(row)
+            return mutated
+
+        records, tombstones = self._frames_with(records_mod=_drop_notice_id)
+        with self.assertRaises(ValueError) as context:
+            build_procurement_events_polars(records, tombstones)
+        self.assertIn("without a published notice number", str(context.exception))
+        # Pre-identity diagnostic names the Bronze locator (no event_id yet).
+        self.assertIn("line:", str(context.exception))
+
+    def test_missing_placsp_atom_id_fails_explicitly(self) -> None:
+        def _drop_atom_id(records, _json):
+            mutated = []
+            for row in records:
+                if row["source"] == "placsp":
+                    payload = _json.loads(row["payload_json"])
+                    payload.pop("atom_id", None)
+                    row = {**row, "payload_json": _json.dumps(payload, sort_keys=True)}
+                mutated.append(row)
+            return mutated
+
+        records, tombstones = self._frames_with(records_mod=_drop_atom_id)
+        with self.assertRaises(ValueError) as context:
+            build_procurement_events_polars(records, tombstones)
+        self.assertIn("without an atom id", str(context.exception))
+        self.assertIn("entry:", str(context.exception))
+
+    def test_empty_tombstone_ref_fails_explicitly(self) -> None:
+        records, tombstones = self._frames_with(
+            tombstones_mod=lambda rows: [{**rows[0], "source_record_id": "  "}] + rows[1:]
+        )
+        with self.assertRaises(ValueError) as context:
+            build_procurement_events_polars(records, tombstones)
+        self.assertIn("without a full ref", str(context.exception))
+
+    def test_invalid_tombstone_source_fails_explicitly(self) -> None:
+        records, tombstones = self._frames_with(
+            tombstones_mod=lambda rows: [{**rows[0], "source": "ted"}] + rows[1:]
+        )
+        with self.assertRaises(ValueError) as context:
+            build_procurement_events_polars(records, tombstones)
+        self.assertIn("Unsupported tombstone source", str(context.exception))
+
+    def test_null_record_source_fails_explicitly(self) -> None:
+        # Null used to vanish: ~is_in(...) is null on null input and filter
+        # drops the row, so the observation disappeared instead of failing.
+        records, tombstones = self._frames_with(
+            records_mod=lambda rows, _json: [{**rows[0], "source": None}] + rows[1:]
+        )
+        with self.assertRaises(ValueError) as context:
+            build_procurement_events_polars(records, tombstones)
+        self.assertIn("synthetic Bronze only", str(context.exception))
+
+    def test_null_tombstone_source_fails_explicitly(self) -> None:
+        # Null used to be mislabeled: source != 'placsp' is null on null
+        # input, so the control row was emitted literally as placsp.
+        records, tombstones = self._frames_with(
+            tombstones_mod=lambda rows: [{**rows[0], "source": None}] + rows[1:]
+        )
+        with self.assertRaises(ValueError) as context:
+            build_procurement_events_polars(records, tombstones)
+        self.assertIn("Unsupported tombstone source", str(context.exception))
+
 
 @unittest.skipUnless(HAS_PYSPARK, "PySpark not installed (experiment-only dependency)")
 class SparkEngineTests(unittest.TestCase):
@@ -425,6 +508,66 @@ class SparkEngineTests(unittest.TestCase):
             finally:
                 session.stop()
         self.assertIn(COLLISION_EVENT, str(context.exception))
+
+    @staticmethod
+    def _write_tiny_with(tmp: Path, records_mod=None, tombstones_mod=None) -> Path:
+        import json as _json
+
+        from tfm_licitaciones.bronze import bronze_frame as _bronze_frame
+        from tfm_licitaciones.bronze import tombstone_frame as _tombstone_frame
+
+        dataset = generate_bronze_in_memory(seed=7)
+        records, tombstones = dataset["records"], dataset["tombstones"]
+        if records_mod is not None:
+            records = records_mod(records, _json)
+        if tombstones_mod is not None:
+            tombstones = tombstones_mod(tombstones)
+        target = tmp / "dataset"
+        (target / "records").mkdir(parents=True)
+        (target / "tombstones").mkdir(parents=True)
+        _bronze_frame(records).write_parquet(target / "records" / "part-00000.parquet")
+        _tombstone_frame(tombstones).write_parquet(target / "tombstones" / "part-00000.parquet")
+        return target
+
+    def test_null_record_source_fails_explicitly(self) -> None:
+        from experiments.silver_engine_comparison.engines.spark_candidate import build_spark_events
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = self._write_tiny_with(
+                Path(tmp),
+                records_mod=lambda rows, _json: [{**rows[0], "source": None}] + rows[1:],
+            )
+            session = self._session()
+            try:
+                with self.assertRaises(ValueError) as context:
+                    build_spark_events(
+                        session,
+                        str(target / "records" / "part-*.parquet"),
+                        str(target / "tombstones" / "part-*.parquet"),
+                    )
+            finally:
+                session.stop()
+        self.assertIn("synthetic Bronze only", str(context.exception))
+
+    def test_null_tombstone_source_fails_explicitly(self) -> None:
+        from experiments.silver_engine_comparison.engines.spark_candidate import build_spark_events
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = self._write_tiny_with(
+                Path(tmp),
+                tombstones_mod=lambda rows: [{**rows[0], "source": None}] + rows[1:],
+            )
+            session = self._session()
+            try:
+                with self.assertRaises(ValueError) as context:
+                    build_spark_events(
+                        session,
+                        str(target / "records" / "part-*.parquet"),
+                        str(target / "tombstones" / "part-*.parquet"),
+                    )
+            finally:
+                session.stop()
+        self.assertIn("Unsupported tombstone source", str(context.exception))
 
     def test_success_path_never_collects_to_the_driver(self) -> None:
         from pyspark.sql.classic.dataframe import DataFrame

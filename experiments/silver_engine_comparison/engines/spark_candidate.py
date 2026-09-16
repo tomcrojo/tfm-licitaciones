@@ -583,7 +583,7 @@ def _tombstone_events(F: Any, T: Any, tombstones: Any) -> Any:
         F.lit(None).cast(T.StringType()).alias("source_url"),
         F.col("raw_retrieved_at").alias("ingested_at"),
         *[F.col(name) for name in _PROVENANCE_ORDER],
-        (F.col("source") != "placsp").alias("__bad_source"),
+        (F.col("source").isNull() | (F.col("source") != "placsp")).alias("__bad_source"),
         ref.isNull().alias("__ref_missing"),
     ).transform(_persist)
     if frame.filter(F.col("__bad_source") | F.col("__ref_missing")).limit(1).count():
@@ -599,11 +599,14 @@ def _tombstone_events(F: Any, T: Any, tombstones: Any) -> Any:
 def _check_experiment_scope(F: Any, records: Any) -> None:
     """Fail explicitly on Bronze sources outside the experiment contract.
 
-    The success path fetches zero rows (scalar ``count`` only); offending
-    values are fetched, bounded, solely to name them on failure.
+    Null counts as outside the contract: ``~isin(...)`` alone evaluates to
+    null on null inputs, ``filter`` drops those rows and the scope gate
+    would pass silently. The success path fetches zero rows (scalar
+    ``count`` only); offending values are fetched, bounded, solely to name
+    them on failure.
     """
 
-    if records.filter(~F.col("source").isin("ted", "placsp")).limit(1).count():
+    if records.filter(F.col("source").isNull() | ~F.col("source").isin("ted", "placsp")).limit(1).count():
         distinct = [row[0] for row in records.select("source").distinct().limit(10).head(10)]
         unsupported = [source for source in distinct if source not in ("ted", "placsp")]
         raise ValueError(

@@ -104,6 +104,8 @@ import polars as pl
 from tfm_licitaciones.bench_silver import PROFILES, dataset_profile, write_bronze_parts
 from tfm_licitaciones.silver_parity import compare_silver_frames
 
+from .workload import WORKLOAD_GENERATOR_COMMIT, assert_historical_workload
+
 UTC = timezone.utc
 
 # Write-boundary codec pin: Polars writes zstd by default while Spark
@@ -736,6 +738,15 @@ def run_comparison(
         started_generation = time.perf_counter()
         manifest = write_bronze_parts(dataset_dir, seed=seed, with_collision=with_collision, **params)
         generation_s = time.perf_counter() - started_generation
+        # Pin the historical workload: tiny/small seed 7 must still denote
+        # the exact Bronze dataset behind the retained measurements. A
+        # generator change that keeps row counts but alters payloads would
+        # otherwise move the "reproducible" benchmark silently (see
+        # workload.HISTORICAL_WORKLOADS). Unpinned profiles/seeds run
+        # unchecked so exploratory runs stay possible.
+        workload = assert_historical_workload(
+            dataset_dir, profile=profile, seed=seed, with_collision=with_collision
+        )
         records_glob = str(dataset_dir / "records" / "part-*.parquet")
         tombstones_glob = str(dataset_dir / "tombstones" / "part-*.parquet")
 
@@ -894,6 +905,8 @@ def run_comparison(
             "dataset_dir": str(dataset_dir),
             **manifest["inputs"],
             "layout": manifest["layout"],
+            "workload_sha256": workload["sha256"],
+            "workload_generator_commit": WORKLOAD_GENERATOR_COMMIT,
         },
         "stage": STAGE_DESCRIPTION,
         "timing_s": {"generation_s": generation_s},

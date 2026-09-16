@@ -26,8 +26,9 @@ Python: no ``iter_rows``/``to_dicts``/``map_elements``/``apply`` object
 materialization, no ``ProcurementEvent`` allocation, no ``json`` module
 parsing loop. The success path performs zero driver row fetches (only
 scalar ``height`` validations run engine-side); failure paths fetch at
-most 5 ``event_id`` values solely to name them in the raised
-``ValueError``.
+most 5 labels solely to name them in the raised ``ValueError``
+(``event_id`` once identity exists, otherwise the Bronze
+``record_locator``, mirroring the frozen baseline).
 """
 
 from __future__ import annotations
@@ -242,18 +243,30 @@ def _array_shape_invalid(payload: pl.Expr, key: str) -> pl.Expr:
     return present & ~is_array & ~is_null
 
 
-def _failure_ids(frame: pl.DataFrame) -> list[str]:
-    """Fetch a bounded sample of event ids for an explicit failure message."""
+def _failure_ids(frame: pl.DataFrame, column: str = "event_id") -> list[str]:
+    """Fetch a bounded sample of labels for an explicit failure message.
 
-    return frame.head(_MAX_IDS_IN_ERROR).get_column("event_id").to_list()
+    Identity checks (missing TED notice number, missing PLACSP atom id,
+    missing/invalid tombstone refs) run BEFORE ``event_id`` exists, so
+    they name ``record_locator`` instead — mirroring the frozen python-row
+    baseline, which reports the Bronze locator there. Requesting a missing
+    column falls back to ``record_locator`` rather than raising
+    ``ColumnNotFoundError`` and hiding the real validation error.
+    """
+
+    if column not in frame.columns:
+        column = "record_locator" if "record_locator" in frame.columns else frame.columns[0]
+    return frame.head(_MAX_IDS_IN_ERROR).get_column(column).to_list()
 
 
-def _raise_if_invalid(frame: pl.DataFrame, mask: pl.Expr, message: str) -> None:
-    """Raise ``ValueError`` naming offending events when ``mask`` matches rows."""
+def _raise_if_invalid(
+    frame: pl.DataFrame, mask: pl.Expr, message: str, *, id_column: str = "event_id"
+) -> None:
+    """Raise ``ValueError`` naming offending rows when ``mask`` matches rows."""
 
     bad = frame.filter(mask)
     if bad.height:
-        raise ValueError(f"{message}: {_failure_ids(bad)!r}")
+        raise ValueError(f"{message}: {_failure_ids(bad, id_column)!r}")
 
 
 def _ted_events(records: pl.DataFrame) -> pl.DataFrame:
@@ -273,6 +286,7 @@ def _ted_events(records: pl.DataFrame) -> pl.DataFrame:
         ted.with_columns(notice_id.alias("__notice_id")),
         pl.col("__notice_id").is_null(),
         "TED bronze record without a published notice number",
+        id_column="record_locator",
     )
     title = _null_if_empty(_clean_text(doc.struct.field("TI").struct.field("spa")))
     description = _null_if_empty(_clean_text(doc.struct.field("description-glo").struct.field("spa")))
@@ -386,6 +400,7 @@ def _placsp_events(records: pl.DataFrame) -> pl.DataFrame:
         placsp.with_columns(atom_id.alias("__atom_id")),
         pl.col("__atom_id").is_null(),
         "PLACSP bronze record without an atom id",
+        id_column="record_locator",
     )
     updated_raw = _clean_text(doc.struct.field("updated"))
     has_zone = updated_raw.str.contains(_TZ_SUFFIX)
@@ -480,14 +495,16 @@ def _tombstone_events(tombstones: pl.DataFrame) -> pl.DataFrame:
 
     _raise_if_invalid(
         tombstones.with_columns(pl.lit("tombstone").alias("__kind")),
-        (pl.col("source") != "placsp"),
+        (pl.col("source").is_null() | (pl.col("source") != "placsp")),
         "Unsupported tombstone source for canonical Silver",
+        id_column="record_locator",
     )
     ref = _null_if_empty(pl.col("source_record_id").str.strip_chars())
     _raise_if_invalid(
         tombstones.with_columns(ref.alias("__ref")),
         pl.col("__ref").is_null(),
         "PLACSP tombstone without a full ref",
+        id_column="record_locator",
     )
     return tombstones.select(
         (pl.lit("placsp:tombstone:") + ref).alias("event_id"),
@@ -518,11 +535,15 @@ def _tombstone_events(tombstones: pl.DataFrame) -> pl.DataFrame:
 def _check_experiment_scope(records: pl.DataFrame) -> None:
     """Fail explicitly on Bronze sources outside the experiment contract.
 
-    The success path fetches zero rows (scalar ``height`` only); offending
+    Null counts as outside the contract: ``~is_in(...)`` alone evaluates to
+    null on null inputs and ``filter`` would drop those rows silently. The
+    success path fetches zero rows (scalar ``height`` only); offending
     values are fetched, bounded, solely to name them on failure.
     """
 
-    unexpected = records.filter(~pl.col("source").is_in(("ted", "placsp"))).limit(1)
+    unexpected = records.filter(
+        pl.col("source").is_null() | ~pl.col("source").is_in(("ted", "placsp"))
+    ).limit(1)
     if unexpected.height:
         distinct = (
             records.select("source").unique().head(10).get_column("source").to_list()
