@@ -391,10 +391,110 @@ class RunnerHelperTests(unittest.TestCase):
 
         args = build_parser().parse_args(["--profile", "tiny"])
         self.assertIsNone(args.spark_driver_memory)
+        self.assertIsNone(args.spark_executor_memory)
+        self.assertIsNone(args.spark_executor_cores)
+        self.assertIsNone(args.spark_executor_instances)
+        self.assertIsNone(args.spark_eventlog_dir)
         args = build_parser().parse_args(
             ["--profile", "tiny", "--spark-driver-memory", "8g"]
         )
         self.assertEqual(args.spark_driver_memory, "8g")
+
+    def test_cluster_topology_flags_are_accepted(self) -> None:
+        from tfm_licitaciones.bench_engines import build_parser
+
+        args = build_parser().parse_args(
+            [
+                "--profile", "tiny",
+                "--spark-master", "spark://127.0.0.1:7077",
+                "--spark-executor-memory", "4g",
+                "--spark-executor-cores", "4",
+                "--spark-executor-instances", "3",
+                "--spark-eventlog-dir", "/tmp/spark-events",
+            ]
+        )
+        self.assertEqual(args.spark_master, "spark://127.0.0.1:7077")
+        self.assertEqual(args.spark_executor_memory, "4g")
+        self.assertEqual(args.spark_executor_cores, "4")
+        self.assertEqual(args.spark_executor_instances, "3")
+
+    def test_summarize_eventlog_counts_stages_and_shuffle(self) -> None:
+        import json as _json
+
+        from tfm_licitaciones.bench_engines import summarize_eventlog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "app-1"
+            log.write_text(
+                "\n".join(
+                    [
+                        _json.dumps({"Event": "SparkListenerJobStart", "Job ID": 0}),
+                        _json.dumps(
+                            {
+                                "Event": "SparkListenerExecutorAdded",
+                                "Executor ID": "1",
+                                "Executor Info": {
+                                    "Host": "127.0.0.1",
+                                    "Total Cores": 4,
+                                },
+                            }
+                        ),
+                        _json.dumps(
+                            {
+                                "Event": "SparkListenerStageCompleted",
+                                "Stage Info": {
+                                    "Stage ID": 1,
+                                    "Stage Name": "scan",
+                                    "Number of Tasks": 7,
+                                    "Accumulables": [
+                                        {
+                                            "Name": "internal.metrics.shuffle.read.remoteBytesRead",
+                                            "Value": 100,
+                                        },
+                                        {
+                                            "Name": "internal.metrics.shuffle.write.bytesWritten",
+                                            "Value": 50,
+                                        },
+                                        {
+                                            "Name": "internal.metrics.diskBytesSpilled",
+                                            "Value": 0,
+                                        },
+                                        {
+                                            "Name": "internal.metrics.memoryBytesSpilled",
+                                            "Value": 0,
+                                        },
+                                        {
+                                            "Name": "internal.metrics.jvmGCTime",
+                                            "Value": 12,
+                                        },
+                                    ],
+                                },
+                            }
+                        ),
+                        "not json",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            summary = summarize_eventlog(log)
+        self.assertEqual(summary["jobs"], 1)
+        self.assertEqual(
+            summary["executors"],
+            [{"executor_id": "1", "host": "127.0.0.1", "total_cores": 4}],
+        )
+        self.assertEqual(len(summary["stages"]), 1)
+        self.assertEqual(
+            summary["totals"],
+            {
+                "num_tasks": 7,
+                "shuffle_read_bytes": 100,
+                "shuffle_write_bytes": 50,
+                "disk_spilled_bytes": 0,
+                "memory_spilled_bytes": 0,
+                "jvm_gc_ms": 12,
+            },
+        )
+        self.assertEqual(summarize_eventlog(Path(tmp) / "absent")["totals"]["num_tasks"], 0)
 
     def test_output_disk_usage_reports_parquet_and_artifact_totals(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

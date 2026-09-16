@@ -228,7 +228,13 @@ memoria del driver Spark se fija de forma reproducible con
 `--spark-driver-memory` (aplicado como `SPARK_DRIVER_MEMORY` en el hijo
 fresco antes del arranque de la JVM; fijar `spark.driver.memory` después
 no redimensiona el heap) y las métricas registran tanto el valor pedido
-como el heap real (`Runtime.getRuntime().maxMemory()`). Los timestamps Spark se leen re-etiquetando UTC sin
+como el heap real (`Runtime.getRuntime().maxMemory()`). Para masters
+standalone/cluster, `--spark-executor-memory/cores/instances` dimensionan
+los executors (con `spark.cores.max` = cores × instances) y
+`--spark-eventlog-dir` activa el event log JSON clásico para registrar
+topología real de executors y contadores por stage (shuffle read/write,
+spill, GC, tareas); ver
+[docs/experiments/silver-distributed-2026-09-16.md](experiments/silver-distributed-2026-09-16.md). Los timestamps Spark se leen re-etiquetando UTC sin
 desplazar valores (normalización de interop documentada en el runner).
 El orden de `array_distinct` se asume SOLO en el pin `pyspark==4.0.1`,
 fijado por prueba unitaria de orden más paridad completa en cada

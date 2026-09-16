@@ -303,6 +303,111 @@ def rss_method() -> str:
         return "procfs"
 
 
+def _task_metrics_totals(event: dict[str, Any]) -> dict[str, int]:
+    """Extract shuffle/spill/GC counters from a StageCompleted event.
+
+    Matches the exact ``internal.metrics.*`` accumulable names observed in
+    Spark 4.0.1 event logs. Shuffle-read sums the classic
+    (remote/localBytesRead) and push-based (remote/localMergedBytesRead)
+    byte counters; a stage uses one reader path, so no double counting.
+    """
+
+    info = event.get("Stage Info", {})
+    metrics = info.get("Accumulables", [])
+    totals = {
+        "num_tasks": int(info.get("Number of Tasks", 0)),
+        "shuffle_read_bytes": 0,
+        "shuffle_write_bytes": 0,
+        "disk_spilled_bytes": 0,
+        "memory_spilled_bytes": 0,
+        "jvm_gc_ms": 0,
+    }
+    read_keys = {
+        "internal.metrics.shuffle.read.remoteBytesRead",
+        "internal.metrics.shuffle.read.localBytesRead",
+        "internal.metrics.shuffle.read.remoteMergedBytesRead",
+        "internal.metrics.shuffle.read.localMergedBytesRead",
+    }
+    for entry in metrics:
+        name = str(entry.get("Name", ""))
+        value = entry.get("Value")
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if name in read_keys:
+            totals["shuffle_read_bytes"] += number
+        elif name == "internal.metrics.shuffle.write.bytesWritten":
+            totals["shuffle_write_bytes"] += number
+        elif name == "internal.metrics.diskBytesSpilled":
+            totals["disk_spilled_bytes"] += number
+        elif name == "internal.metrics.memoryBytesSpilled":
+            totals["memory_spilled_bytes"] += number
+        elif name == "internal.metrics.jvmGCTime":
+            totals["jvm_gc_ms"] += number
+    return totals
+
+
+def summarize_eventlog(path: str | Path) -> dict[str, Any]:
+    """Summarize one Spark event-log file into per-stage counters.
+
+    Counts jobs, stages and accumulates task/shuffle/spill/GC totals from
+    ``SparkListenerStageCompleted`` events. Unknown lines are ignored so a
+    version skew never fails a benchmark run; an empty summary (no stages)
+    is returned as zeros rather than raising.
+    """
+
+    stages: list[dict[str, Any]] = []
+    jobs = 0
+    executors: list[dict[str, Any]] = []
+    target = Path(path)
+    files = [target] if target.is_file() else sorted(target.glob("*"))
+    for member in files:
+        if not member.is_file() or member.suffix == ".zstd":
+            continue
+        try:
+            handle = open(member, encoding="utf-8")
+        except OSError:
+            continue
+        with handle:
+            for line in handle:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                kind = event.get("Event")
+                if kind == "SparkListenerJobStart":
+                    jobs += 1
+                elif kind == "SparkListenerExecutorAdded":
+                    info = event.get("Executor Info", {})
+                    executors.append(
+                        {
+                            "executor_id": event.get("Executor ID", info.get("Executor ID")),
+                            "host": info.get("Host"),
+                            "total_cores": info.get("Total Cores"),
+                        }
+                    )
+                elif kind == "SparkListenerStageCompleted":
+                    info = event.get("Stage Info", {})
+                    summary = {
+                        "stage_id": info.get("Stage ID"),
+                        "stage_name": info.get("Stage Name"),
+                        **_task_metrics_totals(event),
+                    }
+                    stages.append(summary)
+    totals = {
+        key: sum(stage[key] for stage in stages)
+        for key in (
+            "num_tasks", "shuffle_read_bytes", "shuffle_write_bytes",
+            "disk_spilled_bytes", "memory_spilled_bytes", "jvm_gc_ms",
+        )
+    }
+    return {"jobs": jobs, "executors": executors, "stages": stages, "totals": totals}
+
+
 def java_version() -> str | None:
     """Return the ``java -version`` line, used by the Spark engine only."""
 
@@ -348,6 +453,11 @@ def _engine_worker(payload: dict[str, Any], queue: Any) -> None:
     local-mode heap: ``spark.driver.memory`` set after JVM boot only
     records a string) and reports the actual heap
     (``Runtime.getRuntime().maxMemory()``), never just the config value.
+    Executor sizing (``spark_executor_memory/cores/instances``) is applied
+    as session conf for standalone/cluster masters and ignored in local
+    mode; with ``spark_eventlog_dir`` the classic single-file JSON event
+    log is enabled so the parent can record per-stage shuffle/spill/GC
+    counters and the real executor list.
     """
 
     try:
@@ -416,10 +526,33 @@ def _engine_worker(payload: dict[str, Any], queue: Any) -> None:
                 raise ImportError(f"PySpark is not installed. {INSTALL_HINT}") from exc
             import pyspark
 
-            session = build_session(master=payload["spark_master"])
+            extra_conf: dict[str, str] = {}
+            if payload.get("spark_executor_memory"):
+                extra_conf["spark.executor.memory"] = payload["spark_executor_memory"]
+            if payload.get("spark_executor_cores") and payload.get("spark_executor_instances"):
+                extra_conf["spark.executor.cores"] = payload["spark_executor_cores"]
+                # On standalone, cap total cores so the request is satisfiable
+                # and reproducible instead of taking the whole cluster.
+                extra_conf["spark.cores.max"] = str(
+                    int(payload["spark_executor_cores"])
+                    * int(payload["spark_executor_instances"])
+                )
+            if payload.get("spark_eventlog_dir"):
+                extra_conf["spark.eventLog.enabled"] = "true"
+                extra_conf["spark.eventLog.dir"] = payload["spark_eventlog_dir"]
+                # Classic single-file JSON log: Spark 4 rolling v2 logs are
+                # compressed chunks that need extra tooling to parse.
+                extra_conf["spark.eventLog.rolling.enabled"] = "false"
+                extra_conf["spark.eventLog.compress"] = "false"
+            session = build_session(master=payload["spark_master"], extra_conf=extra_conf or None)
             spark_conf = session_config_snapshot(session)
             spark_version = session.version
             pyspark_version = pyspark.__version__
+            application_id = session.sparkContext.applicationId
+            # Actual executor topology comes from the event log
+            # (SparkListenerExecutorAdded), recorded parent-side; py4j has
+            # no stable accessor for it across Spark versions.
+            executors_actual = None
             try:
                 jvm_heap_bytes = int(
                     session._jvm.java.lang.Runtime.getRuntime().maxMemory()  # type: ignore[attr-defined]
@@ -445,6 +578,8 @@ def _engine_worker(payload: dict[str, Any], queue: Any) -> None:
                 "cache_strategy": CACHE_STRATEGY,
                 "parquet_codec": _SPARK_CODEC,
                 "jvm_max_heap_bytes": jvm_heap_bytes,
+                "application_id": application_id,
+                "executors_actual": executors_actual,
             }
         else:
             raise ValueError(f"Unknown engine {engine!r}")
@@ -463,6 +598,10 @@ def measure_engine(
     sample_interval_s: float = 0.02,
     spark_master: str | None = None,
     spark_driver_memory: str | None = None,
+    spark_executor_memory: str | None = None,
+    spark_executor_cores: str | None = None,
+    spark_executor_instances: str | None = None,
+    spark_eventlog_dir: str | None = None,
 ) -> dict[str, Any]:
     """Measure one engine stage in an isolated child with tree-RSS sampling.
 
@@ -482,6 +621,10 @@ def measure_engine(
         "silver_path": str(silver_path),
         "spark_master": spark_master or f"local[{os.cpu_count() or 2}]",
         "spark_driver_memory": spark_driver_memory,
+        "spark_executor_memory": spark_executor_memory,
+        "spark_executor_cores": spark_executor_cores,
+        "spark_executor_instances": spark_executor_instances,
+        "spark_eventlog_dir": spark_eventlog_dir,
     }
     process = context.Process(target=_engine_worker, args=(payload, queue))
     started = time.perf_counter()
@@ -531,6 +674,10 @@ def run_comparison(
     engines: tuple[str, ...] | list[str] = ENGINE_ORDER,
     spark_master: str | None = None,
     spark_driver_memory: str | None = None,
+    spark_executor_memory: str | None = None,
+    spark_executor_cores: str | None = None,
+    spark_executor_instances: str | None = None,
+    spark_eventlog_dir: str | None = None,
     sample_interval_s: float = 0.02,
 ) -> dict[str, Any]:
     """Run the offline engine comparison on one retained synthetic dataset.
@@ -544,6 +691,11 @@ def run_comparison(
     unknown = [name for name in engines if name not in ENGINE_ORDER]
     if unknown:
         raise ValueError(f"Unknown engines {unknown!r}; expected a subset of {list(ENGINE_ORDER)}")
+    if "python-row" not in engines:
+        raise ValueError(
+            "The 'python-row' engine is required: validation reads its "
+            "output as the parity reference."
+        )
     params = dataset_profile(profile)
     if work_dir is None:
         import tempfile
@@ -571,6 +723,10 @@ def run_comparison(
                     measure_engine(
                         engine, records_glob, tombstones_glob, silver_path,
                         spark_master=spark_master, spark_driver_memory=spark_driver_memory,
+                        spark_executor_memory=spark_executor_memory,
+                        spark_executor_cores=spark_executor_cores,
+                        spark_executor_instances=spark_executor_instances,
+                        spark_eventlog_dir=spark_eventlog_dir,
                         sample_interval_s=sample_interval_s,
                     )
                 except ValueError as exc:
@@ -594,6 +750,10 @@ def run_comparison(
             report = measure_engine(
                 engine, records_glob, tombstones_glob, silver_path,
                 spark_master=spark_master, spark_driver_memory=spark_driver_memory,
+                spark_executor_memory=spark_executor_memory,
+                spark_executor_cores=spark_executor_cores,
+                spark_executor_instances=spark_executor_instances,
+                spark_eventlog_dir=spark_eventlog_dir,
                 sample_interval_s=sample_interval_s,
             )
             parquet_bytes, parquet_files = output_parquet_usage(silver_path)
@@ -613,6 +773,29 @@ def run_comparison(
                 extra_conf["jvm_max_heap_bytes"] = report.pop("jvm_max_heap_bytes", None)
                 extra_conf["cache_strategy"] = report.pop("cache_strategy")
                 extra_conf["parquet_codec"] = report.pop("parquet_codec")
+                extra_conf["spark_executor_memory"] = spark_executor_memory
+                extra_conf["spark_executor_cores"] = spark_executor_cores
+                extra_conf["spark_executor_instances"] = spark_executor_instances
+                extra_conf["application_id"] = report.pop("application_id", None)
+                extra_conf["executors_actual"] = report.pop("executors_actual", None)
+                if spark_eventlog_dir and extra_conf["application_id"]:
+                    eventlog_dir = Path(spark_eventlog_dir)
+                    candidates = [
+                        eventlog_dir / extra_conf["application_id"],
+                        eventlog_dir / f"eventlog_v2_{extra_conf['application_id']}",
+                    ]
+                    found = next((c for c in candidates if c.exists()), None)
+                    extra_conf["eventlog_summary"] = (
+                        summarize_eventlog(found)
+                        if found is not None
+                        else {
+                            "jobs": 0, "executors": [], "stages": [],
+                            "totals": {},
+                            "missing": str(candidates[0]),
+                        }
+                    )
+                else:
+                    extra_conf["eventlog_summary"] = None
             else:
                 extra_conf["cache_strategy"] = "not applicable (eager in-memory frame)"
                 extra_conf["parquet_codec"] = report.pop("parquet_codec")
@@ -742,6 +925,25 @@ def build_parser() -> argparse.ArgumentParser:
         "the actual JVM heap. Equivalent to exporting SPARK_DRIVER_MEMORY.",
     )
     parser.add_argument(
+        "--spark-executor-memory", default=None,
+        help="Spark executor memory, e.g. 4g (standalone/cluster only; "
+        "ignored in local mode).",
+    )
+    parser.add_argument(
+        "--spark-executor-cores", default=None,
+        help="Cores per Spark executor, e.g. 4 (standalone/cluster only).",
+    )
+    parser.add_argument(
+        "--spark-executor-instances", default=None,
+        help="With --spark-executor-cores, caps total cores on standalone "
+        "via spark.cores.max = cores x instances.",
+    )
+    parser.add_argument(
+        "--spark-eventlog-dir", default=None, type=Path,
+        help="Enable Spark event logging to this directory so the parent "
+        "can record per-stage shuffle/spill/GC counters.",
+    )
+    parser.add_argument(
         "--sample-interval-ms", default=20.0, type=float,
         help="parent RSS polling interval in milliseconds",
     )
@@ -758,6 +960,10 @@ def main(argv: list[str] | None = None) -> int:
         engines=tuple(part for part in args.engines.split(",") if part),
         spark_master=args.spark_master,
         spark_driver_memory=args.spark_driver_memory,
+        spark_executor_memory=args.spark_executor_memory,
+        spark_executor_cores=args.spark_executor_cores,
+        spark_executor_instances=args.spark_executor_instances,
+        spark_eventlog_dir=args.spark_eventlog_dir,
         sample_interval_s=args.sample_interval_ms / 1000.0,
     )
     print(json.dumps(metrics, ensure_ascii=False, indent=2))

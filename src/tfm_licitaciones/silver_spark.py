@@ -226,7 +226,9 @@ def session_config_snapshot(session: Any) -> dict[str, str]:
     keys = (
         "spark.master", "spark.app.name", "spark.sql.session.timeZone",
         "spark.sql.shuffle.partitions", "spark.default.parallelism",
-        "spark.driver.memory", "spark.executor.memory",
+        "spark.driver.memory", "spark.executor.memory", "spark.executor.cores",
+        "spark.executor.instances", "spark.cores.max",
+        "spark.eventLog.enabled", "spark.eventLog.dir",
         "spark.sql.adaptive.enabled", "spark.sql.ansi.enabled",
         "spark.sql.parquet.writeLegacyFormat",
     )
