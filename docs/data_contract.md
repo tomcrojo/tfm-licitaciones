@@ -201,8 +201,11 @@ Silver canónico se construye desde **todas** las filas aceptadas de
 `bronze/tombstones.parquet`, incluidos snapshots sustituidos. Nunca se pliega
 el historial ni se aplican tombstones como borrados en esta capa.
 
-Cada adaptador (`src/tfm_licitaciones/silver.py`) construye identificadores
-deterministas a partir de la identidad publicada por la fuente:
+Cada adaptador construye identificadores deterministas a partir de la
+identidad publicada por la fuente (la implementación productiva es el motor
+nativo de Polars en `src/tfm_licitaciones/silver_native.py`; la semántica
+exacta está congelada como oráculo de paridad en
+`src/tfm_licitaciones/silver_reference.py`):
 
 - TED: `event_id = ted:notice:<ND>`. Un número de aviso publicado (`ND`) es un
   evento; observaciones repetidas o corregidas con la misma identidad no
@@ -350,6 +353,19 @@ exacto `PROCUREMENT_EVENT_SCHEMA`, tipado incluso vacío, `event_id` único y
 orden determinista por `event_id`. El JSONL legado
 `<silver_dir>/tenders.jsonl` ya no se escribe; si existe de una ejecución
 anterior exactamente en esa ruta, se elimina para que no parezca vigente.
+
+### Motores y neutralidad del contrato
+
+El contrato de esta sección (grano, identidad, duplicados/colisiones,
+esquema, reglas temporales y de importes, mapeo por fuente y persistencia)
+es independiente del motor de ejecución. Polars nativo
+(`silver_native.py`) es el motor productivo por defecto dentro del envelope
+medido de un solo nodo (ver `docs/benchmarks.md`); la semántica exacta
+queda además congelada en la referencia python-row (`silver_reference.py`),
+usada como oráculo de paridad por los tests y por los benchmarks, y se
+conserva una implementación PySpark semánticamente equivalente como ruta de
+scale-out evaluada fuera del pipeline productivo. No existe selección de
+motor por configuración en el pipeline productivo.
 
 ### Revisiones y tombstones
 
