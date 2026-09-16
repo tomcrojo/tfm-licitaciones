@@ -25,39 +25,40 @@ removed, escapes resolved) but renders numbers, booleans, ``null``,
 arrays and objects as their JSON text, so a string ``"0"`` and a number
 ``0`` both arrive as ``0``. Every field whose semantics depend on Python
 truthiness, presence or type therefore carries a parallel ``is_string``
-probe (``container.str.contains('"key"\\s*:\\s*"')``) that records whether
-the JSON value was quoted. String probes are path-aware through
-``json_path_match`` for the value plus a probe on the immediate container;
-nested shadowing (a nested object reusing a top-level key name) cannot be
-produced by the TED/OpenPLACSP/BOE adapters (flat payloads with disjoint
-top-level vs language-key namespaces, enforced by
-``tests/test_silver_native.py::AdapterContractTests``) and is out of scope
-for the adversarial matrix.
+probe that is *path-aware and structural*: the JSONPath filter
+``$["key"][?(@ >= "")]`` matches exactly the values of that route that are
+JSON strings (including the empty string and strings that look like
+numbers, booleans or containers) and never numbers, booleans, arrays or
+objects. A nested object reusing the key name cannot alter the top-level
+probe, unlike a regex over the raw container.
 
 ``_first_text`` uses only ``json_path_match`` decoding (exact, including
 ``\\uXXXX``, escapes and non-ASCII) plus ``str.json_decode`` for
 unescaping extracted string literals; there is no hand-written JSON
 unescape. Objects prefer the ``spa`` member when present (even when its
 text is empty, matching the reference) and otherwise return the first
-non-empty value text in document order for the reachable flat domain
-(string/number/bool/array-of-strings values). Deeper nesting
-(object-in-object, object-in-array) cannot be emitted by the adapters and
-is covered by contract tests.
+non-empty value text in document order; flat array values (directly or
+inside a localized object member) resolve to their first non-empty
+element, exactly like the reference list recursion. Non-string JSON
+numbers are rendered through :func:`_python_number_text` so exponent
+notation matches Python ``str(float)`` (for example ``1e-07``, never
+``1e-7``).
 
 Amount semantics are asymmetric on purpose, mirroring the reference: TED
-amounts pass a ``_parse_amount`` float gate (unparseable or negative ->
-null; the gate itself may use Float64) and always normalize separator
-style, while PLACSP amounts gate on key presence with a JSON-null check,
-prefer the retained ``*_raw`` published text and fall back to the Python
-``str()`` of the value. After the gate, the ``decimal(20,2)`` contract
-(representability, scale, precision and decimal text) is decided lexically
-from the published text with exact decimal-compatible string operations;
-binary Float64 is never the authority there. Exponent notation is expanded
-lexically. Underscore-containing amount texts are stripped for the Decimal
-decision (matching ``Decimal`` laxity); the TED float gate still rejects
-all underscore forms while the reference accepts PEP-515-valid ones --
-that gate-level shape cannot be emitted by the adapters (numeric texts
-without underscores, enforced by contract tests).
+amounts pass a ``_parse_amount`` float gate (unparseable, negative or NaN
+-> null; the gate itself reproduces Python ``float()`` including
+PEP-515-valid underscores and the ``nan``/``inf`` spellings) and always
+normalize separator style, while PLACSP amounts gate on key presence with
+a JSON-null check, prefer the retained ``*_raw`` published text and fall
+back to the Python ``str()`` of the value. After the gate, the
+``decimal(20,2)`` contract (representability, scale, precision and decimal
+text) is decided lexically from the published text with exact
+decimal-compatible string operations; binary Float64 is never the
+authority there. Exponent notation is expanded lexically, and the
+``quantize`` rounding carry is modelled so a value whose rounded result
+needs more than the context precision reports not-representable (matching
+``Decimal.quantize``). Quiet ``NaN`` reports the reference scale failure;
+signaling ``NaN`` and ``Infinity`` report not-representable.
 """
 
 from __future__ import annotations
@@ -70,10 +71,12 @@ IMPLEMENTATION = "polars-native"
 IMPLEMENTATION_DETAIL = (
     "native Polars expressions/group_by/sort over the Polars/Parquet "
     "boundary: bounded json_path_match field resolution per source branch, "
-    "type-preserving truthiness via is_string probes, exact _first_text "
-    "recursion without hand unescape, lexical decimal(20,2) decisions, "
-    "group_by struct collision detection, provenance-minimum selection via "
-    "stable sort + group_by first; no per-row Python on the success path"
+    "path-aware structural string probes, exact _first_text recursion "
+    "without hand unescape, exact fromisoformat aware-time port, lexical "
+    "decimal(20,2) decisions with quantize-carry semantics, group_by struct "
+    "collision detection with first-conflict diagnostics, provenance-minimum "
+    "selection via stable sort + group_by first; no per-row Python on the "
+    "success path"
 )
 
 _MAX_FAILURE_IDS = 5
@@ -102,6 +105,18 @@ _ZERO_NUMBER_PATTERN = r"^[-+]?(?:0+(?:\.0*)?|\.0+)(?:[eE][-+]?\d+)?$"
 # therefore raise not-representable, exactly like the reference quantize
 # step.
 _DECIMAL_PARTS_PATTERN = r"^([-+]?)((?:\d+)?)(?:\.(\d*))?(?:[eE]([-+]?\d+))?$"
+# Python ``float()`` grammar for finite numbers with PEP-515 underscores:
+# underscores are only accepted between digits (``digit (["_"] digit)*``),
+# in the integer part, the fraction and the exponent. Written without
+# look-around because the Polars regex engine rejects it.
+_FLOAT_WITH_UNDERSCORES = (
+    r"^[+-]?(?:(?:[0-9](?:_?[0-9])*)?\.(?:[0-9](?:_?[0-9])*)"
+    r"|[0-9](?:_?[0-9])*(?:\.(?:[0-9](?:_?[0-9])*)?)?)"
+    r"(?:[eE][+-]?[0-9](?:_?[0-9])*)?$"
+)
+# ``datetime``/``decimal`` context bound: exponent texts with more than 18
+# digits fail the ``Decimal`` construction itself (``|exp| > 10**18 - 1``).
+_MAX_EXPONENT_DIGITS = 18
 # Flat JSON value fragment at object-value position (string with quotes,
 # flat string array, bare literals/numbers). Nested objects/arrays as values
 # are outside the reachable adapter domain.
@@ -131,18 +146,24 @@ def _json(payload: pl.Expr, *keys: str) -> pl.Expr:
     return payload.str.json_path_match(_path(*keys))
 
 
-def _is_json_string(container: pl.Expr, key: str) -> pl.Expr:
-    """Whether the JSON value for ``key`` in ``container`` is a quoted string.
+def _is_json_string(container: pl.Expr, *keys: str) -> pl.Expr:
+    """Whether the JSON value at ``keys`` is a quoted string (path-aware).
 
     ``container`` is either the full ``payload_json`` (top-level fields) or
     an object-subtree text from ``json_path_match`` (nested fields such as
-    ``spa`` inside ``TI``). The probe looks for an opening quote as the
-    first non-space character of the value. Nested shadowing with the same
-    key name cannot be emitted by the production adapters (flat payloads,
-    disjoint namespaces; see ``AdapterContractTests``).
+    ``spa`` inside ``TI``). The JSONPath filter ``$["key"][?(@ >= "")]``
+    matches exactly the selected value when it is a JSON string, including
+    the empty string and strings that look like numbers, booleans or
+    containers; numbers, booleans, arrays and objects never match. Because
+    the filter is anchored to the same route as the value, a nested object
+    reusing the key name cannot alter the probe.
     """
 
-    return container.str.contains(f'"{key}"\\s*:\\s*"', literal=False).fill_null(False)
+    return (
+        container.str.json_path_match(_path(*keys) + '[?(@ >= "")]')
+        .is_not_null()
+        .fill_null(False)
+    )
 
 
 def _is_zero_number(text: pl.Expr) -> pl.Expr:
@@ -213,6 +234,18 @@ def _or_text(*values) -> pl.Expr:
     return chosen
 
 
+def _python_number_text(text: pl.Expr) -> pl.Expr:
+    """Render a JSON number text exactly like Python ``str()``.
+
+    The JSON engine canonicalizes exponents without zero padding (``1e-7``)
+    while Python renders floats with at least two exponent digits
+    (``1e-07``); pad the single-digit signed exponent. Strings are never
+    passed through this helper, so quoting information is unaffected.
+    """
+
+    return text.str.replace(r"(?i)e([+-])([0-9])$", "e${1}0${2}")
+
+
 def _leaf_text(raw: pl.Expr, is_string: pl.Expr) -> pl.Expr:
     """Terminal ``_first_text`` for scalar JSON values (exact, no unescape).
 
@@ -220,8 +253,8 @@ def _leaf_text(raw: pl.Expr, is_string: pl.Expr) -> pl.Expr:
     ``\\uXXXX`` and non-ASCII resolved by the JSON engine). Strings keep
     their text verbatim (including ``"null"``/``"[]"``/``"{}"`` and values
     with surrounding quotes); non-string ``true``/``false`` map to Python
-    ``"True"``/``"False"``; numbers keep their JSON text (identical to
-    Python ``str()`` for int/float); containers (non-string ``[...]`` /
+    ``"True"``/``"False"``; numbers are rendered like Python ``str()``
+    (exponent notation padded); containers (non-string ``[...]`` /
     ``{...}``) reduce to null so callers route them to list/object logic.
     """
 
@@ -237,7 +270,7 @@ def _leaf_text(raw: pl.Expr, is_string: pl.Expr) -> pl.Expr:
         .then(pl.lit("False"))
         .when(raw.str.starts_with("[") | raw.str.starts_with("{"))
         .then(None)
-        .otherwise(stripped)
+        .otherwise(_python_number_text(stripped))
     )
 
 
@@ -272,33 +305,42 @@ def _object_string_values(raw: pl.Expr) -> pl.Expr:
     Extracts flat value fragments at value position in document order (the
     ``extract_all`` full matches include the leading colon; the inner
     ``extract`` pulls group 1 so quotes are preserved for strings and type
-    information survives), decodes each exactly (strings and array first
-    elements via the throw-safe ``json_path_match`` so escapes/``\\uXXXX``
-    resolve without hand-written unescape; bare ``true``/``false`` map
-    to Python case; numbers keep text; ``null`` becomes empty) and returns
-    the list of stripped non-empty candidates. Nested objects/arrays as
-    values are outside the reachable adapter domain (flat localized dicts).
+    information survives), decodes each exactly (strings via the
+    throw-safe ``json_path_match`` so escapes/``\\uXXXX`` resolve without
+    hand-written unescape; bare ``true``/``false`` map to Python case;
+    numbers render like ``str(float)``; ``null`` becomes empty) and returns
+    the list of stripped non-empty candidates. A flat string-array value
+    resolves to its **first non-empty element**, mirroring the reference
+    list recursion instead of discarding the remaining elements. Nested
+    objects/arrays as values are outside the reachable adapter domain (flat
+    localized dicts).
     """
 
     full = raw.str.extract_all(_OBJECT_VALUE_PATTERN)
     frags = full.list.eval(pl.element().str.extract(_OBJECT_VALUE_PATTERN, 1))
-    # NB: ``list.eval`` evaluates every branch eagerly, so string decoding
-    # must use the throw-safe ``json_path_match`` (``$`` decodes a JSON
-    # string fragment exactly, ``$[0]`` an array first element) rather than
-    # ``json_decode``, which would raise on non-matching elements.
+    # NB: ``list.eval`` evaluates every branch eagerly; the throw-safe
+    # ``json_path_match`` decodes strings exactly and ``json_decode`` over
+    # a flat string array returns null for the non-array fragments, so no
+    # element can raise here.
     decoded = (
         frags.list.eval(
             pl.when(pl.element().str.starts_with('"'))
             .then(pl.element().str.json_path_match("$").str.strip_chars())
             .when(pl.element().str.starts_with("["))
-            .then(pl.element().str.json_path_match("$[0]").str.strip_chars())
+            .then(
+                pl.element()
+                .str.json_decode(pl.List(pl.String))
+                .list.eval(pl.element().str.strip_chars())
+                .list.eval(pl.element().filter(pl.element().is_not_null() & (pl.element() != "")))
+                .list.first()
+            )
             .when(pl.element() == "true")
             .then(pl.lit("True"))
             .when(pl.element() == "false")
             .then(pl.lit("False"))
             .when(pl.element() == "null")
             .then(pl.lit(""))
-            .otherwise(pl.element().str.strip_chars())
+            .otherwise(_python_number_text(pl.element().str.strip_chars()))
         )
         .list.eval(pl.element().filter(pl.element().is_not_null() & (pl.element() != "")))
     )
@@ -328,7 +370,7 @@ def _object_first_value(raw: pl.Expr) -> pl.Expr:
         .then(pl.lit("False"))
         .when(frag == "null")
         .then(pl.lit(""))
-        .otherwise(frag.str.strip_chars())
+        .otherwise(_python_number_text(frag.str.strip_chars()))
     )
 
 
@@ -357,7 +399,7 @@ def _first_text(raw: pl.Expr, is_string: pl.Expr) -> pl.Expr:
 
     spa = raw.str.json_path_match("$.spa")
     spa_present = spa.is_not_null()
-    spa_is_string = raw.str.contains(r'"spa"\s*:\s*"').fill_null(False)
+    spa_is_string = _is_json_string(raw, "spa")
     spa_text = _scalar_or_list_text(spa, spa_is_string)
     # ``spa`` present (even empty) blocks fallback; only missing/JSON-null
     # ``spa`` falls through to document-order values.
@@ -376,7 +418,7 @@ def _first_text(raw: pl.Expr, is_string: pl.Expr) -> pl.Expr:
         .then(pl.lit("True"))
         .when((raw == "false"))
         .then(pl.lit("False"))
-        .otherwise(raw.str.strip_chars())
+        .otherwise(_python_number_text(raw.str.strip_chars()))
     )
 
 
@@ -472,14 +514,28 @@ def _normalize_amount_text(text: pl.Expr) -> pl.Expr:
 
 
 def _amount_gate(norm: pl.Expr) -> pl.Expr:
-    """Native TED ``_parse_amount`` gate: non-negative float or null.
+    """Native TED ``_parse_amount`` gate: non-negative Python float or null.
 
-    The gate itself may use Float64 (the frozen reference gates on
-    ``float()``); every Decimal decision after it is lexical.
+    Reproduces ``float(text) >= 0`` including PEP-515-valid underscores
+    (single underscores between digits; any other underscore syntax fails
+    like Python), the ``nan``/``snan``/``inf``/``infinity`` spellings
+    (case-insensitive, optional sign) and exponent forms. NaN and
+    negative infinity fail the gate (NaN comparisons are always false, as
+    in Python); positive infinity passes and the lexical ``Decimal``
+    decision rejects it as not representable, exactly like the reference.
+    The gate itself may use Float64; every Decimal decision after it is
+    lexical.
     """
 
-    parsed = norm.cast(pl.Float64, strict=False)
-    return pl.when(parsed.is_not_null() & (parsed >= 0)).then(parsed).otherwise(None)
+    cleaned = pl.when(norm.str.contains(_FLOAT_WITH_UNDERSCORES).fill_null(False)).then(
+        norm.str.replace_all("_", "", literal=True)
+    ).otherwise(norm)
+    parsed = cleaned.cast(pl.Float64, strict=False)
+    is_nan = cleaned.str.contains(r"(?i)^[-+]?nan$").fill_null(False)
+    is_inf = cleaned.str.contains(r"(?i)^[-+]?inf(?:inity)?$").fill_null(False)
+    negative = cleaned.str.starts_with("-").fill_null(False)
+    numeric_ok = parsed.is_not_null() & (parsed >= 0) & ~is_nan
+    return pl.when(numeric_ok | (is_inf & ~negative)).then(pl.lit(True)).otherwise(None)
 
 
 def _attach_amount(
@@ -565,24 +621,105 @@ def _attach_amount(
             )
         ),
     ).with_columns(
+        # ``Decimal`` special spellings (case-insensitive, optional sign):
+        # a quiet NaN quantizes to NaN without raising, so the reference
+        # fails the ``quantized != value`` scale check; signaling NaN and
+        # infinity raise InvalidOperation and report not-representable.
+        __special_nan=pl.col("__amount_clean").str.contains(r"(?i)^[-+]?nan$").fill_null(False),
+        __special_raise=pl.col("__amount_clean")
+        .str.contains(r"(?i)^[-+]?(?:snan|inf(?:inity)?)$")
+        .fill_null(False),
+        # Exponent digits that do not fit Int32: Decimal still constructs
+        # the value while ``|exponent| <= 10**18 - 1``, and quantize only
+        # raises when the exponent is positive (negative huge exponents
+        # round to an unequal ``0.00``: scale). Beyond that bound the
+        # ``Decimal`` construction itself raises InvalidOperation
+        # (not-representable for either sign).
+        __dec_exp_negative=pl.col("__dec_exp_n").str.starts_with("-").fill_null(False),
+        __dec_exp_digits=pl.col("__dec_exp_n").str.strip_chars("+-"),
+    ).with_columns(
+        __dec_exp_digit_len=pl.col("__dec_exp_digits").str.len_chars(),
+    ).with_columns(
+        __exp_overflow=pl.col("__dec_syntax_ok") & pl.col("__dec_exp_i").is_null(),
+        __exp_beyond_context=pl.col("__dec_exp_digit_len") > _MAX_EXPONENT_DIGITS,
+    ).with_columns(
+        # Quantize rounding decision for the discarded tail beyond two
+        # fractional digits (significant mantissa has no trailing zeros, so
+        # plain string comparison against ``5`` is exact): strictly above
+        # half rounds up; exactly ``5`` rounds half-even on the hundredth
+        # digit; below half rounds down.
+        __kept_frac=pl.col("__mantissa_sig").str.slice(pl.col("__amount_int_digits"), 2),
+        __discard=pl.col("__mantissa_sig").str.slice(pl.col("__amount_int_digits") + 2),
+    ).with_columns(
+        __round_up=(
+            (pl.col("__discard") > "5")
+            | (
+                (pl.col("__discard") == "5")
+                & pl.col("__kept_frac").str.slice(1, 1).is_in(["1", "3", "5", "7", "9"])
+            )
+        ).fill_null(False),
+    ).with_columns(
+        # Integer carry: rounding up through ``.99`` over 26 all-nine
+        # integer digits produces a 27-digit integer part; ``quantize``
+        # then needs 29 significant digits and raises InvalidOperation.
+        __carry_int=(
+            pl.col("__round_up")
+            & (pl.col("__amount_int_digits") == 26)
+            & (pl.col("__kept_frac") == "99")
+            & (
+                pl.col("__mantissa_sig")
+                .str.slice(0, pl.col("__amount_int_digits"))
+                .str.replace_all("9", "", literal=True)
+                .str.len_chars()
+                == 0
+            )
+        ).fill_null(False),
+    ).with_columns(
         # ``quantize(0.01)`` raises InvalidOperation (not-representable)
         # when the quantized result would need more than the default 28
         # significant digits, i.e. more than 26 integer digits (26 + 2
         # fraction digits). Larger integer counts therefore report
         # not-representable, not precision, exactly like the reference.
+        #
+        # Rounding carry: for more than two fractional digits ``quantize``
+        # first rounds half-even at the hundredth; when the discarded tail
+        # rounds up through ``.99`` and the 26 significant integer digits
+        # are all nines, the rounded result gains a 27th integer digit and
+        # InvalidOperation wins over the scale failure (matching the
+        # reference, which reports not-representable there).
         __bad_representable=(
             pl.col("__amount_gate_ok")
             & (
-                ~pl.col("__dec_syntax_ok")
-                | pl.col("__dec_exp_i").is_null()
-                | (pl.col("__amount_int_digits") > 26)
+                pl.col("__special_raise")
+                | (
+                    ~pl.col("__special_nan")
+                    & (
+                        ~pl.col("__dec_syntax_ok")
+                        | (
+                            pl.col("__exp_overflow")
+                            & (pl.col("__exp_beyond_context") | ~pl.col("__dec_exp_negative"))
+                        )
+                        | (pl.col("__amount_int_digits") > 26)
+                        | pl.col("__carry_int")
+                    )
+                )
             )
         ),
         __bad_scale=(
             pl.col("__amount_gate_ok")
-            & pl.col("__dec_syntax_ok")
-            & pl.col("__dec_exp_i").is_not_null()
-            & (pl.col("__amount_scale") > 2)
+            & (
+                pl.col("__special_nan")
+                | (
+                    pl.col("__exp_overflow")
+                    & ~pl.col("__exp_beyond_context")
+                    & pl.col("__dec_exp_negative")
+                )
+                | (
+                    pl.col("__dec_syntax_ok")
+                    & pl.col("__dec_exp_i").is_not_null()
+                    & (pl.col("__amount_scale") > 2)
+                )
+            )
         ),
         __bad_precision=(
             pl.col("__amount_gate_ok")
@@ -632,47 +769,407 @@ def _estimated_expr() -> pl.Expr:
 # ---------------------------------------------------------------------------
 
 
-def _aware_instant(text: pl.Expr) -> pl.Expr:
-    """Native ``_aware_instant``: RFC 3339 text to a UTC instant or null.
+# Extended/compact ISO-8601 date components accepted by
+# ``datetime.fromisoformat`` for the reachable aware-timestamp contract.
+# ``parse_isoformat_date`` supports ``YYYY-MM-DD``, ``YYYYMMDD``,
+# ``YYYY-Www[-D]`` and ``YYYYWww[D]``; ordinal dates never reach a valid
+# parse in CPython and are rejected here as well.
+_DATE_EXTENDED = r"^(?<y4>[0-9]{4})-(?<m2>[0-9]{2})-(?<d2>[0-9]{2})$"
+_DATE_BASIC = r"^(?<y4>[0-9]{4})(?<m2>[0-9]{2})(?<d2>[0-9]{2})$"
+_WEEK_EXTENDED = r"^(?<y4>[0-9]{4})-W(?<w2>[0-9]{2})(?:-(?<wd>[0-9]))?$"
+_WEEK_BASIC = r"^(?<y4>[0-9]{4})W(?<w2>[0-9]{2})(?<wd>[0-9])?$"
 
-    Accepts the adapter-emitted shapes (``T``/space separator, seconds,
-    optional fraction of any length truncated to microseconds exactly like
-    the reference, uppercase-``Z``/``±HH:MM`` offset), mirroring the
-    reference ``text.replace("Z", "+00:00")`` exactly (lowercase ``z``
-    stays undated in both). Wilder ``fromisoformat`` forms
-    (seconds-less instants, hour-only offsets, compact dates) cannot be
-    emitted by the Atom/TED adapters -- Atom ``updated`` is always full
-    RFC 3339 with seconds -- and resolve to null here; that constraint is
-    enforced by ``AdapterContractTests``.
+
+def _digits2(value: pl.Expr) -> pl.Expr:
+    """Whether a string slice is exactly two ASCII digits."""
+
+    return value.str.contains(r"^[0-9]{2}$").fill_null(False)
+
+
+def _component_int(text: pl.Expr) -> pl.Expr:
+    """Component text as a non-negative integer (null/absent -> 0)."""
+
+    return text.cast(pl.Int64, strict=False).fill_null(0)
+
+
+def _tail_parts(tail: pl.Expr, *, exact: bool, kind: str) -> tuple[pl.Expr, pl.Expr]:
+    """Fraction-tail validity and microseconds for ``parse_hh_mm_ss_ff``.
+
+    Mirrors the CPython tail rules: with ``exact`` (timezone offset body)
+    the tail must be all digits, non-empty for the ``.``/extra-colon forms
+    and at least two digits for the no-separator form; without ``exact``
+    (datetime time part, a timezone follows) up to five digits may end the
+    text and six or more digits may be followed by arbitrary characters,
+    all of which are truncated exactly like the reference.
     """
 
-    guarded = (
-        text.is_not_null()
-        & text.str.contains(r"^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
+    if exact:
+        pattern = {"sep": r"^[0-9]+$", "nosep": r"^[0-9]{2,}$", "colon": r"^[0-9]+$"}[kind]
+    else:
+        pattern = {
+            "sep": r"(?s)^(?:[0-9]{0,5}|[0-9]{6}.*)$",
+            "nosep": r"(?s)^(?:[0-9]{2,5}|[0-9]{6}.*)$",
+            "colon": r"(?s)^(?:[0-9]{0,5}|[0-9]{6}.*)$",
+        }[kind]
+    ok = tail.is_not_null() & tail.str.contains(pattern).fill_null(False)
+    length = tail.str.len_chars().fill_null(0).cast(pl.Int64)
+    value = tail.str.slice(0, 6).cast(pl.Int64, strict=False).fill_null(0)
+    micro = pl.when(length >= 6).then(value).otherwise(value * pl.lit(10).pow(6 - length))
+    return ok, micro
+
+
+def _parse_hh_mm_ss_ff(
+    text: pl.Expr, *, exact: bool
+) -> tuple[pl.Expr, pl.Expr, pl.Expr, pl.Expr, pl.Expr]:
+    """Native port of CPython's ``parse_hh_mm_ss_ff`` state machine.
+
+    Returns ``(ok, hour, minute, second, microsecond)``. ``exact`` mirrors
+    the reference ``rv`` handling: the timezone offset body must be consumed
+    completely (``rv == 0``), while the datetime time part accepts the
+    leftover shapes the reference tolerates before a timezone (``rv == 1``).
+    The parser is positional like the reference: hour, minute, second and
+    the fraction are read from the same offsets CPython reads them, so the
+    quirky accepted forms (basic time without separators, a fraction glued
+    to the last component, a second colon before the fraction, an arbitrary
+    single leftover character) resolve identically.
+    """
+
+    length = text.str.len_chars().fill_null(0)
+    hour = text.str.slice(0, 2)
+    hour_ok = _digits2(hour)
+    char2 = text.str.slice(2, 1)
+    is_colon = char2 == ":"
+    is_dot = (char2 == ".") | (char2 == ",")
+
+    minute_colon = text.str.slice(3, 2)
+    minute_colon_ok = _digits2(minute_colon)
+    char5 = text.str.slice(5, 1)
+    second_colon = text.str.slice(6, 2)
+    second_colon_ok = _digits2(second_colon)
+    char8 = text.str.slice(8, 1)
+    colon_dot5 = (char5 == ".") | (char5 == ",")
+    colon_dot8 = (char8 == ".") | (char8 == ",")
+
+    minute_basic = text.str.slice(2, 2)
+    minute_basic_ok = _digits2(minute_basic)
+    char4 = text.str.slice(4, 1)
+    second_basic = text.str.slice(4, 2)
+    second_basic_ok = _digits2(second_basic)
+    char6 = text.str.slice(6, 1)
+    basic_dot4 = (char4 == ".") | (char4 == ",")
+    basic_dot6 = (char6 == ".") | (char6 == ",")
+
+    dot_hour_ok, dot_hour_micro = _tail_parts(text.str.slice(3), exact=exact, kind="sep")
+    colon_dot5_ok, colon_dot5_micro = _tail_parts(text.str.slice(6), exact=exact, kind="sep")
+    colon_dot8_ok, colon_dot8_micro = _tail_parts(text.str.slice(9), exact=exact, kind="sep")
+    colon_colon_ok, colon_colon_micro = _tail_parts(text.str.slice(9), exact=exact, kind="colon")
+    basic_dot4_ok, basic_dot4_micro = _tail_parts(text.str.slice(5), exact=exact, kind="sep")
+    basic_dot6_ok, basic_dot6_micro = _tail_parts(text.str.slice(7), exact=exact, kind="sep")
+    basic_nosep_ok, basic_nosep_micro = _tail_parts(text.str.slice(6), exact=exact, kind="nosep")
+
+    zero = pl.lit(0, dtype=pl.Int64)
+    branches: list[tuple[pl.Expr, pl.Expr, pl.Expr, pl.Expr, pl.Expr, pl.Expr]] = []
+
+    def add(condition, ok, hour_value, minute_value, second_value, micro):
+        branches.append((condition, ok, hour_value, minute_value, second_value, micro))
+
+    # ``HH`` alone (region exactly two characters) and, for the datetime
+    # time part, one arbitrary leftover character.
+    add(length == 2, hour_ok, hour, zero, zero, zero)
+    if not exact:
+        add(length == 3, hour_ok, hour, zero, zero, zero)
+    # ``HH`` plus fraction.
+    add(is_dot, hour_ok & dot_hour_ok, hour, zero, zero, dot_hour_micro)
+    # Colon form: ``HH:MM[:SS]`` with the reference leftover tolerance.
+    add(
+        is_colon & ((length == 5) | ((length == 6) & (not exact))),
+        hour_ok & minute_colon_ok,
+        hour,
+        minute_colon,
+        zero,
+        zero,
     )
-    # Normalize the separator to ``T`` and trailing ``Z`` to an explicit
-    # offset so one explicit, non-inferred chrono format parses every
-    # guarded row; non-guarded rows carry a parseable sentinel that is
-    # nulled afterwards (strict=False leaves genuine junk as null too).
-    normalized = (
-        pl.when(guarded)
-        .then(
-            (text.str.slice(0, 10) + pl.lit("T") + text.str.slice(11)).str.replace(
-                r"Z$", "+00:00"
-            )
+    add(
+        is_colon & colon_dot5,
+        hour_ok & minute_colon_ok & colon_dot5_ok,
+        hour,
+        minute_colon,
+        zero,
+        colon_dot5_micro,
+    )
+    colon_seconds = hour_ok & minute_colon_ok & second_colon_ok
+    add(
+        is_colon & (char5 == ":") & ((length == 8) | ((length == 9) & (not exact))),
+        colon_seconds,
+        hour,
+        minute_colon,
+        second_colon,
+        zero,
+    )
+    add(
+        is_colon & (char5 == ":") & colon_dot8,
+        colon_seconds & colon_dot8_ok,
+        hour,
+        minute_colon,
+        second_colon,
+        colon_dot8_micro,
+    )
+    add(
+        is_colon & (char5 == ":") & (char8 == ":"),
+        colon_seconds & colon_colon_ok,
+        hour,
+        minute_colon,
+        second_colon,
+        colon_colon_micro,
+    )
+    # Basic form (no separators).
+    add(
+        ~is_colon & ~is_dot & ((length == 4) | ((length == 5) & (not exact))),
+        hour_ok & minute_basic_ok,
+        hour,
+        minute_basic,
+        zero,
+        zero,
+    )
+    add(
+        ~is_colon & ~is_dot & basic_dot4,
+        hour_ok & minute_basic_ok & basic_dot4_ok,
+        hour,
+        minute_basic,
+        zero,
+        basic_dot4_micro,
+    )
+    basic_seconds = hour_ok & minute_basic_ok & second_basic_ok
+    add(
+        ~is_colon & ~is_dot & ((length == 6) | ((length == 7) & (not exact))),
+        basic_seconds,
+        hour,
+        minute_basic,
+        second_basic,
+        zero,
+    )
+    add(
+        ~is_colon & ~is_dot & (length >= 8) & basic_dot6,
+        basic_seconds & basic_dot6_ok,
+        hour,
+        minute_basic,
+        second_basic,
+        basic_dot6_micro,
+    )
+    add(
+        ~is_colon & ~is_dot & (length >= 8) & ~basic_dot6,
+        basic_seconds & basic_nosep_ok,
+        hour,
+        minute_basic,
+        second_basic,
+        basic_nosep_micro,
+    )
+
+    selected: pl.Expr | None = None
+    for condition, ok, hour_value, minute_value, second_value, micro in reversed(branches):
+        payload = pl.struct(
+            ok=ok.fill_null(False),
+            hour=hour_value.cast(pl.Int64, strict=False).fill_null(0),
+            minute=minute_value.cast(pl.Int64, strict=False).fill_null(0),
+            second=second_value.cast(pl.Int64, strict=False).fill_null(0),
+            micro=micro,
         )
-        .otherwise(pl.lit("1970-01-01T00:00:00+00:00"))
+        selected = (
+            payload
+            if selected is None
+            else pl.when(condition.fill_null(False)).then(payload).otherwise(selected)
+        )
+    assert selected is not None
+    return (
+        selected.struct.field("ok").fill_null(False),
+        selected.struct.field("hour").fill_null(0),
+        selected.struct.field("minute").fill_null(0),
+        selected.struct.field("second").fill_null(0),
+        selected.struct.field("micro").fill_null(0),
     )
-    parsed = normalized.str.to_datetime(
-        time_unit="us", format="%Y-%m-%dT%H:%M:%S%.f%:z", strict=False, time_zone="UTC"
+
+
+def _attach_aware_instant(frame: pl.LazyFrame, source_column: str) -> pl.LazyFrame:
+    """Attach ``__updated``: ``source_column`` parsed to a UTC instant or null.
+
+    Faithful port of the aware subset of ``datetime.fromisoformat``
+    (CPython 3.11) including its textual normalization: every ``Z`` is
+    replaced by ``+00:00`` first, exactly like the reference
+    ``text.replace("Z", "+00:00")``. Dates accept ``YYYY-MM-DD``,
+    ``YYYYMMDD``, ``YYYY-Www[-D]`` and ``YYYYWww[D]``; the date/time
+    separator is any single character and the time portion follows the
+    reference state machine (:func:`_parse_hh_mm_ss_ff`); the timezone
+    offset is a signed ``HH[:?MM[:?SS[.f]]]`` whose total must stay
+    strictly inside 24 hours. Invalid, naive (no timezone) and out-of-range
+    inputs resolve to null, exactly like the reference
+    ``datetime.fromisoformat`` plus the ``tzinfo`` check.
+
+    Every intermediate is materialized as a column before the next step
+    uses it: the parser references its input from many branches, so feeding
+    it a composite expression explodes the plan (measured ~12 MB and ~12 s
+    for a one-row build) while column inputs keep each expression small.
+    All decisions are native Polars; no per-row Python runs.
+    """
+
+    # ``Z`` is expanded textually before parsing, mirroring the reference
+    # replacement (an embedded ``Z`` therefore changes the parse exactly as
+    # it does in Python); lowercase ``z`` stays invalid in both.
+    frame = frame.with_columns(__ts_text=pl.col(source_column).str.replace_all("Z", "+00:00", literal=True))
+    text = pl.col("__ts_text")
+    length = text.str.len_chars()
+    valid = text.is_not_null() & (length >= 7)
+    char4 = text.str.slice(4, 1)
+    char5 = text.str.slice(5, 1)
+    char8 = text.str.slice(8, 1)
+    char10 = text.str.slice(10, 1)
+    char10_digit = char10.str.contains(r"^[0-9]$").fill_null(False)
+    # ``YYYYWww`` vs ``YYYYWwwd``: digits before the first non-digit; an
+    # even count (even index) means the date is ``YYYYWww``.
+    scan_index = 7 + text.str.slice(7).str.extract(r"^([0-9]*)", 1).str.len_chars()
+    sep_loc = (
+        pl.when(length == 7)
+        .then(pl.lit(7, dtype=pl.Int64))
+        .when(char4 == "-")
+        .then(
+            pl.when(char5 == "W")
+            .then(
+                pl.when((length > 8) & (char8 == "-"))
+                .then(
+                    pl.when(length == 9)
+                    .then(pl.lit(None, dtype=pl.Int64))
+                    .when((length > 10) & char10_digit)
+                    .then(pl.lit(8, dtype=pl.Int64))
+                    .otherwise(pl.lit(10, dtype=pl.Int64))
+                )
+                .otherwise(pl.lit(8, dtype=pl.Int64))
+            )
+            .otherwise(pl.lit(10, dtype=pl.Int64))
+        )
+        .otherwise(
+            pl.when(char4 == "W")
+            .then(
+                pl.when(scan_index < 9)
+                .then(scan_index)
+                .when(scan_index % 2 == 0)
+                .then(pl.lit(7, dtype=pl.Int64))
+                .otherwise(pl.lit(8, dtype=pl.Int64))
+            )
+            .otherwise(pl.lit(8, dtype=pl.Int64))
+        )
     )
-    return pl.when(guarded).then(parsed).otherwise(None)
+    frame = frame.with_columns(__ts_sep_loc=sep_loc)
+    frame = frame.with_columns(
+        __ts_date=text.str.slice(0, pl.col("__ts_sep_loc")),
+        __ts_rest=text.str.slice(pl.col("__ts_sep_loc") + 1),
+    )
+    frame = frame.with_columns(
+        __ts_tz_pos=pl.min_horizontal(
+            pl.col("__ts_rest").str.find("+", literal=True),
+            pl.col("__ts_rest").str.find("-", literal=True),
+        )
+    )
+    frame = frame.with_columns(
+        __ts_time=pl.col("__ts_rest").str.slice(0, pl.col("__ts_tz_pos")),
+        __ts_tz=pl.col("__ts_rest").str.slice(pl.col("__ts_tz_pos")),
+    )
+
+    date_text = pl.col("__ts_date")
+    normal = [date_text.str.extract(_DATE_EXTENDED, index) for index in range(1, 4)]
+    basic = [date_text.str.extract(_DATE_BASIC, index) for index in range(1, 4)]
+    week_ext = [date_text.str.extract(_WEEK_EXTENDED, index) for index in range(1, 4)]
+    week_basic = [date_text.str.extract(_WEEK_BASIC, index) for index in range(1, 4)]
+    year = pl.coalesce(normal[0], basic[0])
+    month = pl.coalesce(normal[1], basic[1])
+    day = pl.coalesce(normal[2], basic[2])
+    week_year = pl.coalesce(week_ext[0], week_basic[0])
+    week = pl.coalesce(week_ext[1], week_basic[1])
+    week_day = pl.coalesce(week_ext[2], week_basic[2], pl.lit("1"))
+    # CPython bounds the year to 1..9999; chrono would accept year 0000.
+    year_ok = _component_int(year) >= 1
+    week_year_ok = _component_int(week_year) >= 1
+    date_expr = pl.coalesce(
+        pl.when(year_ok)
+        .then(year + "-" + month + "-" + day)
+        .str.strptime(pl.Date, "%Y-%m-%d", strict=False),
+        pl.when(week_year_ok)
+        .then(week_year + "-W" + week + "-" + week_day)
+        .str.strptime(pl.Date, "%G-W%V-%u", strict=False),
+    )
+    frame = frame.with_columns(__ts_date_expr=date_expr)
+
+    time_ok, hour, minute, second, fraction = _parse_hh_mm_ss_ff(pl.col("__ts_time"), exact=False)
+    # ``check_time_args`` bounds the datetime components (the offset body
+    # itself is only bounded by the 24h rule below).
+    frame = frame.with_columns(
+        __ts_time_ok=time_ok & (hour <= 23) & (minute <= 59) & (second <= 59),
+        __ts_time_micro=(hour * 3600 + minute * 60 + second) * 1_000_000 + fraction,
+    )
+
+    tz_text = pl.col("__ts_tz")
+    offset_ok, offset_hour, offset_minute, offset_second, offset_fraction = _parse_hh_mm_ss_ff(
+        tz_text.str.slice(1), exact=True
+    )
+    offset_sign = pl.when(tz_text.str.starts_with("-")).then(pl.lit(-1, dtype=pl.Int64)).otherwise(
+        pl.lit(1, dtype=pl.Int64)
+    )
+    offset_microseconds = offset_sign * (
+        (offset_hour * 3600 + offset_minute * 60 + offset_second) * 1_000_000 + offset_fraction
+    )
+    signed = tz_text.str.starts_with("+").fill_null(False) | tz_text.str.starts_with("-").fill_null(False)
+    # ``timezone(timedelta(...))`` requires the offset strictly inside 24h.
+    frame = frame.with_columns(
+        __ts_offset_ok=signed & offset_ok & (offset_microseconds.abs() < 86_400_000_000),
+        __ts_offset_micro=offset_microseconds,
+    )
+
+    naive_utc = pl.col("__ts_date_expr").cast(pl.Datetime("us")) + pl.duration(
+        microseconds=pl.col("__ts_time_micro")
+    )
+    instant = (naive_utc - pl.duration(microseconds=pl.col("__ts_offset_micro"))).dt.replace_time_zone("UTC")
+    frame = frame.with_columns(
+        __updated=pl.when(
+            valid
+            & pl.col("__ts_date_expr").is_not_null()
+            & pl.col("__ts_time_ok")
+            & pl.col("__ts_offset_ok")
+        )
+        .then(instant)
+        .otherwise(pl.lit(None, dtype=pl.Datetime("us", "UTC")))
+    )
+    return frame.drop(
+        [
+            "__ts_text",
+            "__ts_sep_loc",
+            "__ts_date",
+            "__ts_rest",
+            "__ts_tz_pos",
+            "__ts_time",
+            "__ts_tz",
+            "__ts_date_expr",
+            "__ts_time_ok",
+            "__ts_time_micro",
+            "__ts_offset_ok",
+            "__ts_offset_micro",
+        ]
+    )
 
 
 def _iso_marker(instant: pl.Expr) -> pl.Expr:
-    """UTC ISO-8601 marker identical to Python ``datetime.isoformat()``."""
+    """UTC ISO-8601 marker identical to Python ``datetime.isoformat()``.
 
-    return instant.dt.to_string("%Y-%m-%dT%H:%M:%S%.f") + "+00:00"
+    Microsecond components render as exactly six digits (``.123000``,
+    ``.001000``) and an exact second renders no fraction at all, matching
+    ``datetime.isoformat()``; ``%f`` alone would drop trailing zeros.
+    """
+
+    seconds = instant.dt.to_string("%Y-%m-%dT%H:%M:%S")
+    fraction = instant.dt.to_string("%.6f")
+    return (
+        pl.when(instant.dt.microsecond() != 0)
+        .then(seconds + fraction)
+        .otherwise(seconds)
+        + "+00:00"
+    )
 
 
 def _parse_date(text: pl.Expr) -> pl.Expr:
@@ -835,21 +1332,69 @@ def _raise_failures_in_reference_order(
     # --- Amount failures on tombstone rows are impossible (no amounts there).
 
 
-def _raise_collisions(combined: pl.DataFrame) -> None:
-    grouped = combined.group_by("event_id").agg(pl.struct(_COLLISION_FIELDS).n_unique().alias("variants"))
+def _raise_collisions(combined: pl.DataFrame, records_height: int) -> None:
+    """Raise the reference's first material conflict, field set included.
+
+    The reference compares each event's observations, in global input order
+    (records in input order, then tombstones), against the **first**
+    observation and raises at the first differing one, naming only the
+    fields that differ between that specific pair. A per-field ``any``
+    against the first row (the previous implementation) could name later
+    fields the reference never reaches; the first-conflict pair is
+    reconstructed natively here and only those two rows are fetched, so
+    the diagnostic stays bounded and byte-identical.
+    """
+
+    ordered = combined.with_columns(
+        __order=pl.coalesce(
+            pl.col("__rec_order"),
+            pl.lit(records_height, dtype=pl.UInt32) + pl.col("__tomb_order"),
+        )
+    )
+    grouped = ordered.group_by("event_id").agg(pl.struct(_COLLISION_FIELDS).n_unique().alias("variants"))
     colliding = grouped.filter(pl.col("variants") > 1)
-    if colliding.height:
-        offenders = combined.join(colliding.select("event_id"), on="event_id", how="semi")
-        per_field = offenders.group_by("event_id").agg(
-            [pl.col(field).ne_missing(pl.col(field).first()).any().alias(field) for field in _COLLISION_FIELDS]
+    if colliding.height == 0:
+        return
+    offenders = ordered.join(colliding.select("event_id"), on="event_id", how="semi")
+    canonical = offenders.group_by("event_id").agg(
+        [
+            pl.col(field).sort_by("__order").first().alias(f"__canon_{field}")
+            for field in _COLLISION_FIELDS
+        ]
+    )
+    joined = offenders.join(canonical, on="event_id", how="left")
+    differs = pl.any_horizontal(
+        [pl.col(field).ne_missing(pl.col(f"__canon_{field}")) for field in _COLLISION_FIELDS]
+    )
+    first_diff = (
+        joined.filter(differs)
+        .group_by("event_id")
+        .agg(pl.col("__order").min().alias("__first_diff_order"))
+        .sort("event_id")
+        .head(1)
+    )
+    if first_diff.height == 0:
+        # Unreachable: ``n_unique > 1`` implies at least one row differs.
+        return
+    event_id = first_diff["event_id"][0]
+    canonical_row = canonical.filter(pl.col("event_id") == event_id).row(0, named=True)
+    culprit = (
+        joined.filter(
+            (pl.col("event_id") == event_id) & (pl.col("__order") == first_diff["__first_diff_order"][0])
         )
-        rows = per_field.sort("event_id").head(_MAX_FAILURE_IDS).to_dicts()
-        first = rows[0]
-        differing = sorted(field for field, differs in first.items() if field != "event_id" and differs)
-        raise ValueError(
-            f"Conflicting canonical mappings for event_id {first['event_id']!r}; "
-            f"differing fields: {', '.join(differing)}"
-        )
+        .select(_COLLISION_FIELDS)
+        .head(1)
+        .to_dicts()[0]
+    )
+    differing = sorted(
+        field
+        for field in _COLLISION_FIELDS
+        if culprit[field] != canonical_row[f"__canon_{field}"]
+    )
+    raise ValueError(
+        f"Conflicting canonical mappings for event_id {event_id!r}; "
+        f"differing fields: {', '.join(differing)}"
+    )
 
 
 def _filler_helpers(**overrides: pl.Expr) -> list[tuple[str, pl.Expr]]:
@@ -956,12 +1501,16 @@ def _ted_branch(ted: pl.LazyFrame) -> pl.LazyFrame:
         .otherwise(pl.col("__amount_str"))
     )
     amount_text = _first_text(selected, selected_str)
-    amount_norm = _normalize_amount_text(amount_text.fill_null(""))
-    gate = _amount_gate(amount_norm)
+    # Materialize the resolved text before normalization: the normalizer
+    # references its input from several branches and would otherwise
+    # re-expand the whole ``_first_text`` graph, exploding the plan.
     base = raws.with_columns(
         __notice_id=notice_id,
-        __amount_norm=amount_norm,
-        __amount_gate=gate,
+        __amount_text=amount_text,
+    ).with_columns(
+        __amount_norm=_normalize_amount_text(pl.col("__amount_text").fill_null("")),
+    ).with_columns(
+        __amount_gate=_amount_gate(pl.col("__amount_norm")),
     )
     base = _attach_amount(
         base,
@@ -1106,16 +1655,29 @@ def _placsp_branch(placsp: pl.LazyFrame) -> pl.LazyFrame:
         __tax_currency_str=_is_json_string(payload, "amount_tax_exclusive_currency"),
     )
     atom_id = _first_text(pl.col("__atom_id_raw"), pl.col("__atom_id_str"))
-    updated = _aware_instant(_first_text(pl.col("__updated_raw"), pl.col("__updated_str")))
-    marker = pl.when(updated.is_not_null()).then(_iso_marker(updated)).otherwise(pl.lit("undated"))
+    # Materialize the resolved text and the parsed instant as columns: the
+    # fromisoformat port references its input from many branches, so
+    # passing the whole ``_first_text`` graph would duplicate it into a
+    # plan hundreds of megabytes deep.
+    updated_text = _first_text(pl.col("__updated_raw"), pl.col("__updated_str"))
+    base = _attach_aware_instant(raws.with_columns(__updated_text=updated_text), "__updated_text")
+    marker = pl.when(pl.col("__updated").is_not_null()).then(
+        _iso_marker(pl.col("__updated"))
+    ).otherwise(pl.lit("undated"))
     # Key presence (explicit JSON null included) selects the amount field,
     # mirroring ``key in payload`` in the reference.
     overall_present = payload.str.contains(r'"amount_estimated_overall"\s*:').fill_null(False)
     tax_present = payload.str.contains(r'"amount_tax_exclusive"\s*:').fill_null(False)
-    overall_text = _first_text(pl.col("__overall_raw"), pl.col("__overall_raw_str"))
-    tax_text = _first_text(pl.col("__tax_raw"), pl.col("__tax_raw_str"))
-    overall_norm = _normalize_amount_text(overall_text.fill_null(""))
-    tax_norm = _normalize_amount_text(tax_text.fill_null(""))
+    # Materialize both resolved texts before normalization so the
+    # normalizer branches reference columns instead of re-expanding the
+    # ``_first_text`` graph (which would explode the plan).
+    base = base.with_columns(
+        __overall_text=_first_text(pl.col("__overall_raw"), pl.col("__overall_raw_str")),
+        __tax_text=_first_text(pl.col("__tax_raw"), pl.col("__tax_raw_str")),
+    ).with_columns(
+        __overall_norm=_normalize_amount_text(pl.col("__overall_text").fill_null("")),
+        __tax_norm=_normalize_amount_text(pl.col("__tax_text").fill_null("")),
+    )
     # Legacy fallback is Python ``str()`` of the value: strings as-is
     # (whitespace kept; ``Decimal`` tolerates it), numbers as JSON text
     # (identical to ``str()``), booleans in Python case, JSON null as null
@@ -1144,14 +1706,11 @@ def _placsp_branch(placsp: pl.LazyFrame) -> pl.LazyFrame:
         .then(pl.lit("False"))
         .otherwise(pl.col("__tax_value"))
     )
-    base = raws.with_columns(
+    base = base.with_columns(
         __atom_id=atom_id,
-        __updated=updated,
         __marker=marker,
         __overall_present=overall_present,
         __tax_present=tax_present,
-        __overall_norm=overall_norm,
-        __tax_norm=tax_norm,
         __overall_fallback=overall_fallback,
         __tax_fallback=tax_fallback,
     )
@@ -1353,7 +1912,7 @@ def build_procurement_events_native(records: pl.DataFrame, tombstones: pl.DataFr
             )
         return pl.DataFrame(schema=PROCUREMENT_EVENT_SCHEMA)
     _raise_failures_in_reference_order(combined, first_unsupported)
-    _raise_collisions(combined)
+    _raise_collisions(combined, records.height)
     # Python selection tuples substitute "" for null member/locator values,
     # so those nulls sort FIRST among strings; only a null member index
     # sorts after concrete ones.

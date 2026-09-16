@@ -362,10 +362,13 @@ es independiente del motor de ejecución. Polars nativo
 (`silver_native.py`) es el motor productivo por defecto dentro del envelope
 medido de un solo nodo (ver `docs/benchmarks.md`); la semántica exacta
 queda además congelada en la referencia python-row (`silver_reference.py`),
-usada como oráculo de paridad por los tests y por los benchmarks, y se
-conserva una implementación PySpark semánticamente equivalente como ruta de
-scale-out evaluada fuera del pipeline productivo. No existe selección de
-motor por configuración en el pipeline productivo.
+usada como oráculo de paridad por los tests y por los benchmarks. Se
+conserva además un candidato PySpark como ruta de scale-out evaluada fuera
+del pipeline productivo, cuya paridad medida se limita al contrato sintético
+TED/PLACSP del experimento (payloads escalares, CPV como listas de cadenas
+e instantes con segundos enteros) y no cubre BOE ni instantes con fracción
+de segundo. No existe selección de motor por configuración en el pipeline
+productivo.
 
 ### Revisiones y tombstones
 

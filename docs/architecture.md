@@ -109,9 +109,14 @@ Decisión medida para Silver canónico (ver
 [benchmarks](benchmarks.md) y la evidencia del experimento de motores
 curada en `experiments/silver_engine_comparison/`):
 Polars nativo es el motor productivo por defecto de Silver canónico dentro
-del envelope medido de un solo nodo; se conserva una implementación PySpark
-semánticamente equivalente como ruta de scale-out evaluada para despliegues
-mayores, sin conectarla todavía al pipeline productivo. El contrato canónico
+del envelope medido de un solo nodo; se conserva un candidato PySpark
+evaluado como ruta de scale-out para despliegues mayores, sin conectarlo
+todavía al pipeline productivo. La paridad medida de ese candidato se limita
+al contrato sintético TED/PLACSP del experimento
+(`experiments/silver_engine_comparison/`: payloads escalares, CPV como
+listas de cadenas e instantes con segundos enteros); no cubre BOE ni
+instantes con fracción de segundo, que sí forman parte del contrato
+productivo. El contrato canónico
 (esquema `PROCUREMENT_EVENT_SCHEMA`, identidad, revisiones, tombstones,
 semántica de colisión explícita y selección de procedencia) es independiente
 del motor por construcción: la referencia python-row congelada
@@ -129,7 +134,7 @@ acotado, Airflow y la migración completa se abordan en cambios separados.
 | Contratos menores | Incorporar señales de contratación de menor importe | Python y formato oficial por determinar | Planificado |
 | Raw | Conservar bytes y procedencia sin sobrescrituras silenciosas | Sistema de ficheros local, checksum SHA-256 | Parcial |
 | Bronze | Representar el resultado del parsing y sus rechazos | Python para parsing; Polars para lotes acotados; Parquet | Implementado con métricas por fuente; payload source-specific en JSON string |
-| Silver | Mantener entidades canónicas tipadas | Polars nativo (motor productivo por defecto dentro del envelope medido) + Parquet; contrato engine-neutral; PySpark conservado como ruta de scale-out evaluada | `procurement_events` implementado con historial completo; referencia python-row congelada como oráculo de paridad; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
+| Silver | Mantener entidades canónicas tipadas | Polars nativo (motor productivo por defecto dentro del envelope medido) + Parquet; contrato engine-neutral; candidato PySpark de scale-out con paridad acreditada solo sobre el contrato sintético TED/PLACSP | `procurement_events` implementado con historial completo; referencia python-row congelada como oráculo de paridad; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
 | Referencias | Resolver CPV y organismos mediante identificadores oficiales | CPV 2008 y DIR3; construcción local acotada con Polars | CPV disponible; dimensiones planificadas |
 | Linkage | Detectar avisos equivalentes entre fuentes con evidencia | PySpark para generación de candidatos; reglas explicables y similitud textual | Baseline cross-source implementado |
 | Enrichment semántico | Añadir etiquetas de negocio multilabel auditables | PySpark + modelo preentrenado versionado | Planificado |

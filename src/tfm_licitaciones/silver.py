@@ -20,9 +20,12 @@ semantics, provenance selection, Decimal(20,2), UTC timestamps and
 ``PROCUREMENT_EVENT_SCHEMA`` — is engine-neutral by construction:
 :mod:`tfm_licitaciones.silver_reference` freezes the python-row semantics as
 the parity oracle, :mod:`tfm_licitaciones.silver_native` is the production
-engine, and a semantically equivalent PySpark implementation is retained as
-an experimental scale-out candidate (see ``experiments/``) to be
-productionized separately if larger deployments justify it.
+engine, and a PySpark candidate is retained as an experimental scale-out
+path (see ``experiments/``) to be productionized separately if larger
+deployments justify it. That candidate's measured parity covers only the
+synthetic TED/PLACSP experimental contract (scalar payloads, CPV string
+lists, whole-second instants), not the full production contract (BOE,
+subsecond instants).
 """
 
 from __future__ import annotations

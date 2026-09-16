@@ -198,16 +198,22 @@ verificada con `silver_parity` en cada perfil):
 
 | Perfil | Observaciones Bronze | Eventos Silver | python-row (ref) | polars-native (prod) | Aceleración |
 | --- | --- | --- | --- | --- | --- |
-| medium | 248.576 + 5.001 tombstones | 225.004 | 10,49 s | 4,15 s | ×2,5 |
-| large | 1.988.576 + 40.001 tombstones | 1.800.004 | 84,06 s | 27,16 s | ×3,1 |
+| medium | 248.576 + 5.001 tombstones | 225.004 | 10,60 s | 5,88 s | ×1,8 |
+| large | 1.988.576 + 40.001 tombstones | 1.800.004 | 84,75 s | 43,68 s | ×1,9 |
 
-Las cifras anteriores (3,01 s / 24,16 s) correspondían al motor nativo
-previo a las correcciones de paridad semántica; la versión con
-preservación de tipos JSON (`is_string`), `_first_text` exacto y Decimal
-lexical mide 4,15 s / 27,16 s en la misma máquina y protocolo (coste de
-la corrección: +1,1 s en medium, +3,0 s en large; paridad verificada en
-cada perfil). No se ha debilitado ninguna semántica para recuperar
-velocidad.
+Las cifras anteriores (medium 4,15 s / large 27,16 s) correspondían al motor
+nativo antes de la corrección de paridad de la auditoría independiente:
+probes de tipo estructurales y path-aware (`$["key"][?(@ >= "")]`, una
+travesía JSON extra por campo en vez del regex no estructural), puerto
+exacto de `datetime.fromisoformat` (incluido reemplazo textual de `Z`),
+diagnóstico de colisiones del primer conflicto y `str(float)` de Python
+para exponentes. La versión actual mide 5,88 s / 43,68 s en la misma
+máquina y protocolo (coste de la corrección: +1,7 s en medium, +16,5 s en
+large; paridad verificada en cada perfil, frames y mensajes de fallo). El
+grueso del coste es la segunda travesía JSON por campo de los probes
+estructurales; reducirlos con un único decode para campos estables es el
+seguimiento ya registrado y no se ha debilitado ninguna semántica para
+recuperar velocidad.
 
 Comando reproducible (por perfil; `n_ted`/`n_placsp`/`rows_per_part` según
 la tabla de perfiles del protocolo):
@@ -232,6 +238,7 @@ print(f"reference {t_ref:.2f}s  native {t_nat:.2f}s  events {native.height}  par
 PY
 ```
 
-El coste fijo de plan del motor nativo (~0,3 s por llamada) es irrelevante
-a esta escala y solo penaliza ejecuciones con muchos lotes diminutos
-(documentado como seguimiento para ventanas diarias pequeñas).
+El coste fijo de plan del motor nativo (~1,3 s por llamada tras el puerto
+temporal exacto, medido en el build de una fila) es irrelevante a esta
+escala y solo penaliza ejecuciones con muchos lotes diminutos (documentado
+como seguimiento para ventanas diarias pequeñas).

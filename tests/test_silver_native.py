@@ -25,6 +25,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import polars as pl
+
 from test_silver import (
     BOE_PAYLOAD,
     PLACSP_PAYLOAD,
@@ -286,6 +288,23 @@ def _parity_cases():
             _ted({**TED_PAYLOAD, "estimated-value-lot": "125000.500"}, source_file="ted/b.jsonl", retrieved_at=LATER),
         ), ()),
         # --- Collisions on more fields live in FailureParityTests ---
+        # --- Independent-audit regressions (Astra) ---
+        ("audit microsecond .123 event id", [_placsp({**PLACSP_PAYLOAD, "updated": "2026-01-08T10:00:00.123+01:00"})], ()),
+        ("audit microsecond .001 event id", [_placsp({**PLACSP_PAYLOAD, "updated": "2026-01-08T10:00:00.001+01:00"})], ()),
+        ("audit localized list first non-empty", [_ted({**TED_PAYLOAD, "TI": {"eng": ["", "Useful title"]}})], ()),
+        ("audit nested ND after top level", [_ted({**TED_PAYLOAD, "ND": 0, "notice_id": "N9", "extra": {"ND": "x"}})], ()),
+        ("audit nested ND before top level", [_ted({**TED_PAYLOAD, "extra": {"ND": "x"}, "ND": 0, "notice_id": "N9"})], ()),
+        ("audit amount NaN string stays null", [_ted({**TED_PAYLOAD, "estimated-value-lot": "NaN"})], ()),
+        ("audit amount nan lowercase stays null", [_ted({**TED_PAYLOAD, "estimated-value-lot": "nan"})], ()),
+        ("audit amount underscores exact", [_ted({**TED_PAYLOAD, "estimated-value-lot": "1_000.00"})], ()),
+        ("audit amount underscores scalar", [_ted({**TED_PAYLOAD, "estimated-value-lot": "1_000"})], ()),
+        ("audit amount invalid underscores null", [_ted({**TED_PAYLOAD, "estimated-value-lot": "1__000"})], ()),
+        ("audit float exponent event id", [_ted({**TED_PAYLOAD, "ND": 1e-7})], ()),
+        ("audit float exponent title", [_ted({**TED_PAYLOAD, "TI": 1e-7})], ()),
+        ("audit localized numeric spa is not a string", [_ted({**TED_PAYLOAD, "TI": {"spa": 0, "eng": "X"}})], ()),
+        ("audit localized boolean spa is not a string", [_ted({**TED_PAYLOAD, "TI": {"spa": False, "eng": "X"}})], ()),
+        ("audit hourly offset domain", [_placsp({**PLACSP_PAYLOAD, "updated": "2026-01-08T10:00+01:00"})], ()),
+        ("audit leap second rejected", [_placsp({**PLACSP_PAYLOAD, "updated": "2026-01-08T10:00:60+01:00"})], ()),
     ]
 
 
@@ -485,6 +504,54 @@ class FailureParityTests(unittest.TestCase):
                     (record_row(payload, source=source, source_file=f"{source}/a.jsonl"),)
                 )
 
+    def test_audit_amount_failures_match_reference(self) -> None:
+        # Positive infinity passes the TED float gate and then fails the
+        # Decimal decision; the quantize rounding carry over 26 all-nine
+        # integer digits must win over the scale failure.
+        for amount in (
+            "Infinity",
+            "inf",
+            "99999999999999999999999999.999",
+            "99999999999999999999999999.995",
+        ):
+            with self.subTest(amount=amount):
+                self._assert_same_failure(
+                    (record_row({**TED_PAYLOAD, "estimated-value-lot": amount}, source="ted", source_file="ted/a.jsonl"),)
+                )
+
+    def test_audit_placsp_special_text_failures_match_reference(self) -> None:
+        # Quiet NaN quantizes to NaN and fails the ``quantized != value``
+        # scale check; infinity raises InvalidOperation instead. Neither
+        # may abort the batch with the wrong classification.
+        for raw in ("NaN", "Infinity"):
+            with self.subTest(raw=raw):
+                payload = {**PLACSP_PAYLOAD, "amount_estimated_overall_raw": raw, "amount_estimated_overall": 1.0}
+                self._assert_same_failure(
+                    (record_row(payload, source="placsp", source_file="placsp/a.zip"),)
+                )
+
+    def test_audit_collision_first_conflict_fields_match_reference(self) -> None:
+        # Three observations: the first conflict wins, not the union of
+        # every difference against the first row.
+        def collision_row(title: str, buyer: str, member: int) -> dict:
+            return record_row(
+                {**TED_PAYLOAD, "ND": "X", "TI": {"spa": title}, "buyer-name": {"spa": buyer}},
+                source="ted",
+                source_file="ted/a.jsonl",
+                source_member=f"part-{member}",
+                source_member_index=member,
+            )
+
+        cases = {
+            "title first": [collision_row("A", "B", 1), collision_row("A2", "B", 2), collision_row("A", "B2", 3)],
+            "buyer first": [collision_row("A", "B", 1), collision_row("A", "B2", 3), collision_row("A2", "B", 2)],
+            "both in second": [collision_row("A", "B", 1), collision_row("A2", "B2", 2)],
+            "both in third": [collision_row("A", "B", 1), collision_row("A", "B", 2), collision_row("A2", "B2", 3)],
+        }
+        for name, rows in cases.items():
+            with self.subTest(case=name):
+                self._assert_same_failure(rows)
+
 
 class SourceValidationTests(unittest.TestCase):
     """Null/unsupported sources must fail explicitly, never drop rows."""
@@ -677,14 +744,16 @@ class EscapeParityTests(unittest.TestCase):
 
 
 class AdapterContractTests(unittest.TestCase):
-    """Prove the shapes the native engine treats as unreachable (blocker 6).
+    """Guard the flat-domain handling that the native engine assumes (blocker 6).
 
-    The ``is_string`` probes and the flat-domain object/array handling are
-    exact on every payload the production adapters can emit. These tests
-    enforce that contract on the checked-in fixtures, the Atom parser
-    output and the benchmark generator sample: flat localized dicts with
-    disjoint key namespaces, flat scalar arrays, underscore-free amount
-    texts and adapter-shaped timestamps.
+    JSON type probes are path-aware structural queries and no longer rely on
+    fixture shapes (see ``_is_json_string``); these tests keep the *flat
+    value extraction* domain honest on the checked-in fixtures, the Atom
+    parser output and the benchmark generator sample: flat localized dicts
+    without nested members, flat scalar arrays and adapter-shaped
+    timestamps/dates. They do not, on their own, prove the engine correct
+    on unseen payloads: the differential and adversarial matrices in this
+    file are the semantic authority.
     """
 
     # Top-level keys probed with ``is_string`` per source branch.
@@ -743,11 +812,13 @@ class AdapterContractTests(unittest.TestCase):
         probed = self.TED_PROBED | self.PLACSP_PROBED | self.BOE_PROBED
         for payload in self._fixture_payloads():
             nested = self._nested_keys(payload)
-            # Language/structural keys live nested; probed identity/field
-            # keys must stay top-level for the string probes to be exact.
-            # ``title``/``buyer``/``summary``/``url`` double as nested
-            # language-container values only inside links.html-style
-            # structures, which fixtures never combine with shadowing.
+            # Characterization of the retained fixture/generator shapes: the
+            # type probes are path-aware and handle shadowing exactly (see
+            # FailureParityTests and the audit regressions), so this only
+            # documents that the checked-in corpus keeps identity/field keys
+            # top-level. ``title``/``buyer``/``summary``/``url`` double as
+            # nested language-container values inside links.html-style
+            # structures.
             overlap = (nested & probed) - {"title", "buyer", "summary", "url"}
             self.assertEqual(overlap, set(), f"nested probed keys in {payload.get('_source')} payload")
 
@@ -783,6 +854,9 @@ class AdapterContractTests(unittest.TestCase):
                     self.assertNotIsInstance(value, (dict, list), f"{key} must stay a flat scalar")
 
     def test_amount_texts_have_no_underscores(self) -> None:
+        # Characterization of the retained synthetic corpus only: PEP-515
+        # underscore amounts are handled exactly by the engine (parity and
+        # failure cases above), so this no longer guards engine semantics.
         amount_keys = {
             "estimated-value-lot", "framework-maximum-value-lot", "amount",
             "amount_estimated_overall_raw", "amount_tax_exclusive_raw",
@@ -829,6 +903,177 @@ class AdapterContractTests(unittest.TestCase):
                 reference = build_procurement_events_reference(records, tombstone_frame([]))
                 native = build_procurement_events_native(records, tombstone_frame([]))
                 assert_silver_parity(native, reference)
+
+
+class TemporalDomainParityTests(unittest.TestCase):
+    """The native timestamp port must match ``datetime.fromisoformat``.
+
+    The reference accepts every timezone-aware ISO-8601 shape CPython
+    parses (and rejects the rest) and normalizes it to UTC; the native
+    engine ports that parser as Polars expressions. This differential test
+    feeds both the same corpus: explicit audit shapes plus a generated
+    cross product of date forms, separators, times and offsets.
+    """
+
+    EXPLICIT = [
+        # Audit shapes and CPython acceptance boundaries.
+        "2026-01-08T10:00:00Z", "2026-01-08T10:00Z", "2026-01-08T10:00+01:00",
+        "2026-01-08T10:00+01", "2026-01-08T10:00:00+01", "2026-01-08T10:00:00+0100",
+        "2026-01-08T10:00:00+01:00:00", "2026-01-08T10:00:00+010000",
+        "2026-01-08T10:00:60+01:00", "2026-01-08T10:60:00+01:00",
+        "2026-01-08T24:00:00+01:00", "2026-13-08T10:00:00+01:00",
+        "2026-02-30T10:00:00+01:00", "2024-02-29T10:00:00+01:00",
+        "2026-01-08T10:00:00,5+01:00", "2026-01-08T10:00:00.123456789+01:00",
+        "2026-01-08T10:00:00.123456789123+01:00", "2026-01-08 10:00:00+01:00",
+        "2026-01-08x10:00:00+01:00", "20260108T100000+0100",
+        "2026-W02-1T10:00:00Z", "2026-W02T10:00:00Z", "2026W021T100000Z",
+        "2026-01-08T10:00:00+01:30", "2026-01-08T10:00:00-05:00",
+        "2026-01-08T10:00:00+24:00", "2026-01-08T10:00:00.5+01:00",
+        "2026-01-08T10:00:00.123+0100", "2026-01-08T10:00:00z",
+        "2026-01-08T10", "2026-01-08", "20260108", "2026-W02-1",
+        "2026-01-08T10.30Z", "2026-01-08T100000Z", "2026-01-08T10:00:00.Z",
+        "2026-01-08T10:00:00+01:00:59", "2026-01-08T10:00:00+00:60",
+        "2026-01-08T10:00:00+000060", "2026-01-08T10:00:00+23:59:59",
+        "2026-01-08T10:00:00+99:00", "2026-01-08T10:00:00+01:99",
+        "2026-01-08T10:00:00+01:00:99", "0000-01-01T00:00:00Z",
+        "0000-W01-1T00:00:00Z", "2026-01-08T10:00:00+14:00",
+        "2026-01-08T10:00:00-14:00", "2026-01-08T10:00:00+15:00",
+        "2026-W53-7T10:00:00Z", "2025-W53-1T10:00:00Z", "2026-W00-1T00:00:00Z",
+        "2026-W01-8T00:00:00Z", "2026-01-08T10:00:00.000001+01:00",
+        "2026-01-08T10:00:00.0000001+01:00", "2026-01-08T10:00:00+01:00:00.5",
+        # Embedded ``Z`` and reference state-machine quirks: the reference
+        # expands every ``Z`` to ``+00:00`` before parsing, so these must
+        # resolve through the same textual step.
+        "2026-01-08Z+01", "2026-01-08Z00:00+01", "2026-W02-1Z7+01:00.5",
+        "2026-01-08100000+01", "20260108100000+01", "2026-W02100000Z",
+        "2026-01-08T10:00:00,5+01:00", "2026-01-08T100000Z",
+        "", "not-a-timestamp", "2026-1-08T10:00:00Z", "26-01-08T10:00:00Z",
+    ]
+
+    @staticmethod
+    def _generated() -> list[str]:
+        cases: list[str] = []
+        for date in ("2026-01-08", "2026-W02-1", "2026-W02", "20260108", "2026W021", "2026-W53-7", "2025-W53-1"):
+            for separator in ("T", " ", "x", ""):
+                for time in ("10", "10:00", "10:00:00", "100000", "10:00:00.5", "10,30", "10:00:00.Z"):
+                    for offset in ("Z", "+01:00", "+01", "+0100", "+01:00:00", "-05:00", "+14:00", "+24:00"):
+                        cases.append(f"{date}{separator}{time}{offset}")
+        return cases
+
+    @staticmethod
+    def _wild() -> list[str]:
+        # Deterministic pseudo-random wild corpus and mutations of valid
+        # timestamps: pins the reference state-machine quirks (arbitrary
+        # separators, glued fractions, second colons, embedded ``Z``).
+        rng = random.Random(20260108)
+        alphabet = "0123456789:.,+-ZT xW"
+        cases = {
+            "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 24)))
+            for _ in range(1000)
+        }
+        bases = (
+            "2026-01-08T10:00:00.123456+01:00",
+            "2026-W02-1T10:00Z",
+            "20260108T100000+0100",
+        )
+        for base in bases:
+            for _ in range(200):
+                position = rng.randrange(len(base))
+                replacement = rng.choice(alphabet)
+                operation = rng.choice(("insert", "delete", "replace"))
+                if operation == "insert":
+                    mutated = base[:position] + replacement + base[position:]
+                elif operation == "delete":
+                    mutated = base[:position] + base[position + 1 :]
+                else:
+                    mutated = base[:position] + replacement + base[position + 1 :]
+                cases.add(mutated)
+        return sorted(cases)
+
+    @staticmethod
+    def _expected(text: str) -> datetime | None:
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+
+    def test_native_parser_matches_fromisoformat_over_generated_corpus(self) -> None:
+        from tfm_licitaciones.silver_native import _attach_aware_instant
+
+        cases = sorted(set(self.EXPLICIT + self._generated() + self._wild()))
+        frame = pl.DataFrame({"text": cases}).lazy()
+        actual = (
+            _attach_aware_instant(frame, "text")
+            .select("__updated")
+            .collect()["__updated"]
+            .to_list()
+        )
+        for text, got in zip(cases, actual):
+            with self.subTest(text=text):
+                self.assertEqual(got, self._expected(text))
+
+    # Representative end-to-end sample: the parser differential above
+    # already covers the full corpus cheaply; building full frames is slow,
+    # so only one shape per temporal class goes through the engines.
+    FRAME_CASES = (
+        "2026-01-08T10:00:00Z",
+        "2026-01-08T10:00+01:00",
+        "2026-01-08T10:00:60+01:00",
+        "2026-01-08T10:00:00.123+01:00",
+        "20260108T100000+0100",
+        "2026-W02-1T10:00:00Z",
+        "2026-01-08T10",
+        "2026-01-08",
+        "2026-01-08Z+01",
+        "2026-01-08100000+01",
+        "2026-01-08T100000Z",
+        "2026-01-08T10.30Z",
+        "",
+        "not-a-timestamp",
+        "2026-01-08T10:00:00+24:00",
+    )
+
+    def test_frame_timestamps_match_reference_on_corpus(self) -> None:
+        # End-to-end: event_id marker and source_updated_at must match the
+        # frozen reference for every accepted/rejected timestamp shape.
+        for text in self.FRAME_CASES:
+            with self.subTest(text=text):
+                payload = {**PLACSP_PAYLOAD, "updated": text}
+                records = bronze_frame([record_row(payload, source="placsp", source_file="placsp/a.zip")])
+                reference = build_procurement_events_reference(records, tombstone_frame([]))
+                native = build_procurement_events(records, tombstone_frame([]))
+                assert_silver_parity(native, reference)
+
+
+class FrozenReferenceGuardTests(unittest.TestCase):
+    """The parity oracle must not follow mutable production semantics."""
+
+    def test_reference_module_has_no_production_imports(self) -> None:
+        tree = ast.parse((SRC / "silver_reference.py").read_text(encoding="utf-8"))
+        violations: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                violations.extend(
+                    alias.name for alias in node.names if alias.name.split(".")[0] == "tfm_licitaciones"
+                )
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if node.level or module.split(".")[0] == "tfm_licitaciones":
+                    violations.append(("." * node.level) + module)
+        self.assertEqual(violations, [])
+
+    def test_reference_ignores_mutated_normalize_semantics(self) -> None:
+        from unittest import mock
+
+        records = bronze_frame([record_row(TED_PAYLOAD, source="ted", source_file="ted/a.jsonl")])
+        before = build_procurement_events_reference(records, tombstone_frame([]))
+        with mock.patch("tfm_licitaciones.normalize._first_text", return_value="HACKED"):
+            after = build_procurement_events_reference(records, tombstone_frame([]))
+        self.assertTrue(before.equals(after))
+        self.assertEqual(after["title"][0], "Servicio de migración cloud")
 
 
 class DeterminismTests(unittest.TestCase):

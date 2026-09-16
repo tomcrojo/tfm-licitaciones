@@ -38,9 +38,10 @@ el [contrato de datos](docs/data_contract.md).
 
 Bronze y Silver canónico utilizan Parquet. Silver canónico (`procurement_events`)
 se ejecuta desde la medición disponible con el motor nativo de Polars, con la
-semántica python-row congelada como oráculo de paridad y una implementación
-PySpark equivalente conservada como ruta de scale-out evaluada fuera del
-pipeline productivo; Gold todavía usa JSONL/CSV y
+semántica python-row congelada como oráculo de paridad y un candidato
+PySpark conservado como ruta de scale-out evaluada fuera del pipeline
+productivo, con paridad acreditada solo sobre el contrato sintético
+TED/PLACSP del experimento (sin BOE ni instantes subsegundo); Gold todavía usa JSONL/CSV y
 ejecución manual. El objetivo asigna Python al
 parsing y control, Polars a lotes acotados, dimensiones locales y Silver
 canónico dentro del envelope medido, y PySpark a joins grandes, generación de
