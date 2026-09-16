@@ -114,7 +114,8 @@ class WorkloadPinTests(unittest.TestCase):
 
     def test_unpinned_run_skips_fingerprint_and_records_not_pinned(self) -> None:
         # End-to-end: an exploratory run executes successfully with the
-        # heavy fingerprint path disabled, and its metrics say so.
+        # heavy fingerprint path disabled, and its metrics say so — with
+        # no false generator provenance.
         from unittest import mock
 
         from experiments.silver_engine_comparison.bench_engines import run_comparison
@@ -130,8 +131,36 @@ class WorkloadPinTests(unittest.TestCase):
                 )
         self.assertFalse(metrics["dataset"]["workload_pinned"])
         self.assertIsNone(metrics["dataset"]["workload_sha256"])
+        self.assertIsNone(metrics["dataset"]["workload_generator_commit"])
+        self.assertEqual(
+            metrics["dataset"]["historical_workload_generator_commit"],
+            WORKLOAD_GENERATOR_COMMIT,
+        )
         for engine in ("python-row", "polars-native"):
             self.assertTrue(metrics["parity"]["per_engine"][engine]["parity_ok"])
+
+    def test_pinned_run_records_generator_provenance(self) -> None:
+        # End-to-end: a pinned historical run records the asserted
+        # provenance (pin digest + generator commit) in its metrics.
+        from experiments.silver_engine_comparison.bench_engines import run_comparison
+
+        with tempfile.TemporaryDirectory() as tmp:
+            metrics = run_comparison(
+                "tiny", seed=7, work_dir=Path(tmp) / "work",
+                engines=("python-row", "polars-native"),
+            )
+        self.assertTrue(metrics["dataset"]["workload_pinned"])
+        self.assertEqual(
+            metrics["dataset"]["workload_sha256"],
+            HISTORICAL_WORKLOADS[("tiny", 7, False)]["sha256"],
+        )
+        self.assertEqual(
+            metrics["dataset"]["workload_generator_commit"], WORKLOAD_GENERATOR_COMMIT
+        )
+        self.assertEqual(
+            metrics["dataset"]["historical_workload_generator_commit"],
+            WORKLOAD_GENERATOR_COMMIT,
+        )
 
 
 if __name__ == "__main__":
