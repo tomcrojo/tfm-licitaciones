@@ -40,9 +40,10 @@ Bronze y Silver canónico utilizan hoy Parquet con un baseline python-row
 sobre frontera Polars/Parquet (frames Polars de entrada/salida,
 transformación por filas en Python); Gold todavía usa JSONL/CSV y
 ejecución manual. El objetivo asigna Python al
-parsing y control, Polars a lotes acotados y dimensiones locales, y PySpark
-a Silver canónico y downstream, con Parquet entre etapas y Airflow como
-plano de control. La migración hacia ingesta incremental idempotente,
+parsing y control, Polars a lotes acotados y dimensiones locales; el motor
+de Silver canónico se decidirá por benchmark (candidatos: Polars nativo y
+PySpark) y el downstream distribuido queda en principio para PySpark, con
+Parquet entre etapas y Airflow como plano de control. La migración hacia ingesta incremental idempotente,
 Parquet en Gold, nuevas fuentes y Airflow está descrita en la
 [arquitectura](docs/architecture.md). El [benchmark](docs/benchmarks.md)
 fija el protocolo de comparación; aún no existen resultados medidos. Las

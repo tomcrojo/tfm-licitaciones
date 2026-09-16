@@ -2,7 +2,8 @@
 
 Este documento describe el harness reproducible que fija la línea base de la
 implementación canónica Bronze→Silver actual y el protocolo con el que
-deberá compararse cualquier futura implementación (PySpark). No contiene
+deberá compararse cualquier implementación candidata (Polars nativo,
+PySpark). No contiene
 ningún resultado de rendimiento: **no existe ningún resultado hasta que el
 harness se ejecute y sus métricas JSON se conserven**. Los datos y
 resultados generados no se versionan en el repositorio.
@@ -47,7 +48,7 @@ El harness es offline: no accede a la red, no lee el corpus del repositorio
 y no escribe nada dentro del repositorio. Sin `--work-dir` el dataset vive
 en un directorio temporal que se descarta; con `--work-dir` los part files
 Bronze se conservan para su reutilización sin cambios por un futuro
-benchmark Spark. Un `--work-dir` que ya contenga artefactos gestionados del
+benchmark de motores candidatos. Un `--work-dir` que ya contenga artefactos gestionados del
 dataset (part files, `dataset.json` o el Silver medido) se rechaza con
 `FileExistsError` en lugar de sobrescribirse o mezclarse con otro perfil:
 use un directorio vacío nuevo. Nunca se borra contenido existente. Solo se
@@ -139,7 +140,7 @@ comparación.
 | `cpu_count` | Contexto de la máquina |
 | `measured_at` | Timestamp operativo; nunca se compara |
 
-## Protocolo de comparación python-row/Spark
+## Protocolo de comparación python-row/candidatos
 
 1. Reutilizar el mismo `--work-dir` (mismo perfil y `seed`): la entrada
    Bronze es idéntica, sin regenerar.

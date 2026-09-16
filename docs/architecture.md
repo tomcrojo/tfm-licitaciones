@@ -76,7 +76,7 @@ flowchart TB
     CPV --> RAW2
     DIR3 --> RAW2
     RAW2 --> BRONZE2
-    BRONZE2 -->|"PySpark"| SILVER2
+    BRONZE2 -->|"motor por benchmark"| SILVER2
     SILVER2 -->|"PySpark"| ENRICH
     ENRICH -->|"PySpark"| GOLD2
 
@@ -96,10 +96,12 @@ ejecutarla sin levantar el orquestador.
 La asignación de motores objetivo es: Python (biblioteca estándar) solo para
 API, sistema de ficheros, ZIP/XML/parsing JSON y metadatos pequeños de
 control; Polars para lotes acotados de parsing, dimensiones locales CPV/DIR3
-y exportaciones acotadas; PySpark para Silver canónico, joins
-grandes/transversales, ventanas, dedup/chequeos de colisión,
-enriquecimiento, generación de candidatos de linkage y Gold de alta
-cardinalidad. Parquet es el formato entre etapas. Unos 200.000 filas son una
+y exportaciones acotadas; el motor de Silver canónico se decidirá mediante
+el benchmark reproducible descrito en [benchmarks](benchmarks.md), con
+Polars nativo y PySpark como candidatos; PySpark queda destinado en
+principio a joins grandes/transversales, ventanas, dedup/chequeos de
+colisión, enriquecimiento, generación de candidatos de linkage y Gold de
+alta cardinalidad. Parquet es el formato entre etapas. Unos 200.000 filas son una
 heurística de enrutado, no un umbral rígido: la forma de la carga (joins,
 ventanas, cardinalidad, estado) es decisiva.
 
@@ -107,10 +109,9 @@ Estado actual frente a objetivo: Bronze y Silver canónico están
 implementados hoy como baseline python-row sobre una frontera
 Polars/Parquet (frames Polars de entrada/salida, pero transformación por
 filas en Python: `iter_rows`, `json.loads` por fila, objetos
-`ProcurementEvent`, agrupación en dict y ordenación Python); la migración a
-PySpark está pendiente del benchmark reproducible descrito en
-[benchmarks](benchmarks.md). Spark Silver, Bronze acotado, Airflow y la
-migración completa se abordan en cambios separados.
+`ProcurementEvent`, agrupación en dict y ordenación Python); el motor
+definitivo de Silver está pendiente del benchmark. Bronze acotado, Airflow y
+la migración completa se abordan en cambios separados.
 
 ## 4. Componentes y tecnologías
 
@@ -121,7 +122,7 @@ migración completa se abordan en cambios separados.
 | Contratos menores | Incorporar señales de contratación de menor importe | Python y formato oficial por determinar | Planificado |
 | Raw | Conservar bytes y procedencia sin sobrescrituras silenciosas | Sistema de ficheros local, checksum SHA-256 | Parcial |
 | Bronze | Representar el resultado del parsing y sus rechazos | Python para parsing; Polars para lotes acotados; Parquet | Implementado con métricas por fuente; payload source-specific en JSON string |
-| Silver | Mantener entidades canónicas tipadas | PySpark y Parquet | `procurement_events` implementado hoy como baseline python-row sobre frontera Polars/Parquet, con historial completo; migración a PySpark pendiente de benchmark; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
+| Silver | Mantener entidades canónicas tipadas | Motor por benchmark (candidatos: Polars nativo, PySpark) + Parquet | `procurement_events` implementado hoy como baseline python-row sobre frontera Polars/Parquet, con historial completo; motor definitivo pendiente de benchmark; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
 | Referencias | Resolver CPV y organismos mediante identificadores oficiales | CPV 2008 y DIR3; construcción local acotada con Polars | CPV disponible; dimensiones planificadas |
 | Linkage | Detectar avisos equivalentes entre fuentes con evidencia | PySpark para generación de candidatos; reglas explicables y similitud textual | Baseline cross-source implementado |
 | Enrichment semántico | Añadir etiquetas de negocio multilabel auditables | PySpark + modelo preentrenado versionado | Planificado |
@@ -217,20 +218,21 @@ estimaciones y los diseños futuros se etiquetarán como tales.
 
 ## 10. Decisiones de alcance
 
-- La asignación de motores es autoritativa: Airflow como plano de control
+- La asignación de motores es autoritativa salvo el motor de Silver
+  canónico, que se decidirá por benchmark: Airflow como plano de control
   sobre funciones de pipeline independientes; Python solo para API, sistema
   de ficheros, ZIP/XML/parsing JSON y metadatos pequeños de control; Polars
   para lotes acotados de parsing, dimensiones locales CPV/DIR3 y
-  exportaciones acotadas; PySpark para Silver canónico, joins
-  grandes/transversales, ventanas, dedup/chequeos de colisión,
-  enriquecimiento, generación de candidatos de linkage y Gold de alta
-  cardinalidad; Parquet como formato entre etapas.
+  exportaciones acotadas; Polars nativo y PySpark como candidatos a Silver;
+  PySpark destinado en principio a joins grandes/transversales, ventanas,
+  dedup/chequeos de colisión, enriquecimiento, generación de candidatos de
+  linkage y Gold de alta cardinalidad; Parquet como formato entre etapas.
 - Unas 200.000 filas son una heurística de enrutado, no un umbral rígido: la
   forma de la carga (joins, ventanas, cardinalidad, estado) es decisiva.
 - El protocolo de comparación (comandos, perfiles, métricas y paridad) está
   en [benchmarks](benchmarks.md). No existe ningún resultado de rendimiento
   hasta que el harness se ejecute y sus métricas JSON se conserven.
-- Spark Silver, Bronze acotado, Airflow y la migración completa quedan fuera
+- El motor Silver definitivo, Bronze acotado, Airflow y la migración completa quedan fuera
   de este cambio y se abordan en cambios separados tras el benchmark.
 - dbt solo tendrá sentido si se incorpora un serving layer SQL con un papel
   claro.
