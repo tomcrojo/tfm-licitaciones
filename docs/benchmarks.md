@@ -198,8 +198,16 @@ verificada con `silver_parity` en cada perfil):
 
 | Perfil | Observaciones Bronze | Eventos Silver | python-row (ref) | polars-native (prod) | Aceleración |
 | --- | --- | --- | --- | --- | --- |
-| medium | 248.576 + 5.001 tombstones | 225.004 | 10,30 s | 3,01 s | ×3,4 |
-| large | 1.988.576 + 40.001 tombstones | 1.800.004 | 85,18 s | 24,16 s | ×3,5 |
+| medium | 248.576 + 5.001 tombstones | 225.004 | 10,49 s | 4,15 s | ×2,5 |
+| large | 1.988.576 + 40.001 tombstones | 1.800.004 | 84,06 s | 27,16 s | ×3,1 |
+
+Las cifras anteriores (3,01 s / 24,16 s) correspondían al motor nativo
+previo a las correcciones de paridad semántica; la versión con
+preservación de tipos JSON (`is_string`), `_first_text` exacto y Decimal
+lexical mide 4,15 s / 27,16 s en la misma máquina y protocolo (coste de
+la corrección: +1,1 s en medium, +3,0 s en large; paridad verificada en
+cada perfil). No se ha debilitado ninguna semántica para recuperar
+velocidad.
 
 Comando reproducible (por perfil; `n_ted`/`n_placsp`/`rows_per_part` según
 la tabla de perfiles del protocolo):
