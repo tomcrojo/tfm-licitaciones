@@ -1,4 +1,10 @@
-"""Cross-source record linkage with blocking and TF-IDF title similarity."""
+"""Cross-source record linkage with blocking and TF-IDF title similarity.
+
+Engine boundary: blocking and candidate-pair generation run as a native
+self-join in Polars; TF-IDF scoring operates only on the records involved in
+candidate pairs and union-find over the linked edges stays in Python because
+it is inherently iterative.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +13,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
+
+import polars as pl
 
 from .classify import normalize_text
 from .models import TenderRecord
@@ -20,13 +28,14 @@ class LinkageResult:
     stats: dict[str, Any]
 
 
-def _buyer_key(record: TenderRecord) -> str:
-    """Build a normalized blocking key from the buyer name."""
-
-    if record.buyer:
-        tokens = [token for token in normalize_text(record.buyer).split() if len(token) > 2]
-        return " ".join(tokens[:4]) or "sin-comprador"
-    return "sin-comprador"
+_LINKAGE_SCHEMA = {
+    "source": pl.String,
+    "tender_id": pl.String,
+    "title": pl.String,
+    "buyer": pl.String,
+    "published_date": pl.Date,
+    "cpv_codes": pl.List(pl.String),
+}
 
 
 def _tokenize(text: str) -> list[str]:
@@ -75,11 +84,82 @@ def _tfidf_vectors(documents: list[str]) -> list[dict[int, float]]:
     return vectors
 
 
-def link_duplicates(
-    records: list[TenderRecord],
+def _blocking_keys(frame: pl.DataFrame) -> pl.DataFrame:
+    """Add the normalized buyer and CPV-division blocking keys."""
+
+    buyers = [normalize_text(buyer) if buyer else "" for buyer in frame["buyer"].to_list()]
+    tokens = (
+        pl.col("buyer_norm")
+        .str.split(" ")
+        .list.eval(pl.element().filter(pl.element().str.len_chars() > 2))
+        .list.head(4)
+        .list.join(" ")
+    )
+    division = pl.col("cpv_codes").list.first().str.slice(0, 2)
+    return (
+        frame.with_columns(pl.Series("buyer_norm", buyers, dtype=pl.String))
+        .with_columns(
+            buyer_key=pl.when(tokens.str.len_chars() > 0).then(tokens).otherwise(pl.lit("sin-comprador")),
+            division=pl.when(division.fill_null("").str.len_chars() > 0)
+            .then(division)
+            .otherwise(pl.lit("xx")),
+        )
+        .drop("buyer_norm")
+    )
+
+
+def _candidate_pairs(
+    dated: pl.DataFrame, window_days: int, pair_budget: int
+) -> list[tuple[int, int]]:
+    """Discover cross-source pairs with a memory-linear sliding window.
+
+    Blocking keys are assigned by the engine, but the pairs themselves are
+    discovered per block with a date-sorted sliding walk: records of a single
+    source inside a block never become pairs, and only in-window ranges are
+    visited. Materializing the block self-join instead would allocate every
+    same-source pair before filtering it away, which is exactly how
+    mega-blocks OOM the runner. The pair list is the only quadratic
+    structure and is capped by ``pair_budget`` with a loud error.
+    """
+
+    window = timedelta(days=window_days)
+    index_of = dict(enumerate(dated["index"].to_list()))
+    buyers = dated["buyer_key"].to_list()
+    divisions = dated["division"].to_list()
+    sources = dated["source"].to_list()
+    dates = dated["published_date"].to_list()
+
+    blocks: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for order, buyer in enumerate(buyers):
+        blocks[(buyer, divisions[order])].append(order)
+
+    pairs: list[tuple[int, int]] = []
+    for members in blocks.values():
+        members.sort(key=lambda order: dates[order])
+        if len({sources[order] for order in members}) < 2:
+            continue
+        for cursor, order in enumerate(members):
+            published = dates[order]
+            for other in members[cursor + 1 :]:
+                if (dates[other] - published) > window:
+                    break
+                if sources[other] == sources[order]:
+                    continue
+                pairs.append((index_of[order], index_of[other]))
+                if len(pairs) > pair_budget:
+                    raise ValueError(
+                        f"Linkage pair budget exceeded (>{pair_budget} candidate pairs). "
+                        "Refine blocking or run the Spark linkage path."
+                    )
+    return pairs
+
+
+def link_frame(
+    frame: pl.DataFrame,
     *,
     window_days: int = 7,
     threshold: float = 0.75,
+    pair_budget: int = 5_000_000,
 ) -> LinkageResult:
     """Group records that describe the same procedure across sources.
 
@@ -104,12 +184,26 @@ def link_duplicates(
     how many were excluded.
     """
 
-    blocks: defaultdict[tuple[str, str], list[int]] = defaultdict(list)
-    for index, record in enumerate(records):
-        division = (record.cpv_main or "")[:2] or "xx"
-        blocks[(_buyer_key(record), division)].append(index)
+    prepared = _blocking_keys(
+        frame.select(
+            pl.col("source"),
+            pl.col("tender_id"),
+            pl.col("title").fill_null(""),
+            pl.col("buyer"),
+            pl.col("published_date"),
+            pl.col("cpv_codes"),
+        ).with_row_index("index")
+    )
+    dated = prepared.drop_nulls("published_date")
+    pairs = _candidate_pairs(dated, window_days, pair_budget)
+    candidate_pairs = len(pairs)
 
-    parents = list(range(len(records)))
+    sources = prepared["source"].to_list()
+    tender_ids = prepared["tender_id"].to_list()
+    titles = prepared["title"].to_list()
+    dates = prepared["published_date"].to_list()
+
+    parents = list(range(len(sources)))
 
     def find(node: int) -> int:
         while parents[node] != node:
@@ -120,33 +214,13 @@ def link_duplicates(
     def union(left: int, right: int) -> None:
         parents[find(left)] = find(right)
 
-    candidate_pairs = 0
     evaluated_pairs = 0
     linked_pairs = 0
-    window = timedelta(days=window_days)
-    for indexes in blocks.values():
-        dated = sorted(
-            (index for index in indexes if records[index].published_date is not None),
-            key=lambda index: records[index].published_date,
-        )
-        if len({records[index].source for index in dated}) < 2:
-            continue
-        pair_targets: list[tuple[int, int]] = []
-        for position, index in enumerate(dated):
-            published = records[index].published_date
-            for other in dated[position + 1 :]:
-                if (records[other].published_date - published) > window:
-                    break
-                if records[other].source == records[index].source:
-                    continue
-                pair_targets.append((index, other))
-        candidate_pairs += len(pair_targets)
-        if not pair_targets:
-            continue
-        involved = sorted({index for pair in pair_targets for index in pair})
-        vectors = _tfidf_vectors([records[index].title or "" for index in involved])
+    if candidate_pairs:
+        involved = sorted({index for pair in pairs for index in pair})
+        vectors = _tfidf_vectors([titles[index] for index in involved])
         lookup = dict(zip(involved, vectors))
-        for left, right in pair_targets:
+        for left, right in pairs:
             left_vector, right_vector = lookup[left], lookup[right]
             if not left_vector or not right_vector:
                 continue
@@ -159,29 +233,28 @@ def link_duplicates(
                 linked_pairs += 1
 
     groups: defaultdict[int, list[int]] = defaultdict(list)
-    for index in range(len(records)):
+    for index in range(len(sources)):
         groups[find(index)].append(index)
     linked = sorted(
         (members for members in groups.values() if len(members) > 1),
-        key=lambda members: min((records[index].source, records[index].tender_id) for index in members),
+        key=lambda members: min((sources[index], tender_ids[index]) for index in members),
     )
     assignments: dict[tuple[str, str], dict[str, Any]] = {}
     for group_counter, members in enumerate(linked, start=1):
         canonical = min(
             members,
             key=lambda index: (
-                records[index].published_date or date.max,
-                -len(records[index].title or ""),
-                records[index].tender_id,
-                records[index].source,
+                dates[index] or date.max,
+                -len(titles[index]),
+                tender_ids[index],
+                sources[index],
             ),
         )
         for index in members:
-            record = records[index]
-            assignments[(record.source, record.tender_id)] = {
+            assignments[(sources[index], tender_ids[index])] = {
                 "dup_group": group_counter,
                 "is_canonical": index == canonical,
-                "duplicate_of": None if index == canonical else records[canonical].tender_id,
+                "duplicate_of": None if index == canonical else tender_ids[canonical],
             }
     stats = {
         "candidate_pairs": candidate_pairs,
@@ -189,8 +262,31 @@ def link_duplicates(
         "linked_pairs": linked_pairs,
         "linked_groups": len(linked),
         "duplicated_records": sum(len(members) - 1 for members in linked),
-        "records_without_date": sum(record.published_date is None for record in records),
+        "records_without_date": sum(published is None for published in dates),
         "threshold": threshold,
         "window_days": window_days,
     }
     return LinkageResult(assignments=assignments, stats=stats)
+
+
+def link_duplicates(
+    records: list[TenderRecord],
+    *,
+    window_days: int = 7,
+    threshold: float = 0.75,
+    pair_budget: int = 5_000_000,
+) -> LinkageResult:
+    """Row-level API over the frame implementation."""
+
+    frame = pl.DataFrame(
+        {
+            "source": [record.source for record in records],
+            "tender_id": [record.tender_id for record in records],
+            "title": [record.title for record in records],
+            "buyer": [record.buyer for record in records],
+            "published_date": [record.published_date for record in records],
+            "cpv_codes": [[record.cpv_main] if record.cpv_main else [] for record in records],
+        },
+        schema=_LINKAGE_SCHEMA,
+    )
+    return link_frame(frame, window_days=window_days, threshold=threshold, pair_budget=pair_budget)

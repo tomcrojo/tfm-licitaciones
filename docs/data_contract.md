@@ -85,7 +85,14 @@ surrogates Unicode aislados se rechazan, incluso en campos anidados o claves.
 `json.loads(payload_json)` recupera el objeto del adaptador. TED conserva sus
 campos heterogéneos; Atom conserva el payload CODICE plano y `_atom_file` cuando
 procede de un ZIP. Este esquema no sustituye al contrato canónico Silver.
-La reproducción utiliza `source_file` + `raw_sha256` para identificar el
+
+Junto al payload, Bronze conserva las columnas tipadas que el adaptador ya
+normalizó en el límite (`tender_id`, `title`, `summary`, `buyer`,
+`published_date`, `amount`, `currency`, `country`, `url`, `cpv_codes`,
+`buyer_id`, `region`, `status`, `nuts_code`, `updated` y `raw_amount_present`),
+extraídas una sola vez por `normalize`. Los motores posteriores nunca
+re-parsean JSON: Polars lee estas columnas para la vista legada y Spark para
+los eventos canónicos. La reproducción utiliza `source_file` + `raw_sha256` para identificar el
 artefacto y su sidecar determinista, y miembro/índice/localizador para encontrar
 el registro. El índice desambigua miembros con el mismo nombre dentro de un
 ZIP. No se crean sidecars ni checksums independientes por miembro. Fuente y
@@ -165,8 +172,13 @@ El informe añade `superseded_artifacts` y `superseded_records` a nivel de run
 para contar los artefactos y registros aceptados históricos excluidos de esa
 vista. `tombstone_ids` conserva el número de refs únicos de ZIP seleccionados;
 `tombstoned_removed` y `updates_folded` cuentan las operaciones legadas sobre
-los registros seleccionados. Los rechazos de snapshots anteriores siguen
+los registros seleccionados, calculadas ahora con anti-join y group_by nativos
+en Polars. Los rechazos de snapshots anteriores siguen
 siendo visibles y mantienen `ingestion.passed=false`.
+
+El manifest del run reutiliza los checksums ya verificados contra los bytes
+(una sola lectura SHA-256 por artefacto) y registra la duración de cada etapa
+(`stages`) para observar el coste del motor por capa.
 
 La aceptación Bronze comprueba la estructura y los campos identificador/título,
 no certifica la validez de fechas, importes ni otros campos opcionales. Los
@@ -253,9 +265,37 @@ tener vacíos los atributos descriptivos, pero conserva identidad, fuente y
 timestamps. No borra físicamente los eventos anteriores. Una vista posterior
 podrá calcular el estado vigente sin perder el historial.
 
+La transformación Bronze→Silver (`silver/build_procurement_events`, PySpark)
+implementa este contrato sobre el límite Parquet, sin UDFs y sin recoger el
+corpus al driver:
+
+- Identidad con contenido: `ted:event:{ND}:{contenido}`, `boe:event:{id}:{contenido}`,
+  `placsp:event:{tender_no}:{updated}:{contenido}`, donde el marcador de
+  contenido es un hash del contenido canónico. Reprocesar el mismo payload
+  reproduce el mismo `event_id`; una corrección bajo el mismo identificador
+  publicado se convierte en una nueva revisión append-only, nunca en una
+  colisión silenciosa.
+- PLACSP agrupa revisiones con `procedure_id=placsp:procedure:{tender_no}`;
+  TED/BOE no exponen clave de expediente y conservan `procedure_id` nulo.
+- Cada control de borrado válido genera un evento `tombstone` cuya identidad
+  incluye ref, fichero y localizador; conserva `procedure_id`, `source` e
+  `ingested_at` con los descriptivos vacíos.
+- Los duplicados idénticos re-recuperados en varios snapshots se deduplican
+  conservando la evidencia de ingesta más temprana; el orden de escritura es
+  `event_id` en un único fichero, por lo que una reconstrucción determinista
+  reproduce los mismos eventos.
+- `ingested_at` es `raw_retrieved_at`; los importes se castean a
+  `decimal(20,2)` y los timestamps se normalizan a UTC.
+- PLACSP canónico no deriva `publication_date` de `updated`: la fecha oficial
+  de publicación queda nula hasta que la fuente la publique, y `updated`
+  alimenta `source_updated_at`.
+- Sin el extra `spark`, el pipeline registra el motor como no disponible y
+  continúa con las demás capas; los eventos canónicos requieren PySpark.
+
 La implementación 0.1 todavía pliega revisiones de OpenPLACSP y elimina los
-identificadores tombstoned. Esa conducta se mantiene por compatibilidad hasta
-que la transformación Bronze→Silver adopte este contrato.
+identificadores tombstoned. Esa conducta se mantiene por compatibilidad en la
+vista legada `tenders.jsonl` (plegado ahora nativo en Polars), sin cambiar el
+modelo canónico ni los productos Gold.
 
 ### Frontera de compatibilidad
 

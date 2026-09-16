@@ -81,7 +81,8 @@
   },
   "linkage": {
     "window_days": 7,
-    "threshold": 0.75
+    "threshold": 0.75,
+    "pair_budget": 5000000
   },
   "quality": {
     "max_title_null_share": 0.05,

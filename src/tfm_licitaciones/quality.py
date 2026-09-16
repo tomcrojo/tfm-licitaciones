@@ -1,17 +1,25 @@
-"""Batch-level data-quality rules and a machine-readable quality report."""
+"""Batch-level data-quality rules and a machine-readable quality report.
+
+Engine boundary: completeness, uniqueness and validity metrics are native
+Polars aggregations over the silver frame.
+"""
 
 from __future__ import annotations
 
-from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
+
+import polars as pl
 
 from .models import OpportunityRecord, QualityIssue, TenderRecord
 
 
-def validate_records(
-    records: list[TenderRecord],
-    opportunities: list[OpportunityRecord],
+_RAW_AMOUNT_KEYS = ("estimated-value-lot", "framework-maximum-value-lot", "amount")
+
+
+def validate_frames(
+    silver: pl.DataFrame,
+    scored: pl.DataFrame,
     thresholds: dict[str, Any],
     linkage_stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -23,34 +31,38 @@ def validate_records(
     """
 
     issues: list[QualityIssue] = []
-    for record in records:
-        if not record.tender_id.strip():
-            issues.append(QualityIssue("<missing>", "required_tender_id", "Tender id is empty"))
-        if not record.source.strip():
-            issues.append(QualityIssue(record.tender_id or "<missing>", "required_source", "Source is empty"))
-        if not record.title.strip():
-            issues.append(QualityIssue(record.tender_id or "<missing>", "required_title", "Title is empty"))
-        if record.amount is not None and record.amount < 0:
-            issues.append(QualityIssue(record.tender_id, "non_negative_amount", "Amount is negative"))
+    empty_title = pl.col("title").is_null() | (pl.col("title").str.strip_chars() == "")
+    empty_id = pl.col("tender_id").is_null() | (pl.col("tender_id").str.strip_chars() == "")
+    empty_source = pl.col("source").is_null() | (pl.col("source").str.strip_chars() == "")
+    identifier = pl.when(empty_id).then(pl.lit("<missing>")).otherwise(pl.col("tender_id"))
 
-    counts = Counter((record.source, record.tender_id) for record in records)
-    for source_id, count in counts.items():
-        if count > 1:
-            issues.append(
-                QualityIssue(
-                    source_id[1],
-                    "unique_source_tender_id",
-                    f"Duplicate key {source_id[0]}:{source_id[1]} appears {count} times",
-                )
+    def _issue_rows(condition: pl.Expr, rule: str, message: str) -> None:
+        for row in silver.filter(condition).select(identifier.alias("tender_id")).iter_rows():
+            issues.append(QualityIssue(row, rule, message))
+
+    _issue_rows(empty_id, "required_tender_id", "Tender id is empty")
+    _issue_rows(empty_source, "required_source", "Source is empty")
+    _issue_rows(empty_title, "required_title", "Title is empty")
+    _issue_rows(pl.col("amount") < 0, "non_negative_amount", "Amount is negative")
+
+    duplicate_keys = silver.group_by("source", "tender_id").len().filter(pl.col("len") > 1)
+    for source, tender_id, count in duplicate_keys.iter_rows():
+        issues.append(
+            QualityIssue(
+                tender_id,
+                "unique_source_tender_id",
+                f"Duplicate key {source}:{tender_id} appears {count} times",
             )
+        )
 
-    total = len(records)
-    title_null_share = _share(total, sum(not r.title.strip() for r in records))
-    date_null_share = _share(total, sum(r.published_date is None for r in records))
+    total = silver.height
+    title_null_share = _share(total, silver.filter(empty_title).height)
+    date_null_share = _share(total, silver.filter(pl.col("published_date").is_null()).height)
     # Amount is optional at notice level in both TED and BOE. A missing amount
     # is valid, but an informed value that the adapter could not parse is not.
-    invalid_amount_share = _share(total, sum(_has_invalid_amount(r) for r in records))
-    technology_matches = sum(item.technology_score > 0 for item in opportunities)
+    invalid_amount = silver.filter(pl.col("raw_amount_present") & pl.col("amount").is_null()).height
+    invalid_amount_share = _share(total, invalid_amount)
+    technology_matches = scored.filter(pl.col("technology_score") > 0).height if scored.height else 0
     technology_match_share = _share(total, technology_matches)
     duplicated = int(linkage_stats.get("duplicated_records", 0)) if linkage_stats else 0
     duplicate_share = _share(total, duplicated)
@@ -87,18 +99,47 @@ def validate_records(
     }
 
 
+def validate_records(
+    records: list[TenderRecord],
+    opportunities: list[OpportunityRecord],
+    thresholds: dict[str, Any],
+    linkage_stats: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Row-level API over the frame implementation."""
+
+    def _raw_amount_present(record: TenderRecord) -> bool:
+        raw_value = next((record.raw.get(key) for key in _RAW_AMOUNT_KEYS if key in record.raw), None)
+        return raw_value not in (None, "", [])
+
+    silver = pl.DataFrame(
+        {
+            "tender_id": [record.tender_id for record in records],
+            "source": [record.source for record in records],
+            "title": [record.title for record in records],
+            "published_date": [record.published_date for record in records],
+            "amount": [record.amount for record in records],
+            "raw_amount_present": [_raw_amount_present(record) for record in records],
+        },
+        schema={
+            "tender_id": pl.String,
+            "source": pl.String,
+            "title": pl.String,
+            "published_date": pl.Date,
+            "amount": pl.Float64,
+            "raw_amount_present": pl.Boolean,
+        },
+    )
+    scored = pl.DataFrame(
+        {"technology_score": [item.technology_score for item in opportunities]},
+        schema={"technology_score": pl.Int64},
+    )
+    return validate_frames(silver, scored, thresholds, linkage_stats=linkage_stats)
+
+
 def _share(total: int, count: int) -> float:
     """Return a rounded fraction, using zero for an empty batch."""
 
     return round(count / total, 4) if total else 0.0
-
-
-def _has_invalid_amount(record: TenderRecord) -> bool:
-    """Detect a malformed amount while treating absent optional values as valid."""
-
-    raw_keys = ("estimated-value-lot", "framework-maximum-value-lot", "amount")
-    raw_value = next((record.raw.get(key) for key in raw_keys if key in record.raw), None)
-    return raw_value not in (None, "", []) and record.amount is None
 
 
 def _check(name: str, value: Any, threshold: Any, operator: str, passed: bool) -> dict[str, Any]:

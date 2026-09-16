@@ -8,6 +8,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
+import polars as pl
+
 from tfm_licitaciones.atom import parse_atom_file, parse_placsp_atom, iter_placsp_zip
 from tfm_licitaciones.bronze import BRONZE_SCHEMA, REJECTION_SCHEMA, TOMBSTONE_SCHEMA, load_raw_records
 from tfm_licitaciones.io import read_parquet
@@ -57,13 +59,13 @@ class BronzeTests(unittest.TestCase):
         loaded = load_raw_records(self.raw)
         self.assert_counts(loaded["ingestion"], 6, 2, 4)
         self.assert_counts(loaded["ingestion"]["by_source"]["ted"], 6, 2, 4)
-        self.assertEqual({row["rejection_reason"] for row in loaded["rejections"]},
+        self.assertEqual(set(loaded["rejections"]["rejection_reason"].to_list()),
                          {"invalid_json", "expected_json_object", "missing_tender_id", "missing_title"})
-        self.assertEqual({row["record_locator"] for row in loaded["rejections"]},
+        self.assertEqual(set(loaded["rejections"]["record_locator"].to_list()),
                          {"line:2", "line:3", "line:4", "line:5"})
-        self.assertTrue(all(row["source"] == "ted" and row["source_file"] == "ted/mixed.jsonl"
-                            for row in loaded["rejections"]))
-        self.assertEqual([r.tender_id for r in loaded["records"]], ["T1", "T3"])
+        self.assertTrue((loaded["rejections"]["source"] == "ted").all()
+                        and (loaded["rejections"]["source_file"] == "ted/mixed.jsonl").all())
+        self.assertEqual(loaded["silver_candidates"]["tender_id"].to_list(), ["T1", "T3"])
 
     def test_plain_atom_and_xml_account_for_all_entries(self) -> None:
         for suffix in ("atom", "xml"):
@@ -71,10 +73,11 @@ class BronzeTests(unittest.TestCase):
         loaded = load_raw_records(self.raw)
         self.assert_counts(loaded["ingestion"], 8, 2, 6)
         self.assertEqual(loaded["ingestion"]["atom_files"], 2)
-        self.assertEqual({row["record_locator"] for row in loaded["rejections"]},
+        self.assertEqual(set(loaded["rejections"]["record_locator"].to_list()),
                          {"entry:2", "entry:3", "entry:4"})
-        self.assertTrue(all(row["source_member"] is None for row in loaded["rejections"]))
-        self.assertEqual(loaded["rejections"][0]["source_record_id"], "https://example.invalid/2")
+        self.assertTrue(loaded["rejections"]["source_member"].null_count()
+                        == loaded["rejections"].height)
+        self.assertEqual(loaded["rejections"]["source_record_id"][0], "https://example.invalid/2")
         # Existing plain-feed Silver path does not apply tombstones.
         self.assertEqual(loaded["tombstone_ids"], set())
 
@@ -91,11 +94,11 @@ class BronzeTests(unittest.TestCase):
         self.assertEqual(loaded["ingestion"]["placsp_entries"], 4)
         self.assertEqual(loaded["ingestion"]["atom_files"], 2)
         self.assertEqual(loaded["tombstone_ids"], {"999"})
-        entry = loaded["bronze"][0]
+        entry = loaded["bronze"].row(0, named=True)
         self.assertEqual((entry["source_file"], entry["source_member"], entry["record_locator"]),
                          ("sample.zip", "nested/valid.atom", "entry:1"))
-        self.assertEqual(entry["payload"]["_atom_file"], "nested/valid.atom")
-        rejected = loaded["rejections"][0]
+        self.assertEqual(json.loads(entry["payload_json"])["_atom_file"], "nested/valid.atom")
+        rejected = loaded["rejections"].row(0, named=True)
         self.assertEqual(rejected["source_member"], "a-broken.atom")
         self.assertIsNone(rejected["record_locator"])
 
@@ -110,7 +113,7 @@ class BronzeTests(unittest.TestCase):
         self.assert_counts(loaded["ingestion"], 0, 0, 0)
         self.assertEqual(loaded["ingestion"]["document_errors"], 4)
         self.assertFalse(loaded["ingestion"]["passed"])
-        self.assertEqual({r["rejection_reason"] for r in loaded["rejections"]},
+        self.assertEqual(set(loaded["rejections"]["rejection_reason"].to_list()),
                          {"invalid_xml", "expected_atom_feed", "invalid_zip", "no_atom_members"})
 
     def test_invalid_deletion_control_is_observable_separately(self) -> None:
@@ -118,7 +121,7 @@ class BronzeTests(unittest.TestCase):
         loaded = load_raw_records(self.raw)
         self.assert_counts(loaded["ingestion"], 4, 1, 3)
         self.assertEqual(loaded["ingestion"]["control_errors"], 1)
-        control = next(r for r in loaded["rejections"] if r["rejection_scope"] == "control")
+        control = loaded["rejections"].filter(pl.col("rejection_scope") == "control").row(0, named=True)
         self.assertEqual(control["record_locator"], "deleted-entry:1")
 
     def test_legacy_atom_adapters_fail_explicitly_on_rejections(self) -> None:
@@ -139,7 +142,7 @@ class BronzeTests(unittest.TestCase):
         self.assert_counts(loaded["ingestion"], 4, 1, 3)
         self.assertEqual(set(loaded["ingestion"]["by_source"]), {"ted"})
         self.assert_counts(loaded["ingestion"]["by_source"]["ted"], 4, 1, 3)
-        self.assertIn("unsupported_source", {row["rejection_reason"] for row in loaded["rejections"]})
+        self.assertIn("unsupported_source", set(loaded["rejections"]["rejection_reason"].to_list()))
 
     def test_invalid_encodings_are_located_and_do_not_stop_the_batch(self) -> None:
         path = self.write_raw("ted/encoding.jsonl", "")
@@ -149,7 +152,7 @@ class BronzeTests(unittest.TestCase):
         loaded = load_raw_records(self.raw)
         self.assert_counts(loaded["ingestion"], 2, 1, 1)
         self.assertEqual(loaded["ingestion"]["document_errors"], 1)
-        self.assertEqual({r["rejection_reason"] for r in loaded["rejections"]},
+        self.assertEqual(set(loaded["rejections"]["rejection_reason"].to_list()),
                          {"invalid_xml", "invalid_json"})
 
     def test_atom_nonfinite_amount_cannot_break_parquet_serialization(self) -> None:

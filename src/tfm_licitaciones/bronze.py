@@ -1,4 +1,11 @@
-"""Typed source-specific Bronze persistence and ingestion accounting."""
+"""Typed source-specific Bronze persistence and ingestion accounting.
+
+Engine boundary: Python owns the parsing of Raw artifacts (ZIP/Atom/XML/JSONL);
+Polars owns tabular assembly, accounting and the Parquet boundary. Candidate
+rows are normalized once at the adapter boundary into typed columns and
+accumulated in bounded batches, so a full corpus is never materialized as
+Python objects.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +19,7 @@ import polars as pl
 
 from .atom import parse_atom_batch, parse_placsp_zip_batch
 from .models import TenderRecord
-from .normalize import normalize_record
+from .normalize import _as_code_list, normalize_record
 from .raw_provenance import RawArtifact, RawProvenanceError, load_raw_artifact
 
 
@@ -26,22 +33,89 @@ PROVENANCE_SCHEMA = {
     "raw_sha256": pl.String,
     "raw_retrieved_at": pl.Datetime("us", "UTC"),
 }
-BRONZE_SCHEMA = {**PROVENANCE_SCHEMA, "payload_json": pl.String}
+#: Adapter-normalized columns persisted beside the source-specific payload so
+#: downstream engines never re-parse JSON. Values are extracted exactly once,
+#: by the same :mod:`tfm_licitaciones.normalize` adapters that build
+#: ``TenderRecord`` for the legacy path.
+ADAPTER_SCHEMA = {
+    "tender_id": pl.String,
+    "title": pl.String,
+    "summary": pl.String,
+    "buyer": pl.String,
+    "published_date": pl.Date,
+    "amount": pl.Float64,
+    "currency": pl.String,
+    "country": pl.String,
+    "url": pl.String,
+    "cpv_codes": pl.List(pl.String),
+    "buyer_id": pl.String,
+    "region": pl.String,
+    "status": pl.String,
+    "nuts_code": pl.String,
+    "updated": pl.String,
+    "raw_amount_present": pl.Boolean,
+}
+BRONZE_SCHEMA = {**PROVENANCE_SCHEMA, "payload_json": pl.String, **ADAPTER_SCHEMA}
 TOMBSTONE_SCHEMA = dict(PROVENANCE_SCHEMA)
 REJECTION_SCHEMA = {
     **PROVENANCE_SCHEMA,
     "rejection_reason": pl.String,
     "rejection_scope": pl.String,
 }
+#: Legacy normalized view of the latest snapshot per partition/window. This is
+#: the frame consumed by the compatibility Silver path until Gold migrates to
+#: canonical events.
+SILVER_CANDIDATE_SCHEMA = {
+    "position": pl.UInt32,
+    "source": pl.String,
+    **ADAPTER_SCHEMA,
+    "payload_json": pl.String,
+}
+
+#: Rows buffered before a candidate batch is converted to a Polars frame.
+BATCH_ROWS = 50_000
+
+_RAW_AMOUNT_KEYS = ("estimated-value-lot", "framework-maximum-value-lot", "amount")
+
+
+class _FrameAccumulator:
+    """Collect typed rows and flush them to frames in bounded batches."""
+
+    def __init__(self, schema: dict[str, pl.DataType], batch_rows: int = BATCH_ROWS) -> None:
+        self._schema = schema
+        self._batch_rows = batch_rows
+        self._rows: list[dict[str, Any]] = []
+        self._parts: list[pl.DataFrame] = []
+        self._count = 0
+
+    def append(self, row: dict[str, Any]) -> None:
+        self._rows.append(row)
+        self._count += 1
+        if len(self._rows) >= self._batch_rows:
+            self._flush()
+
+    def _flush(self) -> None:
+        if self._rows:
+            self._parts.append(pl.DataFrame(self._rows, schema=self._schema))
+            self._rows = []
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+    def frame(self) -> pl.DataFrame:
+        self._flush()
+        if not self._parts:
+            return pl.DataFrame(schema=self._schema)
+        if len(self._parts) == 1:
+            return self._parts[0]
+        return pl.concat(self._parts, rechunk=True)
 
 
 def bronze_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
-    """Persist the JSON serialization already validated at acceptance."""
+    """Assemble accepted candidates into the typed Bronze frame."""
 
-    return pl.DataFrame(
-        [{key: row[key] for key in BRONZE_SCHEMA} for row in rows],
-        schema=BRONZE_SCHEMA,
-    )
+    return pl.DataFrame(rows, schema=BRONZE_SCHEMA)
 
 
 def rejection_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
@@ -95,6 +169,69 @@ def _latest_snapshot_paths(artifacts: list[RawArtifact]) -> set[str]:
     return selected
 
 
+def _adapter_row(record: TenderRecord, payload: dict[str, Any], payload_source: str) -> dict[str, Any]:
+    """Flatten one normalized record into typed Bronze columns."""
+
+    if payload_source == "ted":
+        cpv_codes = _as_code_list(payload.get("PC") or payload.get("cpv"))
+    elif payload_source == "placsp":
+        cpv_codes = _as_code_list(payload.get("cpv"))
+    else:
+        cpv_codes = []
+    raw_amount = next((payload.get(key) for key in _RAW_AMOUNT_KEYS if key in payload), None)
+    return {
+        "tender_id": record.tender_id or None,
+        "title": record.title or "",
+        "summary": record.summary,
+        "buyer": record.buyer,
+        "published_date": record.published_date,
+        "amount": record.amount,
+        "currency": record.currency,
+        "country": record.country,
+        "url": record.url,
+        "cpv_codes": cpv_codes,
+        "buyer_id": record.buyer_id,
+        "region": record.region,
+        "status": record.status,
+        "nuts_code": payload.get("nuts_code") if payload_source == "placsp" else None,
+        "updated": payload.get("updated") or "",
+        "raw_amount_present": raw_amount not in (None, "", []),
+    }
+
+
+def _source_metrics(
+    records: pl.DataFrame,
+    rejections: pl.DataFrame,
+    tombstones: pl.DataFrame,
+    sources: set[str],
+) -> dict[str, dict[str, int]]:
+    """Compute per-source ingestion accounting with native aggregations."""
+
+    accepted = dict(records.group_by("source").len().iter_rows()) if records.height else {}
+    def _counts(frame: pl.DataFrame, scope: str) -> dict[str, int]:
+        if not frame.height:
+            return {}
+        scoped = frame.filter(pl.col("rejection_scope") == scope).group_by("source").len()
+        return dict(scoped.iter_rows())
+    rejected = _counts(rejections, "record")
+    document_errors = _counts(rejections, "document")
+    control_errors = _counts(rejections, "control")
+    tombstone_counts = dict(tombstones.group_by("source").len().iter_rows()) if tombstones.height else {}
+    metrics: dict[str, dict[str, int]] = {}
+    for source in sorted(sources):
+        source_accepted = int(accepted.get(source, 0))
+        source_rejected = int(rejected.get(source, 0))
+        metrics[source] = {
+            "parsed": source_accepted + source_rejected,
+            "accepted": source_accepted,
+            "rejected": source_rejected,
+            "document_errors": int(document_errors.get(source, 0)),
+            "control_errors": int(control_errors.get(source, 0)),
+            "tombstones": int(tombstone_counts.get(source, 0)),
+        }
+    return metrics
+
+
 def load_raw_records(raw_dir: Path) -> dict[str, Any]:
     """Parse each candidate once, retaining errors and source-local provenance.
 
@@ -103,17 +240,26 @@ def load_raw_records(raw_dir: Path) -> dict[str, Any]:
     are accounted separately; deletion controls are not tender candidates.
     Bronze retains all snapshots; normalized records and legacy tombstone ids
     use only the latest retrieval of each source partition/window.
+
+    Returns Polars frames for Bronze records, rejections, tombstones and the
+    legacy silver candidates, plus the ingestion report and verified raw
+    artifacts (so callers can reuse checksums without re-hashing payloads).
     """
 
-    bronze: list[dict[str, Any]] = []
-    records: list[TenderRecord] = []
-    rejections: list[dict[str, Any]] = []
-    tombstones: list[dict[str, Any]] = []
+    bronze = _FrameAccumulator(BRONZE_SCHEMA)
+    candidates = _FrameAccumulator(SILVER_CANDIDATE_SCHEMA)
+    rejections = _FrameAccumulator(REJECTION_SCHEMA)
+    tombstones = _FrameAccumulator(TOMBSTONE_SCHEMA)
     legacy_tombstones: set[str] = set()
     sources: set[str] = set()
+    position = 0
     zip_files = zip_entries = atom_files = 0
 
-    def accept(candidate: dict[str, Any]) -> None:
+    def reject(location: dict[str, Any], reason: str, scope: str) -> None:
+        rejections.append({**location, "rejection_reason": reason, "rejection_scope": scope})
+
+    def accept(candidate: dict[str, Any], artifact: RawArtifact, latest_paths: set[str]) -> None:
+        nonlocal position
         payload = candidate["payload"]
         location = {key: candidate.get(key) for key in PROVENANCE_SCHEMA}
         # All row and metric provenance follows the sidecar. A conflicting or
@@ -125,7 +271,7 @@ def load_raw_records(raw_dir: Path) -> dict[str, Any]:
         try:
             payload_json.encode("utf-8")
         except UnicodeEncodeError:
-            rejections.append({**location, "rejection_reason": "invalid_unicode_payload", "rejection_scope": "record"})
+            reject(location, "invalid_unicode_payload", "record")
             return
         if source not in {"ted", "placsp", "boe"} or payload_source not in {"ted", "placsp", "boe"}:
             reason = "unsupported_source"
@@ -140,11 +286,15 @@ def load_raw_records(raw_dir: Path) -> dict[str, Any]:
             elif not record.title:
                 reason = "missing_title"
         if reason:
-            rejections.append({**location, "rejection_reason": reason, "rejection_scope": "record"})
-        else:
-            bronze.append({**location, "payload": payload, "payload_json": payload_json})
-            if artifact.raw_path in latest_paths:
-                records.append(record)
+            reject(location, reason, "record")
+            return
+        adapter = _adapter_row(record, payload, payload_source)
+        bronze.append({**location, "payload_json": payload_json, **adapter})
+        if artifact.raw_path in latest_paths:
+            candidates.append(
+                {"position": position, "source": record.source, "payload_json": payload_json, **adapter}
+            )
+            position += 1
 
     for sidecar in sorted(raw_dir.rglob("*.provenance.json")):
         payload_path = sidecar.with_name(sidecar.name.removesuffix(".provenance.json"))
@@ -176,9 +326,9 @@ def load_raw_records(raw_dir: Path) -> dict[str, Any]:
             for control in batch.tombstone_rows:
                 tombstones.append({**provenance, **control})
             for rejection in batch.rejections:
-                rejections.append({**provenance, **rejection})
+                reject({**provenance, **rejection}, rejection["rejection_reason"], rejection["rejection_scope"])
             for entry in batch.entries:
-                accept({**provenance, **entry})
+                accept({**provenance, **entry}, artifact, latest_paths)
             continue
         source_hint = artifact.source
         with path.open("rb") as handle:
@@ -191,35 +341,37 @@ def load_raw_records(raw_dir: Path) -> dict[str, Any]:
                     payload = json.loads(line.decode("utf-8"), parse_constant=_reject_json_constant,
                                          parse_float=_finite_json_float)
                 except (ValueError, UnicodeDecodeError):
-                    rejections.append({**location, "rejection_reason": "invalid_json", "rejection_scope": "record"})
+                    reject(location, "invalid_json", "record")
                     sources.add(source_hint)
                     continue
                 if not isinstance(payload, dict):
-                    rejections.append({**location, "rejection_reason": "expected_json_object", "rejection_scope": "record"})
+                    reject(location, "expected_json_object", "record")
                     sources.add(source_hint)
                     continue
                 source = str(payload.get("_source") or payload.get("source") or source_hint).lower()
                 payload["_source"] = source
-                accept({**location, "payload": payload})
+                accept({**location, "payload": payload}, artifact, latest_paths)
 
-    by_source = {}
-    for source in sorted(sources):
-        accepted = sum(row["source"] == source for row in bronze)
-        rejected = sum(row["source"] == source and row["rejection_scope"] == "record" for row in rejections)
-        by_source[source] = {
-            "parsed": accepted + rejected, "accepted": accepted, "rejected": rejected,
-            "document_errors": sum(row["source"] == source and row["rejection_scope"] == "document" for row in rejections),
-            "control_errors": sum(row["source"] == source and row["rejection_scope"] == "control" for row in rejections),
-            "tombstones": sum(row["source"] == source for row in tombstones),
-        }
+    bronze_frame_, rejection_frame_ = bronze.frame(), rejections.frame()
+    tombstone_frame_ = tombstones.frame()
+    candidate_frame = candidates.frame()
+    by_source = _source_metrics(bronze_frame_, rejection_frame_, tombstone_frame_, sources)
     totals = {key: sum(counts[key] for counts in by_source.values())
               for key in ("parsed", "accepted", "rejected", "document_errors", "control_errors", "tombstones")}
     ingestion = {
-        **totals, "by_source": by_source, "passed": not rejections,
+        **totals, "by_source": by_source,
+        "passed": rejection_frame_.height == 0,
         "placsp_zip_files": zip_files, "placsp_entries": zip_entries,
         "atom_files": atom_files, "tombstone_ids": len(legacy_tombstones),
         "superseded_artifacts": len(artifacts) - len(latest_paths),
-        "superseded_records": len(bronze) - len(records),
+        "superseded_records": bronze_frame_.height - candidate_frame.height,
     }
-    return {"bronze": bronze, "records": records, "rejections": rejections, "tombstones": tombstones,
-            "tombstone_ids": {ref.rsplit("/", 1)[-1] for ref in legacy_tombstones}, "ingestion": ingestion}
+    return {
+        "bronze": bronze_frame_,
+        "rejections": rejection_frame_,
+        "tombstones": tombstone_frame_,
+        "silver_candidates": candidate_frame,
+        "tombstone_ids": {ref.rsplit("/", 1)[-1] for ref in legacy_tombstones},
+        "ingestion": ingestion,
+        "artifacts": artifacts,
+    }

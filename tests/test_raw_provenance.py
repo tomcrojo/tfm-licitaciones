@@ -17,6 +17,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
+import polars as pl
+
 from raw_fixtures import RETRIEVED_AT, evidence_for_fixture
 from tfm_licitaciones.bronze import TOMBSTONE_SCHEMA, load_raw_records
 from tfm_licitaciones.cli import main
@@ -117,8 +119,8 @@ class RawProvenanceTests(unittest.TestCase):
         self.assertEqual(newer.retrieved_at, LATER.isoformat())
         self.assertEqual(self.download_ted([{**TED, "TI": "Corrección cloud"}], LATER + timedelta(days=1)), changed)
         loaded = load_raw_records(self.raw)
-        self.assertEqual({row["raw_retrieved_at"] for row in loaded["bronze"]}, {RETRIEVED_AT, LATER})
-        self.assertEqual(len({row["raw_sha256"] for row in loaded["bronze"]}), 2)
+        self.assertEqual(set(loaded["bronze"]["raw_retrieved_at"].to_list()), {RETRIEVED_AT, LATER})
+        self.assertEqual(loaded["bronze"]["raw_sha256"].n_unique(), 2)
 
     def test_corrected_ted_and_boe_snapshots_reach_legacy_silver_and_gold(self) -> None:
         for source in ("ted", "boe"):
@@ -200,9 +202,10 @@ class RawProvenanceTests(unittest.TestCase):
                          window_start="2026-02-01", window_end="2026-02-28")
         self.download_ted([{**TED, "TI": "Corrección cloud"}], LATER)
         loaded = load_raw_records(self.raw)
-        self.assertEqual({record.tender_id: record.title for record in loaded["records"]},
+        candidates = loaded["silver_candidates"]
+        self.assertEqual(dict(zip(candidates["tender_id"].to_list(), candidates["title"].to_list())),
                          {"T1": "Corrección cloud", "T2": "Servicio cloud"})
-        self.assertEqual(len(loaded["bronze"]), 3)
+        self.assertEqual(loaded["bronze"].height, 3)
         self.assertEqual(loaded["ingestion"]["superseded_artifacts"], 1)
         self.assertEqual(loaded["ingestion"]["superseded_records"], 1)
         self.assertEqual(loaded["ingestion"]["rejected"], 1)
@@ -222,7 +225,7 @@ class RawProvenanceTests(unittest.TestCase):
             clock.now.return_value = RETRIEVED_AT
             self.assertEqual(main(["ingest", "--source", "ted", "--start", str(START), "--end", str(END),
                                    "--raw-dir", str(self.raw)]), 0)
-        self.assertEqual(load_raw_records(self.raw)["bronze"][0]["raw_retrieved_at"], RETRIEVED_AT)
+        self.assertEqual(load_raw_records(self.raw)["bronze"]["raw_retrieved_at"][0], RETRIEVED_AT)
 
     def test_placsp_zip_all_scopes_and_duplicate_member_names_have_container_evidence(self) -> None:
         with self.assertWarns(UserWarning):
@@ -280,10 +283,10 @@ class RawProvenanceTests(unittest.TestCase):
         self.assertNotEqual(first, second)
         loaded = load_raw_records(self.raw)
         rows = loaded["bronze"]
-        self.assertEqual(len(rows), 2)
-        self.assertEqual({r["source_member"] for r in rows}, {"feed.atom"})
-        self.assertEqual(len({r["raw_sha256"] for r in rows}), 2)
-        self.assertEqual({r["raw_retrieved_at"] for r in rows}, {RETRIEVED_AT, LATER})
+        self.assertEqual(rows.height, 2)
+        self.assertEqual(set(rows["source_member"].to_list()), {"feed.atom"})
+        self.assertEqual(rows["raw_sha256"].n_unique(), 2)
+        self.assertEqual(set(rows["raw_retrieved_at"].to_list()), {RETRIEVED_AT, LATER})
         self.assertEqual(load_raw_artifact(self.raw, first).partition, load_raw_artifact(self.raw, second).partition)
 
     def test_unreadable_zip_member_retains_index_and_container_evidence(self) -> None:
@@ -291,11 +294,13 @@ class RawProvenanceTests(unittest.TestCase):
         content = zip_bytes([("broken.atom", FEED), ("valid.atom", FEED)])
         path = self.download_zip(content.replace(b"Servicio cloud", b"Servicio clouX", 1))
         loaded = load_raw_records(self.raw)
-        rejection = next(r for r in loaded["rejections"] if r["rejection_reason"] == "unreadable_zip_member")
+        rejection = loaded["rejections"].filter(
+            pl.col("rejection_reason") == "unreadable_zip_member"
+        ).row(0, named=True)
         self.assertEqual((rejection["source_member"], rejection["source_member_index"]), ("broken.atom", 1))
         self.assertEqual(rejection["raw_sha256"], file_sha256(path))
         self.assertEqual(rejection["raw_retrieved_at"], RETRIEVED_AT)
-        self.assertEqual(loaded["bronze"][0]["source_member_index"], 2)
+        self.assertEqual(loaded["bronze"]["source_member_index"][0], 2)
 
     def test_corrupt_bzip2_and_lzma_members_are_independent_located_rejections(self) -> None:
         for compression, error in ((zipfile.ZIP_BZIP2, OSError), (zipfile.ZIP_LZMA, lzma.LZMAError)):
@@ -389,7 +394,7 @@ class RawProvenanceTests(unittest.TestCase):
         path.write_text(json.dumps({"_source": "boe", "item_id": "B1", "title": "Cloud"}))
         evidence_for_fixture(self.raw, path, "ted")
         loaded = load_raw_records(self.raw)
-        row = loaded["rejections"][0]
+        row = loaded["rejections"].row(0, named=True)
         self.assertEqual(row["rejection_reason"], "source_mismatch")
         self.assertEqual(row["source"], "ted")
         self.assertEqual(row["raw_sha256"], file_sha256(path))
@@ -406,7 +411,13 @@ class RawProvenanceTests(unittest.TestCase):
             path.write_bytes(content)
             evidence_for_fixture(self.raw, path, "placsp")
         loaded = load_raw_records(self.raw)
-        for row in loaded["bronze"] + loaded["rejections"]:
+        provenance_columns = ["source_file", "source_member", "source_member_index",
+                              "raw_sha256", "raw_retrieved_at"]
+        evidence = pl.concat([
+            loaded["bronze"].select(provenance_columns),
+            loaded["rejections"].select(provenance_columns),
+        ])
+        for row in evidence.to_dicts():
             self.assertEqual(row["raw_sha256"], file_sha256(self.raw / row["source_file"]))
             self.assertEqual(row["raw_retrieved_at"], RETRIEVED_AT)
             self.assertIsNone(row["source_member"])
@@ -468,7 +479,7 @@ class RawProvenanceTests(unittest.TestCase):
                 self.assertEqual(sidecar.read_bytes(), before)
         self.assertEqual(persist_raw_artifact(staged, destination, self.raw, retrieved_at=LATER, **identity), destination)
         self.assertEqual(sidecar.read_bytes(), before)
-        self.assertEqual(load_raw_records(self.raw)["bronze"][0]["raw_retrieved_at"], RETRIEVED_AT)
+        self.assertEqual(load_raw_records(self.raw)["bronze"]["raw_retrieved_at"][0], RETRIEVED_AT)
         persist_raw_artifact(staged, destination, self.raw, retrieved_at=LATER + timedelta(days=1), **identity)
         self.assertEqual(sidecar.read_bytes(), before)
 
@@ -533,4 +544,4 @@ class RawProvenanceTests(unittest.TestCase):
         before = load_raw_records(self.raw)["bronze"]
         relocated = self.root / "relocated"
         shutil.copytree(self.raw, relocated)
-        self.assertEqual(load_raw_records(relocated)["bronze"], before)
+        self.assertTrue(load_raw_records(relocated)["bronze"].equals(before))

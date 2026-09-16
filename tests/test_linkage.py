@@ -261,3 +261,26 @@ class LinkageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LinkageBudgetTests(unittest.TestCase):
+    """The pair budget converts an OOM kill into an actionable error."""
+
+    def test_mega_block_exceeding_budget_fails_with_named_blocks(self) -> None:
+        records = [
+            TenderRecord(
+                f"{'T' if position % 2 else 'P'}-{position}",
+                "ted" if position % 2 else "placsp",
+                "Suministro de material",
+                published_date=date(2024, 3, 8),
+            )
+            for position in range(4000)
+        ]
+        # One undated-buyer block: 2000 x 2000 cross-source pairs > budget.
+        with self.assertRaisesRegex(ValueError, "pair budget exceeded"):
+            link_duplicates(records, pair_budget=1_000_000)
+        # Same-source rows can never pair, so a single-source slice is safe.
+        result = link_duplicates(
+            [record for record in records if record.source == "ted"], pair_budget=1_000_000
+        )
+        self.assertEqual(result.stats["candidate_pairs"], 0)

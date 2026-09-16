@@ -66,6 +66,12 @@ def write_parquet(path: Path, frame: pl.DataFrame) -> int:
 
 
 def read_parquet(path: Path) -> pl.DataFrame:
-    """Read a Parquet file into a typed DataFrame."""
+    """Read a Parquet file, or every Parquet part under a dataset directory.
 
+    Spark datasets carry ``.crc`` sidecars next to the data parts, so a
+    directory read must select the Parquet files explicitly.
+    """
+
+    if Path(path).is_dir():
+        return pl.read_parquet(sorted(Path(path).glob("*.parquet")))
     return pl.read_parquet(path)

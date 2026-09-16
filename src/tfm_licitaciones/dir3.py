@@ -153,31 +153,6 @@ DIR3_UNIT_SOURCES = tuple(
 DIR3_SOURCES_BY_SCOPE = {source.scope: source for source in DIR3_UNIT_SOURCES}
 
 
-def _text(value: Any) -> str | None:
-    """Normalize one source cell to a stripped string or ``None``."""
-
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _validate_valid_from(value: str | None) -> str | None:
-    """Validate the official ``dd/mm/yy`` validity start, preserving it verbatim.
-
-    DIR3 publishes two-digit years without an official century-resolution
-    rule, so the canonical dimension keeps the official string instead of
-    inventing a century. Only the published ``dd/mm/yy`` shape is enforced;
-    anything else is an observable rejection.
-    """
-
-    if value is None:
-        return None
-    if _DATE_PATTERN.fullmatch(value) is None:
-        raise ValueError(f"invalid validity start date: {value!r}")
-    return value
-
-
 def _build_opener():
     """Build the cookie-aware opener used for the PAe downloads."""
 
@@ -307,11 +282,16 @@ def fetch_dir3_units(raw_dir: Path, config: dict[str, Any], logger: logging.Logg
     return saved
 
 
-def _normalize_rows(
+def _normalize_frame(
     frame: pl.DataFrame,
     source: Dir3UnitSource,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Validate and map one raw sheet to canonical rows plus observable rejections."""
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Validate and map one raw sheet with native expressions.
+
+    Returns the canonical rows plus located rejections; the rejection reason
+    keeps the documented precedence order. Cell text is normalized exactly
+    like the previous row loop: stripped strings, blank cells as null.
+    """
 
     columns = frame.columns
     code_index = columns.index("C_ID_UD_ORGANICA")
@@ -321,77 +301,61 @@ def _normalize_rows(
             f"Se esperaba una columna de denominación tras C_ID_UD_ORGANICA en {source.official_name}, "
             f"encontrado: {name_column!r}"
         )
-    accepted: list[dict[str, Any]] = []
-    rejected: list[dict[str, Any]] = []
-    raw = frame.select(
-        pl.col("C_ID_UD_ORGANICA"),
-        pl.col(name_column).alias("name"),
-        pl.col("C_ID_NIVEL_ADMON"),
-        pl.col("C_ID_TIPO_ENT_PUBLICA"),
-        pl.col("N_NIVEL_JERARQUICO"),
-        pl.col("C_ID_DEP_UD_SUPERIOR"),
-        pl.col("C_ID_DEP_UD_PRINCIPAL"),
-        pl.col("C_ID_ESTADO"),
-        pl.col("D_VIG_ALTA_OFICIAL"),
-        pl.col("NIF_CIF"),
+
+    def _text(column: str) -> pl.Expr:
+        return pl.col(column).cast(pl.String).str.strip_chars()
+
+    code = _text("C_ID_UD_ORGANICA")
+    name = _text(name_column)
+    nivel = _text("C_ID_NIVEL_ADMON")
+    hierarchy = _text("N_NIVEL_JERARQUICO")
+    parent = _text("C_ID_DEP_UD_SUPERIOR")
+    principal = _text("C_ID_DEP_UD_PRINCIPAL")
+    status = _text("C_ID_ESTADO")
+    valid_from = _text("D_VIG_ALTA_OFICIAL")
+    nif = _text("NIF_CIF")
+    empty = lambda expr: expr.is_null() | (expr == "")  # noqa: E731 - readability
+
+    valid_from_shape = valid_from.str.contains(_DATE_PATTERN.pattern).fill_null(True)
+    reason = (
+        pl.when(empty(code)).then(pl.lit("missing_dir3_code"))
+        .when(~code.str.contains(_CODE_PATTERN.pattern).fill_null(False)).then(pl.lit("invalid_dir3_code_format"))
+        .when(empty(name)).then(pl.lit("missing_name"))
+        .when(empty(status)).then(pl.lit("missing_status"))
+        .when(~status.is_in(_STATUS_VALUES)).then(pl.lit("invalid_status"))
+        .when(nivel.is_null() | (nivel != pl.lit(source.nivel_admin))).then(pl.lit("nivel_admin_mismatch"))
+        .when(empty(hierarchy)).then(pl.lit("missing_hierarchy_level"))
+        .when(~hierarchy.str.contains(_HIERARCHY_PATTERN.pattern).fill_null(False)).then(pl.lit("invalid_hierarchy_level"))
+        .when(empty(parent)).then(pl.lit("missing_parent_dir3_code"))
+        .when(~parent.str.contains(_CODE_PATTERN.pattern).fill_null(False)).then(pl.lit("invalid_parent_dir3_code"))
+        .when(empty(principal)).then(pl.lit("missing_principal_dir3_code"))
+        .when(~principal.str.contains(_CODE_PATTERN.pattern).fill_null(False)).then(pl.lit("invalid_principal_dir3_code"))
+        .when(valid_from.is_not_null() & ~valid_from_shape).then(pl.lit("invalid_valid_from_date"))
+        .otherwise(pl.lit(None, dtype=pl.String))
+        .alias("rejection_reason")
     )
-    for row in raw.iter_rows(named=True):
-        code = _text(row["C_ID_UD_ORGANICA"])
-        reason = None
-        if code is None:
-            reason = "missing_dir3_code"
-        elif not _CODE_PATTERN.fullmatch(code):
-            reason = "invalid_dir3_code_format"
-        if reason is None:
-            name = _text(row["name"])
-            nivel = _text(row["C_ID_NIVEL_ADMON"])
-            hierarchy = _text(row["N_NIVEL_JERARQUICO"])
-            parent = _text(row["C_ID_DEP_UD_SUPERIOR"])
-            principal = _text(row["C_ID_DEP_UD_PRINCIPAL"])
-            status = _text(row["C_ID_ESTADO"])
-            if name is None:
-                reason = "missing_name"
-            elif status is None:
-                reason = "missing_status"
-            elif status not in _STATUS_VALUES:
-                reason = "invalid_status"
-            elif nivel != source.nivel_admin:
-                reason = "nivel_admin_mismatch"
-            elif hierarchy is None:
-                reason = "missing_hierarchy_level"
-            elif not _HIERARCHY_PATTERN.fullmatch(hierarchy):
-                reason = "invalid_hierarchy_level"
-            elif parent is None:
-                reason = "missing_parent_dir3_code"
-            elif not _CODE_PATTERN.fullmatch(parent):
-                reason = "invalid_parent_dir3_code"
-            elif principal is None:
-                reason = "missing_principal_dir3_code"
-            elif not _CODE_PATTERN.fullmatch(principal):
-                reason = "invalid_principal_dir3_code"
-        if reason is not None:
-            rejected.append({"dir3_code": code or "", "rejection_reason": reason})
-            continue
-        try:
-            valid_from = _validate_valid_from(_text(row["D_VIG_ALTA_OFICIAL"]))
-        except ValueError:
-            rejected.append({"dir3_code": code or "", "rejection_reason": "invalid_valid_from_date"})
-            continue
-        nif = _text(row["NIF_CIF"])
-        accepted.append(
-            {
-                "dir3_code": code,
-                "name": name,
-                "administration_scope": source.scope,
-                "public_entity_type": _text(row["C_ID_TIPO_ENT_PUBLICA"]),
-                "hierarchy_level": int(hierarchy),
-                "parent_dir3_code": parent,
-                "principal_dir3_code": principal,
-                "status": status,
-                "official_valid_from_raw": valid_from,
-                "nif_cif": nif.upper() if nif else None,
-            }
+
+    typed = frame.with_columns(reason)
+    accepted = (
+        typed.filter(pl.col("rejection_reason").is_null())
+        .select(
+            dir3_code=code,
+            name=name,
+            administration_scope=pl.lit(source.scope),
+            public_entity_type=_text("C_ID_TIPO_ENT_PUBLICA"),
+            hierarchy_level=hierarchy.cast(pl.Int16, strict=False),
+            parent_dir3_code=parent,
+            principal_dir3_code=principal,
+            status=status,
+            official_valid_from_raw=valid_from,
+            nif_cif=pl.when(empty(nif)).then(pl.lit(None, dtype=pl.String)).otherwise(nif.str.to_uppercase()),
         )
+        .cast(DIR3_UNITS_SCHEMA)
+    )
+    rejected = typed.filter(pl.col("rejection_reason").is_not_null()).select(
+        dir3_code=code.fill_null(""),
+        rejection_reason=pl.col("rejection_reason"),
+    )
     return accepted, rejected
 
 
@@ -402,8 +366,8 @@ def normalize_dir3_units(path: Path, scope: str) -> tuple[pl.DataFrame, list[dic
     if source is None:
         raise ValueError(f"Ámbito DIR3 desconocido: {scope!r}")
     frame = _load_unit_sheet(path)
-    accepted, rejected = _normalize_rows(frame, source)
-    return pl.DataFrame(accepted, schema=DIR3_UNITS_SCHEMA), rejected
+    accepted, rejected = _normalize_frame(frame, source)
+    return accepted, rejected.to_dicts()
 
 
 def build_dir3_units(raw_dir: Path) -> tuple[pl.DataFrame, dict[str, Any]]:
@@ -414,13 +378,13 @@ def build_dir3_units(raw_dir: Path) -> tuple[pl.DataFrame, dict[str, Any]]:
     """
 
     directory = raw_dir / "dir3"
-    accepted_rows: list[dict[str, Any]] = []
+    accepted_frames: list[pl.DataFrame] = []
     rejections: list[dict[str, Any]] = []
     sources_manifest: list[dict[str, Any]] = []
     for source in DIR3_UNIT_SOURCES:
         path = directory / source.filename
         frame, rejected = normalize_dir3_units(path, source.scope)
-        accepted_rows.extend(frame.to_dicts())
+        accepted_frames.append(frame)
         rejections.extend({**row, "administration_scope": source.scope} for row in rejected)
         reasons: dict[str, int] = {}
         for row in rejected:
@@ -438,7 +402,11 @@ def build_dir3_units(raw_dir: Path) -> tuple[pl.DataFrame, dict[str, Any]]:
                 "rejection_reasons": reasons,
             }
         )
-    units = pl.DataFrame(accepted_rows, schema=DIR3_UNITS_SCHEMA).sort("dir3_code")
+    units = (
+        pl.concat(accepted_frames).sort("dir3_code").cast(DIR3_UNITS_SCHEMA)
+        if accepted_frames
+        else pl.DataFrame(schema=DIR3_UNITS_SCHEMA)
+    )
     duplicates = units.group_by("dir3_code").len().filter(pl.col("len") > 1)
     if duplicates.height:
         codes = duplicates.get_column("dir3_code").sort().to_list()[:10]

@@ -18,23 +18,28 @@ Incluye:
 - dimensión de referencia DIR3 de unidades orgánicas por ámbito (AGE, CCAA,
   EELL, Universidades, Otras Instituciones y Justicia);
 - conservación local de los payloads descargados;
-- parsing de JSON, ZIP, Atom y CODICE/XML;
-- Bronze Parquet con procedencia, rechazos localizados y conteos de ingesta;
-- normalización a un `TenderRecord` común;
-- plegado de revisiones y aplicación de tombstones de OpenPLACSP;
-- clasificación tecnológica por reglas y CPV como baseline;
-- un enlace heurístico de avisos y controles de calidad básicos;
-- artefactos de ejecución con conteos y checksums.
+- parsing de JSON, ZIP, Atom y CODICE/XML por lotes acotados (Python);
+- Bronze Parquet con procedencia, columnas tipadas del adaptador, rechazos
+  localizados y conteos de ingesta (ensamblado y métricas en Polars);
+- eventos canónicos `silver/procurement_events.parquet` append-only
+  (PySpark, extra `spark`; revisiones, tombstones, Decimal y UTC);
+- normalización a un `TenderRecord` común con plegado nativo en Polars;
+- clasificación tecnológica por reglas con matching vectorizado y CPV como baseline;
+- un enlace heurístico de avisos (bloqueo nativo, presupuesto de pares con
+  fallo explícito) y controles de calidad básicos;
+- artefactos de ejecución con conteos, checksums y duración por etapa.
 
 El [manifest versionado](data/gold/run_manifest.json) corresponde a una
 ejecución del 2 de septiembre de 2026 sobre 9.905 avisos TED y 129.090 avisos
 OpenPLACSP tras el plegado. Estos datos describen ese corpus concreto; no son
 una estimación del histórico completo.
 
-Bronze utiliza Parquet; Silver y Gold todavía usan JSONL/CSV y ejecución manual.
-La migración hacia ingesta incremental idempotente, Polars en las
-transformaciones, Parquet en las demás capas, nuevas fuentes y Airflow está
-descrita en la [arquitectura](docs/architecture.md). Las limitaciones conocidas
+Bronze utiliza Parquet; la Silver canónica también (`procurement_events.parquet`
+vía PySpark) mientras la vista legada y Gold todavía usan JSONL/CSV y
+ejecución manual. Los motores están asignados por etapa (Python en los
+límites, Polars en transformaciones locales, Spark en la consolidación
+canónica); la ingesta incremental idempotente, nuevas fuentes y Airflow están
+descritos en la [arquitectura](docs/architecture.md). Las limitaciones conocidas
 se documentan en el [contrato de datos](docs/data_contract.md).
 
 ## Ejecución local
@@ -48,6 +53,13 @@ uv run --with-editable . python -m unittest discover -s tests -v
 uv run --with-editable . python -m tfm_licitaciones.cli run \
   --raw-dir tests/fixtures/raw \
   --output-root /tmp/tfm-licitaciones-fixture
+```
+
+La Silver canónica requiere el extra `spark` (PySpark + JVM); sin él, el
+pipeline registra el motor como no disponible y continúa con las demás capas:
+
+```bash
+uv run --locked --extra spark --with-editable . python -m unittest discover -s tests -v
 ```
 
 Las pruebas y el ejemplo anterior trabajan con fixtures locales. La descarga

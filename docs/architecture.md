@@ -19,24 +19,31 @@ presentarse como resultados implementados.
 
 ## 2. Implementación actual
 
-La versión 0.1 ejecuta un proceso batch local mediante una CLI:
+La versión 0.1 ejecuta un proceso batch local mediante una CLI, con los
+motores realmente asignados por etapa:
 
 ```mermaid
 flowchart LR
     TED["TED API<br/>JSON"] --> RAW["Raw local<br/>JSONL"]
     PLACSP["OpenPLACSP<br/>ZIP · Atom · CODICE/XML"] --> RAW
-    RAW --> BRONZE["Bronze<br/>Parquet source-specific + rejects"]
-    BRONZE --> SILVER["Silver<br/>TenderRecord · JSONL"]
-    SILVER --> LINK["Linkage heurístico<br/>comprador · CPV · fecha · TF-IDF"]
-    SILVER --> CLASS["Baseline<br/>keywords + CPV"]
-    LINK --> GOLD["Gold<br/>JSONL · CSV · informes"]
+    RAW -->|"Python (bounded batches)"| BRONZE["Bronze<br/>Parquet source-specific + rejects"]
+    BRONZE -->|"PySpark local"| SILVER["Silver<br/>procurement_events Parquet"]
+    BRONZE -->|"Polars (compat)"| TENDERS["Silver legado<br/>TenderRecord · JSONL"]
+    TENDERS --> LINK["Linkage heurístico<br/>Polars blocking · TF-IDF"]
+    TENDERS --> CLASS["Baseline<br/>Polars vectorizado"]
+    LINK --> GOLD["Gold<br/>Polars · JSONL · CSV · informes"]
     CLASS --> GOLD
 ```
 
 Los adaptadores y parsers están implementados con la biblioteca estándar de
-Python. `run` no accede a la red: descubre los ficheros raw, normaliza los
-registros, pliega actualizaciones, calcula enlace y clasificación, evalúa la
-calidad y escribe las salidas.
+Python y procesan los artefactos por lotes acotados: el corpus nunca se
+materializa como objetos Python. La contabilidad Bronze, el plegado de
+revisiones legado, la clasificación, el linkage, la calidad y los marts Gold
+son operaciones Polars nativas; los eventos canónicos Silver se construyen
+con PySpark sobre el límite Parquet. `run` no accede a la red: descubre los
+ficheros raw, normaliza los registros, calcula eventos canónicos y la vista
+legada, calcula enlace y clasificación, evalúa la calidad y escribe las
+salidas, registrando la duración de cada etapa en el manifest.
 
 Esta base tiene limitaciones conocidas: no mantiene estado de ventanas de
 ingesta, no garantiza la completitud de una descarga, usa el timestamp de
@@ -73,10 +80,10 @@ flowchart TB
     PCM --> RAW2
     CPV --> RAW2
     DIR3 --> RAW2
-    RAW2 --> BRONZE2
-    BRONZE2 -->|"Polars"| SILVER2
-    SILVER2 -->|"Polars"| ENRICH
-    ENRICH -->|"Polars"| GOLD2
+    RAW2 -->|"Python (parse) + Polars (ensamblado)"| BRONZE2
+    BRONZE2 -->|"PySpark"| SILVER2
+    SILVER2 -->|"PySpark"| ENRICH
+    ENRICH -->|"PySpark"| GOLD2
 
     AIRFLOW["Airflow<br/>schedule · backfill · retries · logs"] -.->|orquesta| RAW2
     AIRFLOW -.->|orquesta| BRONZE2
@@ -99,12 +106,12 @@ ejecutarla sin levantar el orquestador.
 | Adaptador OpenPLACSP | Descargar y validar ZIP; parsear Atom y CODICE | Python, `zipfile`, XML, TLS FNMT | Implementado para licitaciones; falta estado incremental |
 | Contratos menores | Incorporar señales de contratación de menor importe | Python y formato oficial por determinar | Planificado |
 | Raw | Conservar bytes y procedencia sin sobrescrituras silenciosas | Sistema de ficheros local, checksum SHA-256 | Parcial |
-| Bronze | Representar el resultado del parsing y sus rechazos | Polars y Parquet | Implementado con métricas por fuente; payload source-specific en JSON string |
-| Silver | Mantener entidades canónicas tipadas | Polars y Parquet | Contrato definido; migración de persistencia planificada |
+| Bronze | Representar el resultado del parsing y sus rechazos | Python (parse acotado por artefacto) + Polars (ensamblado, métricas) y Parquet | Implementado; columnas tipadas del adaptador junto al payload source-specific en JSON string |
+| Silver | Mantener entidades canónicas tipadas | PySpark local sobre Parquet (`silver/procurement_events.parquet`) | Eventos append-only implementados; vista legada `TenderRecord` en JSONL por compatibilidad |
 | Referencias | Resolver CPV y organismos mediante identificadores oficiales | CPV 2008 y DIR3 | CPV disponible; dimensiones planificadas |
-| Linkage | Detectar avisos equivalentes entre fuentes con evidencia | Python/Polars, reglas explicables y similitud textual | Baseline implementado con correcciones pendientes |
+| Linkage | Detectar avisos equivalentes entre fuentes con evidencia | Polars (claves de bloqueo nativas, paseo por bloques acotado en memoria) + TF-IDF Python sobre pares, presupuesto de pares con fallo explícito | Baseline implementado; generación distribuida de candidatos en Spark como siguiente paso |
 | Enrichment semántico | Añadir etiquetas de negocio multilabel auditables | Modelo preentrenado versionado | Planificado |
-| Gold | Publicar productos reproducibles para análisis y feed | Polars y Parquet; CSV solo como export | Baseline JSONL/CSV implementado |
+| Gold | Publicar productos reproducibles para análisis y feed | Polars y Parquet; CSV solo como export | Baseline JSONL/CSV implementado; agregaciones nativas |
 | Orquestación | Programación diaria, backfill, retries y logs | Airflow | Planificado |
 | Aplicación | Demostrar el consumo de productos Gold | Aplicación web ligera | Fuera del núcleo del pipeline |
 
@@ -193,9 +200,18 @@ estimaciones y los diseños futuros se etiquetarán como tales.
 
 ## 10. Decisiones de alcance
 
-- Polars es el motor tabular P0 y Parquet el formato analítico principal.
-- Spark solo se estudiará si una medición del backfill muestra una necesidad o
-  permite plantear un benchmark concreto.
+- Python es el motor de los límites (red, ficheros, XML/CODICE) y Polars el
+  de las transformaciones pequeñas/locales; Parquet es el formato analítico
+  principal.
+- Spark construye la Silver canónica en local (`spark` extra, sin clúster):
+  200k eventos en ~13 s con pico total de 1,4 GB medidos en corpus sintético.
+  Los ejecutores distribuidos solo se estudiarán si el backfill histórico
+  (millones de observaciones) lo exige con medidas.
+- La generación distribuida de candidatos del linkage (self-join con
+  bloques masivos) es el siguiente workload designado para Spark: el paseo
+  por bloques actual es lineal en memoria pero cuadrático en pares, y un
+  presupuesto explícito (`pair_budget`) convierte el OOM en un error
+  accionable.
 - dbt solo tendrá sentido si se incorpora un serving layer SQL con un papel
   claro.
 - No se añaden infraestructura distribuida, Kubernetes, streaming ni un
