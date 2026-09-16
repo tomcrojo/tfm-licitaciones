@@ -124,11 +124,16 @@ class RawProvenanceTests(unittest.TestCase):
         for source in ("ted", "boe"):
             with self.subTest(source=source):
                 raw = self.raw / source
+                # A published correction carries a new version marker (TED
+                # notice number / BOE item id): canonical Silver keeps both
+                # events, the legacy current state uses the latest snapshot.
                 first_row = {**TED, "_source": source} if source == "ted" else {
                     "_source": "boe", "item_id": "B1", "title": "Servicio cloud",
                     "publication_date": "2026-01-01",
                 }
-                second_row = {**first_row, "TI" if source == "ted" else "title": "Corrección cloud"}
+                id_key = "ND" if source == "ted" else "item_id"
+                second_row = {**first_row, id_key: f"{first_row[id_key]}-C",
+                              "TI" if source == "ted" else "title": "Corrección cloud"}
 
                 def retrieve(row, timestamp):
                     # Exercise the real download boundary with a local adapter response.
@@ -144,17 +149,19 @@ class RawProvenanceTests(unittest.TestCase):
                 self.assertLess(second.name, first.name)
                 output = self.root / f"out-{source}"
                 result = run_pipeline(raw_dir=raw, output_root=output)
-                self.assertEqual(result["manifest"]["counts"]["bronze"], 2)
-                self.assertEqual(result["manifest"]["counts"]["silver"], 1)
-                self.assertEqual(result["manifest"]["counts"]["gold"], 1)
+                counts = result["manifest"]["counts"]
+                self.assertEqual(counts["bronze_records"], 2)
+                self.assertEqual(counts["legacy_current_state_records"], 1)
+                self.assertEqual(counts["gold_opportunities"], 1)
                 self.assertEqual(result["manifest"]["ingestion"]["superseded_artifacts"], 1)
                 self.assertEqual(result["manifest"]["ingestion"]["superseded_records"], 1)
                 bronze = read_parquet(output / "bronze/records.parquet")
                 self.assertEqual(set(bronze["raw_retrieved_at"]), {RETRIEVED_AT, LATER})
                 self.assertEqual(set(bronze["raw_sha256"]), {file_sha256(first), file_sha256(second)})
-                silver = json.loads((output / "silver/tenders.jsonl").read_text())
+                canonical = read_parquet(output / "silver/procurement_events.parquet")
+                self.assertEqual(canonical.height, 2)
+                self.assertEqual(canonical["source_event_type"].to_list(), ["notice", "notice"])
                 gold = json.loads((output / "gold/opportunities.jsonl").read_text())
-                self.assertEqual(silver["title"], "Corrección cloud")
                 self.assertEqual(gold["title"], "Corrección cloud")
                 self.assertEqual((first.read_bytes(), provenance_path(first).read_bytes()), original)
                 # Re-retrieving the old bytes does not redate them or revert the view.
@@ -171,12 +178,20 @@ class RawProvenanceTests(unittest.TestCase):
         before = first.read_bytes(), provenance_path(first).read_bytes()
         output = self.root / "out"
         initial = run_pipeline(raw_dir=self.raw, output_root=output)
-        self.assertEqual(initial["manifest"]["counts"]["silver"], 0)
-        second = self.download_zip(zip_bytes([("feed.atom", entry.replace(b"cloud", b"cloud corregido"))]), LATER)
+        # Legacy view removes the tombstoned notice; canonical Silver keeps
+        # both the notice snapshot and the deletion control as history.
+        self.assertEqual(initial["manifest"]["counts"]["legacy_current_state_records"], 0)
+        self.assertEqual(initial["manifest"]["counts"]["silver_procurement_events"], 2)
+        corrected = entry.replace(b"cloud", b"cloud corregido").replace(
+            b"2026-01-01T00:00:00Z", b"2026-01-02T00:00:00Z"
+        )
+        second = self.download_zip(zip_bytes([("feed.atom", corrected)]), LATER)
         result = run_pipeline(raw_dir=self.raw, output_root=output)
-        self.assertEqual(result["manifest"]["counts"]["bronze"], 2)
-        self.assertEqual(result["manifest"]["counts"]["silver"], 1)
-        self.assertEqual(result["manifest"]["counts"]["gold"], 1)
+        counts = result["manifest"]["counts"]
+        self.assertEqual(counts["bronze_records"], 2)
+        self.assertEqual(counts["legacy_current_state_records"], 1)
+        self.assertEqual(counts["gold_opportunities"], 1)
+        self.assertEqual(counts["silver_procurement_events"], 3)
         self.assertEqual(result["opportunities"][0].tender.title, "Servicio cloud corregido")
         self.assertEqual(result["manifest"]["ingestion"]["tombstone_ids"], 0)
         self.assertEqual(result["manifest"]["ingestion"]["tombstoned_removed"], 0)
@@ -186,6 +201,9 @@ class RawProvenanceTests(unittest.TestCase):
         self.assertEqual(control["raw_retrieved_at"], RETRIEVED_AT)
         self.assertEqual(control["source_record_id"], "https://example.invalid/1")
         self.assertNotEqual(control["raw_sha256"], file_sha256(second))
+        # The tombstone event survives even though the corrected snapshot omits it.
+        events = read_parquet(output / "silver/procurement_events.parquet")
+        self.assertIn("placsp:tombstone:https://example.invalid/1", events["event_id"].to_list())
         self.assertEqual((first.read_bytes(), provenance_path(first).read_bytes()), before)
 
     def test_latest_snapshot_needs_unambiguous_retrieval_order(self) -> None:

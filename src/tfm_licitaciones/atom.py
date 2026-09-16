@@ -213,8 +213,12 @@ def _parse_entry(entry: ElementTree.Element) -> dict[str, Any]:
     ):
         node = entry.find(xpath, CODICE_NS)
         if node is not None and (node.text or "").strip():
-            payload[key] = _parse_amount(node.text)
+            text = node.text.strip()
+            payload[key] = _parse_amount(text)
             payload[f"{key}_currency"] = node.attrib.get("currencyID")
+            # Retain the published numeric text so Silver can build an exact
+            # Decimal instead of reusing the legacy float conversion.
+            payload[f"{key}_raw"] = text
     return payload
 
 

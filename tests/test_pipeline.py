@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tfm_licitaciones.models import TenderRecord
 from tfm_licitaciones.pipeline import fold_latest_updates, run_pipeline
+from tfm_licitaciones.raw_provenance import RawProvenanceError
 from raw_fixtures import evidence_for_fixture
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -61,7 +62,8 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(result["quality"]["passed"])
             self.assertTrue((root / "data" / "bronze" / "records.parquet").exists())
             self.assertTrue((root / "data" / "bronze" / "rejections.parquet").exists())
-            self.assertTrue((root / "data" / "silver" / "tenders.jsonl").exists())
+            self.assertTrue((root / "data" / "silver" / "procurement_events.parquet").exists())
+            self.assertFalse((root / "data" / "silver" / "tenders.jsonl").exists())
             self.assertTrue((root / "data" / "gold" / "opportunities.csv").exists())
             self.assertTrue((root / "data" / "gold" / "quality_report.json").exists())
             self.assertTrue((root / "data" / "gold" / "classifier_evaluation.json").exists())
@@ -97,9 +99,11 @@ class PipelineTests(unittest.TestCase):
             result = run_pipeline(raw_dir=raw, output_root=root / "data")
             counts = result["manifest"]["counts"]
             # 3 raw entries (1 TED + 2 PLACSP), tombstone keeps both PLACSP alive.
-            self.assertEqual(counts["bronze"], 3)
-            self.assertEqual(counts["silver"], 3)
-            self.assertEqual(counts["gold"], 3)
+            self.assertEqual(counts["bronze_records"], 3)
+            self.assertEqual(counts["legacy_current_state_records"], 3)
+            self.assertEqual(counts["gold_opportunities"], 3)
+            # Canonical Silver preserves history: the tombstone is also an event.
+            self.assertEqual(counts["silver_procurement_events"], 4)
             linkage = result["manifest"]["linkage"]
             self.assertGreaterEqual(linkage["linked_pairs"], 1)
             self.assertIn("evaluated_pairs", linkage)
@@ -115,6 +119,36 @@ class PipelineTests(unittest.TestCase):
             report = result["quality"]
             self.assertIn("duplicate_share", report["metrics"])
             self.assertTrue(report["passed"])
+
+    def test_failed_run_retires_preexisting_legacy_tenders_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = root / "raw" / "ted"
+            raw.mkdir(parents=True)
+            sample = raw / "sample.jsonl"
+            sample.write_text(
+                json.dumps(
+                    {
+                        "_source": "ted",
+                        "ND": "1",
+                        "PD": "2024-01-01Z",
+                        "TI": {"spa": "Servicio cloud"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            evidence_for_fixture(raw.parent.parent, sample, "ted")
+            silver = root / "data" / "silver"
+            silver.mkdir(parents=True)
+            stale = silver / "tenders.jsonl"
+            stale.write_text("{}\n", encoding="utf-8")
+            # Corrupt the payload after its provenance sidecar was recorded so
+            # the run fails during early Raw provenance validation.
+            sample.write_text("{}\n", encoding="utf-8")
+            with self.assertRaises(RawProvenanceError):
+                run_pipeline(raw_dir=raw.parent.parent, output_root=root / "data")
+            self.assertFalse(stale.exists())
 
 
 if __name__ == "__main__":
