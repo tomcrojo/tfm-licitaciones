@@ -36,10 +36,17 @@ nombres de campos históricos del manifest 0.1 y no es un ejemplo del nuevo
 contrato de manifest en ejecución; los nombres vigentes están documentados en
 el [contrato de datos](docs/data_contract.md).
 
-Bronze y Silver canónico utilizan Parquet; Gold todavía usa JSONL/CSV y
-ejecución manual. La migración hacia ingesta incremental idempotente,
-Polars en las transformaciones restantes, Parquet en Gold, nuevas fuentes y
-Airflow está descrita en la [arquitectura](docs/architecture.md). Las
+Bronze y Silver canónico utilizan hoy Parquet con un baseline python-row
+sobre frontera Polars/Parquet (frames Polars de entrada/salida,
+transformación por filas en Python); Gold todavía usa JSONL/CSV y
+ejecución manual. El objetivo asigna Python al
+parsing y control, Polars a lotes acotados y dimensiones locales; el motor
+de Silver canónico se decidirá por benchmark (candidatos: Polars nativo y
+PySpark) y el downstream distribuido queda en principio para PySpark, con
+Parquet entre etapas y Airflow como plano de control. La migración hacia ingesta incremental idempotente,
+Parquet en Gold, nuevas fuentes y Airflow está descrita en la
+[arquitectura](docs/architecture.md). El [benchmark](docs/benchmarks.md)
+fija el protocolo de comparación; aún no existen resultados medidos. Las
 limitaciones conocidas se documentan en el [contrato de datos](docs/data_contract.md).
 
 ## Ejecución local
@@ -91,6 +98,7 @@ docs/                         arquitectura, contrato y operación
 Documentación principal:
 
 - [arquitectura técnica](docs/architecture.md);
+- [benchmark Bronze→Silver y paridad](docs/benchmarks.md);
 - [contrato de datos actual](docs/data_contract.md);
 - [guía de ejecución](docs/run.md);
 - [evolución desde los prototipos](docs/prototype_migration.md);
