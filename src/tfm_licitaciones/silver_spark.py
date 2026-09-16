@@ -81,6 +81,12 @@ INSTALL_HINT = (
     "--with-editable . python -m tfm_licitaciones.bench_engines ..."
 )
 APP_NAME = "silver-engine-experiment"
+# Parquet codec pinned to the Polars default so the engine-comparison write
+# boundary is apples-to-apples: Spark's default is snappy while Polars
+# writes zstd by default, which made Spark outputs ~5x larger on the same
+# logical content (small profile: 698 kB vs 145 kB). Logical parity is
+# codec-independent; the pin only removes compression as a confound.
+PARQUET_CODEC = "zstd"
 
 _CANONICAL_ORDER = (
     "event_id", "procedure_id", "source", "source_event_type", "buyer_id",
@@ -672,6 +678,10 @@ def build_spark_events(session: Any, records_glob: str, tombstones_glob: str) ->
 
 
 def write_silver_spark(frame: Any, output_dir: str) -> None:
-    """Write the Silver DataFrame as sharded Parquet (never ``coalesce(1)``)."""
+    """Write the Silver DataFrame as sharded Parquet (never ``coalesce(1)``).
 
-    frame.write.mode("overwrite").parquet(output_dir)
+    Compression is pinned to :data:`PARQUET_CODEC` (zstd, the Polars
+    default) so Spark and Polars outputs are comparable byte-wise.
+    """
+
+    frame.write.mode("overwrite").option("compression", PARQUET_CODEC).parquet(output_dir)

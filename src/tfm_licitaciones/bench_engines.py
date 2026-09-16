@@ -48,6 +48,15 @@ excluded):
   engines) while ``artifact_bytes``/``artifact_files`` cover the whole
   written Silver artifact (for Spark this adds ``_SUCCESS``/checksums);
   ``coalesce(1)`` is never used;
+- every engine writes Silver Parquet with the same pinned ``zstd`` codec
+  (``PARQUET_CODEC``, matching ``silver_spark.PARQUET_CODEC``): Spark's
+  default would be snappy while Polars defaults to zstd, a ~5x
+  output-size confound on identical logical content;
+- Spark driver memory is set reproducibly via ``--spark-driver-memory``
+  (applied as ``SPARK_DRIVER_MEMORY`` in the fresh child before JVM boot;
+  setting ``spark.driver.memory`` after boot would not resize the heap)
+  and the metrics record both the requested value and the actual JVM heap
+  (``Runtime.getRuntime().maxMemory()``);
 - parity of every engine against the ``python-row`` reference is computed
   with :mod:`tfm_licitaciones.silver_parity` and stored in the metrics.
 
@@ -81,6 +90,13 @@ from .bench_silver import PROFILES, dataset_profile, write_bronze_parts
 from .silver_parity import compare_silver_frames
 
 UTC = timezone.utc
+
+# Write-boundary codec pin: Polars writes zstd by default while Spark
+# defaults to snappy, which made Spark outputs ~5x larger on identical
+# logical content. Every engine writes zstd explicitly so compression is
+# not a confound; the value must match silver_spark.PARQUET_CODEC
+# (locked by test_silver_engines).
+PARQUET_CODEC = "zstd"
 
 ENGINE_ORDER = ("python-row", "polars-native", "spark-native")
 ENGINE_DETAILS = {
@@ -326,7 +342,12 @@ def _engine_worker(payload: dict[str, Any], queue: Any) -> None:
     session creation. ``transform_s`` covers the identical
     read -> transform -> write boundary for every engine. Output rows are
     never counted here (the parent counts the written Parquet). Spark
-    session stop and cache release are post-timer cleanup.
+    session stop and cache release are post-timer cleanup. The Spark child
+    honors ``payload["spark_driver_memory"]`` via ``SPARK_DRIVER_MEMORY``
+    set before session creation (the only reproducible way to size the
+    local-mode heap: ``spark.driver.memory`` set after JVM boot only
+    records a string) and reports the actual heap
+    (``Runtime.getRuntime().maxMemory()``), never just the config value.
     """
 
     try:
@@ -347,11 +368,12 @@ def _engine_worker(payload: dict[str, Any], queue: Any) -> None:
             )
             output = Path(payload["silver_path"])
             output.parent.mkdir(parents=True, exist_ok=True)
-            events.write_parquet(output)
+            events.write_parquet(output, compression=PARQUET_CODEC)
             report: dict[str, Any] = {
                 "ok": True,
                 "engine_init_s": engine_init_s,
                 "transform_s": _time.perf_counter() - transform_started,
+                "parquet_codec": PARQUET_CODEC,
             }
         elif engine == "polars-native":
             import polars as _pl
@@ -363,16 +385,25 @@ def _engine_worker(payload: dict[str, Any], queue: Any) -> None:
             events = build_from_parquet(payload["records_glob"], payload["tombstones_glob"])
             output = Path(payload["silver_path"])
             output.parent.mkdir(parents=True, exist_ok=True)
-            events.write_parquet(output)
+            events.write_parquet(output, compression=PARQUET_CODEC)
             report = {
                 "ok": True,
                 "engine_init_s": engine_init_s,
                 "transform_s": _time.perf_counter() - transform_started,
+                "parquet_codec": PARQUET_CODEC,
             }
         elif engine == "spark-native":
+            import os as _os
+
+            if payload.get("spark_driver_memory"):
+                # Must precede JVM boot in this fresh child; setting
+                # spark.driver.memory after getOrCreate() would not resize
+                # the heap.
+                _os.environ["SPARK_DRIVER_MEMORY"] = payload["spark_driver_memory"]
             try:
                 from .silver_spark import (
                     CACHE_STRATEGY,
+                    PARQUET_CODEC as _SPARK_CODEC,
                     build_session,
                     build_spark_events,
                     session_config_snapshot,
@@ -389,6 +420,12 @@ def _engine_worker(payload: dict[str, Any], queue: Any) -> None:
             spark_conf = session_config_snapshot(session)
             spark_version = session.version
             pyspark_version = pyspark.__version__
+            try:
+                jvm_heap_bytes = int(
+                    session._jvm.java.lang.Runtime.getRuntime().maxMemory()  # type: ignore[attr-defined]
+                )
+            except Exception:  # noqa: BLE001 - heap is diagnostic, never fatal
+                jvm_heap_bytes = None
             engine_init_s = _time.perf_counter() - init_started
             transform_started = _time.perf_counter()
             frame, cached = build_spark_events(
@@ -406,6 +443,8 @@ def _engine_worker(payload: dict[str, Any], queue: Any) -> None:
                 "pyspark_version": pyspark_version,
                 "spark_version": spark_version,
                 "cache_strategy": CACHE_STRATEGY,
+                "parquet_codec": _SPARK_CODEC,
+                "jvm_max_heap_bytes": jvm_heap_bytes,
             }
         else:
             raise ValueError(f"Unknown engine {engine!r}")
@@ -423,6 +462,7 @@ def measure_engine(
     timeout_s: int = 3600,
     sample_interval_s: float = 0.02,
     spark_master: str | None = None,
+    spark_driver_memory: str | None = None,
 ) -> dict[str, Any]:
     """Measure one engine stage in an isolated child with tree-RSS sampling.
 
@@ -441,6 +481,7 @@ def measure_engine(
         "tombstones_glob": tombstones_glob,
         "silver_path": str(silver_path),
         "spark_master": spark_master or f"local[{os.cpu_count() or 2}]",
+        "spark_driver_memory": spark_driver_memory,
     }
     process = context.Process(target=_engine_worker, args=(payload, queue))
     started = time.perf_counter()
@@ -489,6 +530,7 @@ def run_comparison(
     work_dir: str | Path | None = None,
     engines: tuple[str, ...] | list[str] = ENGINE_ORDER,
     spark_master: str | None = None,
+    spark_driver_memory: str | None = None,
     sample_interval_s: float = 0.02,
 ) -> dict[str, Any]:
     """Run the offline engine comparison on one retained synthetic dataset.
@@ -528,7 +570,8 @@ def run_comparison(
                 try:
                     measure_engine(
                         engine, records_glob, tombstones_glob, silver_path,
-                        spark_master=spark_master, sample_interval_s=sample_interval_s,
+                        spark_master=spark_master, spark_driver_memory=spark_driver_memory,
+                        sample_interval_s=sample_interval_s,
                     )
                 except ValueError as exc:
                     failures[engine] = str(exc)
@@ -550,7 +593,8 @@ def run_comparison(
             silver_path = dataset_dir / f"silver-{engine}" / "procurement_events.parquet"
             report = measure_engine(
                 engine, records_glob, tombstones_glob, silver_path,
-                spark_master=spark_master, sample_interval_s=sample_interval_s,
+                spark_master=spark_master, spark_driver_memory=spark_driver_memory,
+                sample_interval_s=sample_interval_s,
             )
             parquet_bytes, parquet_files = output_parquet_usage(silver_path)
             artifact_bytes, artifact_files = output_disk_usage(silver_path)
@@ -565,9 +609,13 @@ def run_comparison(
                 versions["java_version"] = java_version()
                 extra_conf["spark_conf"] = report.pop("spark_conf")
                 extra_conf["spark_master"] = spark_master or f"local[{os.cpu_count() or 2}]"
+                extra_conf["spark_driver_memory"] = spark_driver_memory
+                extra_conf["jvm_max_heap_bytes"] = report.pop("jvm_max_heap_bytes", None)
                 extra_conf["cache_strategy"] = report.pop("cache_strategy")
+                extra_conf["parquet_codec"] = report.pop("parquet_codec")
             else:
                 extra_conf["cache_strategy"] = "not applicable (eager in-memory frame)"
+                extra_conf["parquet_codec"] = report.pop("parquet_codec")
             engine_metrics[engine] = {
                 "implementation": engine,
                 "implementation_detail": ENGINE_DETAILS[engine],
@@ -688,6 +736,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Spark master URL (default local[<cpu_count>])",
     )
     parser.add_argument(
+        "--spark-driver-memory", default=None,
+        help="Spark driver memory set via SPARK_DRIVER_MEMORY in the fresh "
+        "measured child before JVM boot (e.g. 8g); recorded together with "
+        "the actual JVM heap. Equivalent to exporting SPARK_DRIVER_MEMORY.",
+    )
+    parser.add_argument(
         "--sample-interval-ms", default=20.0, type=float,
         help="parent RSS polling interval in milliseconds",
     )
@@ -703,6 +757,7 @@ def main(argv: list[str] | None = None) -> int:
         output=args.output, work_dir=args.work_dir,
         engines=tuple(part for part in args.engines.split(",") if part),
         spark_master=args.spark_master,
+        spark_driver_memory=args.spark_driver_memory,
         sample_interval_s=args.sample_interval_ms / 1000.0,
     )
     print(json.dumps(metrics, ensure_ascii=False, indent=2))

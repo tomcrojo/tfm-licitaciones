@@ -220,7 +220,15 @@ hace `unpersist`. Se registran filas entrada/salida, `parquet_bytes`/
 `parquet_files` (solo `*.parquet`, comparable) junto a `artifact_bytes`/
 `artifact_files` (artefacto completo: en Spark añade `_SUCCESS`/CRC),
 versiones, configuración Spark, hardware y paridad contra `python-row` con
-`silver_parity.py`. Los timestamps Spark se leen re-etiquetando UTC sin
+`silver_parity.py`. Los tres motores escriben el Silver Parquet con el
+mismo codec `zstd` fijado (`PARQUET_CODEC` en `bench_engines.py` y
+`silver_spark.py`): el defecto Spark es snappy y el de Polars zstd, y sin
+el pin las salidas Spark eran ~5× mayores sobre contenido idéntico. La
+memoria del driver Spark se fija de forma reproducible con
+`--spark-driver-memory` (aplicado como `SPARK_DRIVER_MEMORY` en el hijo
+fresco antes del arranque de la JVM; fijar `spark.driver.memory` después
+no redimensiona el heap) y las métricas registran tanto el valor pedido
+como el heap real (`Runtime.getRuntime().maxMemory()`). Los timestamps Spark se leen re-etiquetando UTC sin
 desplazar valores (normalización de interop documentada en el runner).
 El orden de `array_distinct` se asume SOLO en el pin `pyspark==4.0.1`,
 fijado por prueba unitaria de orden más paridad completa en cada
@@ -247,4 +255,8 @@ Resultados autorizados: ver
 que contiene los resultados corregidos v2 (small/medium/large del
 2026-09-16) y explica los conteos de repetición y las limitaciones. La
 tabla tiny pre-optimización se ha retirado para no conservar números v1
-como evidencia final.
+como evidencia final. La
+[auditoría adversarial del benchmark Spark](experiments/silver-engine-audit-2026-09-16.md)
+responde pregunta por pregunta (shuffle, particiones, AQE, acciones, UDFs,
+JSON, sorts, codec, heap), fija codec `zstd` común y memoria driver
+reproducible, y confirma el resultado con reruns antes/después.

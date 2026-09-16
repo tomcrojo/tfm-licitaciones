@@ -18,6 +18,7 @@ from pathlib import Path
 import polars as pl
 
 from tfm_licitaciones.bench_engines import (
+    PARQUET_CODEC as BENCH_PARQUET_CODEC,
     output_disk_usage,
     output_parquet_usage,
     read_spark_silver,
@@ -37,6 +38,7 @@ from tfm_licitaciones.silver_polars import (
 )
 from tfm_licitaciones.silver_spark import CONTRACT_SCOPE as SPARK_SCOPE
 from tfm_licitaciones.silver_spark import INSTALL_HINT, SPARK_VERSION_PIN
+from tfm_licitaciones.silver_spark import PARQUET_CODEC as SPARK_PARQUET_CODEC
 
 SRC = Path(__file__).parent.parent / "src" / "tfm_licitaciones"
 
@@ -231,6 +233,7 @@ class SparkEngineTests(unittest.TestCase):
         from tfm_licitaciones.silver_spark import (
             build_spark_events,
             unpersist_frames,
+            write_silver_spark,
         )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -241,7 +244,7 @@ class SparkEngineTests(unittest.TestCase):
             try:
                 frame, cached = build_spark_events(session, records_glob, tombstones_glob)
                 out = Path(tmp) / "silver-spark"
-                frame.write.mode("overwrite").parquet(str(out))
+                write_silver_spark(frame, str(out))
                 unpersist_frames(cached)
             finally:
                 session.stop()
@@ -297,7 +300,11 @@ class SparkEngineTests(unittest.TestCase):
     def test_success_path_never_collects_to_the_driver(self) -> None:
         from pyspark.sql.classic.dataframe import DataFrame
 
-        from tfm_licitaciones.silver_spark import build_spark_events, unpersist_frames
+        from tfm_licitaciones.silver_spark import (
+            build_spark_events,
+            unpersist_frames,
+            write_silver_spark,
+        )
 
         def _forbidden(name: str):
             def _raise(*args: object, **kwargs: object) -> object:
@@ -318,7 +325,7 @@ class SparkEngineTests(unittest.TestCase):
                     str(Path(tmp) / "dataset" / "tombstones" / "part-*.parquet"),
                 )
                 out = Path(tmp) / "silver-spark"
-                frame.write.mode("overwrite").parquet(str(out))
+                write_silver_spark(frame, str(out))
                 unpersist_frames(cached)
             finally:
                 for method, original in originals.items():
@@ -328,9 +335,66 @@ class SparkEngineTests(unittest.TestCase):
             # post-write recomputation of the lazy plan.
             self.assertEqual(read_spark_silver(out).height, 274)
 
+    def test_spark_write_uses_pinned_zstd_codec(self) -> None:
+        from tfm_licitaciones.silver_spark import (
+            build_spark_events,
+            unpersist_frames,
+            write_silver_spark,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            write_bronze_parts(Path(tmp) / "dataset", seed=7, **dataset_profile("tiny"))
+            session = self._session()
+            try:
+                frame, cached = build_spark_events(
+                    session,
+                    str(Path(tmp) / "dataset" / "records" / "part-*.parquet"),
+                    str(Path(tmp) / "dataset" / "tombstones" / "part-*.parquet"),
+                )
+                out = Path(tmp) / "silver-spark"
+                write_silver_spark(frame, str(out))
+                unpersist_frames(cached)
+            finally:
+                session.stop()
+            # Spark embeds the codec in the file name: snappy here would
+            # mean the write-boundary pin regressed.
+            self.assertTrue(list(out.glob("*.zstd.parquet")), list(out.iterdir()))
+            self.assertFalse(list(out.glob("*.snappy.parquet")))
+
+    def test_tiny_comparison_records_codec_and_heap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            metrics = run_comparison(
+                "tiny", seed=7, work_dir=Path(tmp) / "work",
+                engines=("python-row", "spark-native"),
+            )
+        report = metrics["engines"]["spark-native"]
+        self.assertTrue(
+            metrics["parity"]["per_engine"]["spark-native"]["parity_ok"]
+        )
+        self.assertEqual(report["parquet_codec"], "zstd")
+        self.assertIsNone(report["spark_driver_memory"])
+        self.assertGreater(report["jvm_max_heap_bytes"], 0)
+        self.assertEqual(report["outputs"]["silver_events"], 274)
+
 
 class RunnerHelperTests(unittest.TestCase):
     """Offline checks for the comparison runner that need no engine run."""
+
+    def test_write_boundary_codec_is_pinned_identically(self) -> None:
+        # Spark defaults to snappy while Polars defaults to zstd: without
+        # the pin, Spark outputs were ~5x larger on identical content.
+        self.assertEqual(SPARK_PARQUET_CODEC, "zstd")
+        self.assertEqual(BENCH_PARQUET_CODEC, SPARK_PARQUET_CODEC)
+
+    def test_cli_exposes_reproducible_spark_driver_memory(self) -> None:
+        from tfm_licitaciones.bench_engines import build_parser
+
+        args = build_parser().parse_args(["--profile", "tiny"])
+        self.assertIsNone(args.spark_driver_memory)
+        args = build_parser().parse_args(
+            ["--profile", "tiny", "--spark-driver-memory", "8g"]
+        )
+        self.assertEqual(args.spark_driver_memory, "8g")
 
     def test_output_disk_usage_reports_parquet_and_artifact_totals(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -360,8 +424,7 @@ class RunnerHelperTests(unittest.TestCase):
             restored = read_spark_silver(out)
         assert_silver_parity(restored, reference)
 
-    def test_tiny_comparison_without_spark(self) -> None:
-        # Focused runner validation without the Spark engine: two isolated
+    def test_tiny_comparison_without_spark(self) -> None:        # Focused runner validation without the Spark engine: two isolated
         # children, same retained dataset, parity against python-row.
         with tempfile.TemporaryDirectory() as tmp:
             metrics = run_comparison(
@@ -376,6 +439,7 @@ class RunnerHelperTests(unittest.TestCase):
             self.assertTrue(parity["parity_ok"], parity["differences"])
             report = metrics["engines"][engine]
             self.assertEqual(report["outputs"]["silver_events"], 274)
+            self.assertEqual(report["parquet_codec"], "zstd")
             self.assertGreaterEqual(report["timing_s"]["engine_init_s"], 0)
             self.assertGreater(report["timing_s"]["transform_s"], 0)
             self.assertGreaterEqual(report["timing_s"]["wall_s"], report["timing_s"]["transform_s"])
