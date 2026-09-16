@@ -1,0 +1,207 @@
+{
+  "benchmark": "bronze-parquet-to-silver-parquet-engines",
+  "contract_scope": "experiment-only comparison on the TED/PLACSP synthetic Bronze contract from tfm_licitaciones.bench_silver; native candidates fail explicitly outside that contract and are not production replacements",
+  "profile": "small",
+  "profile_params": {
+    "n_ted": 10000,
+    "n_placsp": 10000,
+    "rows_per_part": 5000
+  },
+  "seed": 7,
+  "with_collision": false,
+  "dataset": {
+    "dataset_dir": "/tmp/opencode/engines-small",
+    "bronze_records": 24862,
+    "bronze_tombstones": 501,
+    "input_rows": 25363,
+    "record_parts": 5,
+    "tombstone_parts": 1,
+    "layout": {
+      "records": "records/part-*.parquet",
+      "tombstones": "tombstones/part-*.parquet",
+      "records_schema": {
+        "source": "String",
+        "source_file": "String",
+        "source_member": "String",
+        "source_member_index": "UInt32",
+        "record_locator": "String",
+        "source_record_id": "String",
+        "raw_sha256": "String",
+        "raw_retrieved_at": "Datetime(time_unit='us', time_zone='UTC')",
+        "payload_json": "String"
+      },
+      "tombstones_schema": {
+        "source": "String",
+        "source_file": "String",
+        "source_member": "String",
+        "source_member_index": "UInt32",
+        "record_locator": "String",
+        "source_record_id": "String",
+        "raw_sha256": "String",
+        "raw_retrieved_at": "Datetime(time_unit='us', time_zone='UTC')"
+      }
+    }
+  },
+  "stage": "bronze-parquet-read -> canonical-transform -> silver-parquet-write, run in an isolated spawn child process per engine on the same retained dataset; dataset generation is timed separately and excluded",
+  "timing_s": {
+    "generation_s": 0.46759997215121984
+  },
+  "engines": {
+    "python-row": {
+      "implementation": "python-row",
+      "implementation_detail": "per-row Python over a Polars/Parquet frame boundary: iter_rows, json.loads per row, ProcurementEvent allocation, dict grouping with dedup/collision comparison, Python sort",
+      "timing_s": {
+        "engine_init_s": 0.0003275112248957157,
+        "transform_s": 0.6166623141616583,
+        "wall_s": 0.7903692568652332
+      },
+      "throughput_rows_per_s": 41129.47948583587,
+      "throughput_events_per_s": 36493.23054643577,
+      "peak_tree_rss_bytes": 360960000,
+      "peak_tree_rss_scope": "parent-sampled peak over time of summed RSS across the measured child process tree (child plus all descendants, including the Spark JVM): excludes the parent process and dataset generation, includes child interpreter import, engine init and write; short spikes between polls can be missed",
+      "rss_method": "procfs",
+      "rss_samples": 25,
+      "rss_interval_s": 0.02,
+      "inputs": {
+        "input_rows": 25363
+      },
+      "outputs": {
+        "silver_path": "/tmp/opencode/engines-small/silver-python-row/procurement_events.parquet",
+        "silver_events": 22504,
+        "parquet_bytes": 144718,
+        "parquet_files": 1,
+        "artifact_bytes": 144718,
+        "artifact_files": 1
+      },
+      "versions": {
+        "python_version": "3.11.16",
+        "polars_version": "1.44.2"
+      },
+      "cache_strategy": "not applicable (eager in-memory frame)",
+      "parquet_codec": "zstd"
+    },
+    "polars-native": {
+      "implementation": "polars-native",
+      "implementation_detail": "native Polars expressions/joins/grouping over the Polars/Parquet boundary; no per-row Python (see silver_polars.CONTRACT_SCOPE)",
+      "timing_s": {
+        "engine_init_s": 0.00023235101252794266,
+        "transform_s": 0.25434959633275867,
+        "wall_s": 0.41971233393996954
+      },
+      "throughput_rows_per_s": 99717.08375278204,
+      "throughput_events_per_s": 88476.64916502808,
+      "peak_tree_rss_bytes": 302309376,
+      "peak_tree_rss_scope": "parent-sampled peak over time of summed RSS across the measured child process tree (child plus all descendants, including the Spark JVM): excludes the parent process and dataset generation, includes child interpreter import, engine init and write; short spikes between polls can be missed",
+      "rss_method": "procfs",
+      "rss_samples": 14,
+      "rss_interval_s": 0.02,
+      "inputs": {
+        "input_rows": 25363
+      },
+      "outputs": {
+        "silver_path": "/tmp/opencode/engines-small/silver-polars-native/procurement_events.parquet",
+        "silver_events": 22504,
+        "parquet_bytes": 144718,
+        "parquet_files": 1,
+        "artifact_bytes": 144718,
+        "artifact_files": 1
+      },
+      "versions": {
+        "python_version": "3.11.16",
+        "polars_version": "1.44.2"
+      },
+      "cache_strategy": "not applicable (eager in-memory frame)",
+      "parquet_codec": "zstd"
+    },
+    "spark-native": {
+      "implementation": "spark-native",
+      "implementation_detail": "native Spark SQL DataFrame execution, built-in functions/windows only; no UDF, no driver canonicalization, no coalesce(1); success path fetches zero rows, failure paths fetch at most 5 ids; MEMORY_AND_DISK persist of branch and combined frames, unpersisted after write (see silver_spark.CACHE_STRATEGY)",
+      "timing_s": {
+        "engine_init_s": 3.473431614227593,
+        "transform_s": 10.010012545157224,
+        "wall_s": 14.177459094207734
+      },
+      "throughput_rows_per_s": 2533.7630582961106,
+      "throughput_events_per_s": 2248.149030631064,
+      "peak_tree_rss_bytes": 1335799808,
+      "peak_tree_rss_scope": "parent-sampled peak over time of summed RSS across the measured child process tree (child plus all descendants, including the Spark JVM): excludes the parent process and dataset generation, includes child interpreter import, engine init and write; short spikes between polls can be missed",
+      "rss_method": "procfs",
+      "rss_samples": 438,
+      "rss_interval_s": 0.02,
+      "inputs": {
+        "input_rows": 25363
+      },
+      "outputs": {
+        "silver_path": "/tmp/opencode/engines-small/silver-spark-native/procurement_events.parquet",
+        "silver_events": 22504,
+        "parquet_bytes": 189536,
+        "parquet_files": 1,
+        "artifact_bytes": 191036,
+        "artifact_files": 4
+      },
+      "versions": {
+        "python_version": "3.11.16",
+        "polars_version": "1.44.2",
+        "pyspark_version": "4.0.1",
+        "spark_version": "4.0.1",
+        "java_version": "openjdk version \"17.0.19\" 2026-04-21"
+      },
+      "spark_conf": {
+        "spark.master": "local[16]",
+        "spark.app.name": "silver-engine-experiment",
+        "spark.sql.session.timeZone": "UTC",
+        "spark.sql.shuffle.partitions": "200",
+        "spark.default.parallelism": "<unset>",
+        "spark.driver.memory": "<unset>",
+        "spark.executor.memory": "<unset>",
+        "spark.executor.cores": "<unset>",
+        "spark.executor.instances": "<unset>",
+        "spark.cores.max": "<unset>",
+        "spark.eventLog.enabled": "<unset>",
+        "spark.eventLog.dir": "<unset>",
+        "spark.sql.adaptive.enabled": "true",
+        "spark.sql.ansi.enabled": "false",
+        "spark.sql.parquet.writeLegacyFormat": "false"
+      },
+      "spark_master": "local[16]",
+      "spark_driver_memory": null,
+      "jvm_max_heap_bytes": 1073741824,
+      "cache_strategy": "MEMORY_AND_DISK persist of the per-branch native frames (validation flags retained) plus the combined union frame; the valid path parses each Bronze row once and validation/collision/window/write scan cache; all persisted frames are unpersisted after the write",
+      "parquet_codec": "zstd",
+      "spark_executor_memory": null,
+      "spark_executor_cores": null,
+      "spark_executor_instances": null,
+      "application_id": "local-1789582103675",
+      "executors_actual": null,
+      "eventlog_summary": null
+    }
+  },
+  "parity": {
+    "reference": "python-row",
+    "per_engine": {
+      "python-row": {
+        "parity_ok": true,
+        "differences": []
+      },
+      "polars-native": {
+        "parity_ok": true,
+        "differences": []
+      },
+      "spark-native": {
+        "parity_ok": true,
+        "differences": []
+      }
+    }
+  },
+  "validation_s": {
+    "parity_and_counts_s": 0.16560179088264704,
+    "note": "parent-side output loading, row counting and parity; excluded from the measured stage"
+  },
+  "hardware": {
+    "platform": "Linux-7.0.11-76070011-generic-x86_64-with-glibc2.39",
+    "machine": "x86_64",
+    "cpu_count": 16,
+    "memory_total_bytes": 33566326784
+  },
+  "measured_at": "2026-09-16T18:08:36.212202+00:00"
+}
