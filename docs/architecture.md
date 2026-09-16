@@ -76,9 +76,9 @@ flowchart TB
     CPV --> RAW2
     DIR3 --> RAW2
     RAW2 --> BRONZE2
-    BRONZE2 -->|"Polars"| SILVER2
-    SILVER2 -->|"Polars"| ENRICH
-    ENRICH -->|"Polars"| GOLD2
+    BRONZE2 -->|"PySpark"| SILVER2
+    SILVER2 -->|"PySpark"| ENRICH
+    ENRICH -->|"PySpark"| GOLD2
 
     AIRFLOW["Airflow<br/>schedule · backfill · retries · logs"] -.->|orquesta| RAW2
     AIRFLOW -.->|orquesta| BRONZE2
@@ -93,6 +93,25 @@ Airflow será un plano de control sobre funciones de pipeline independientes.
 La lógica de negocio seguirá en el paquete Python para poder probarla y
 ejecutarla sin levantar el orquestador.
 
+La asignación de motores objetivo es: Python (biblioteca estándar) solo para
+API, sistema de ficheros, ZIP/XML/parsing JSON y metadatos pequeños de
+control; Polars para lotes acotados de parsing, dimensiones locales CPV/DIR3
+y exportaciones acotadas; PySpark para Silver canónico, joins
+grandes/transversales, ventanas, dedup/chequeos de colisión,
+enriquecimiento, generación de candidatos de linkage y Gold de alta
+cardinalidad. Parquet es el formato entre etapas. Unos 200.000 filas son una
+heurística de enrutado, no un umbral rígido: la forma de la carga (joins,
+ventanas, cardinalidad, estado) es decisiva.
+
+Estado actual frente a objetivo: Bronze y Silver canónico están
+implementados hoy como baseline python-row sobre una frontera
+Polars/Parquet (frames Polars de entrada/salida, pero transformación por
+filas en Python: `iter_rows`, `json.loads` por fila, objetos
+`ProcurementEvent`, agrupación en dict y ordenación Python); la migración a
+PySpark está pendiente del benchmark reproducible descrito en
+[benchmarks](benchmarks.md). Spark Silver, Bronze acotado, Airflow y la
+migración completa se abordan en cambios separados.
+
 ## 4. Componentes y tecnologías
 
 | Componente | Responsabilidad | Tecnología P0 | Estado |
@@ -101,12 +120,12 @@ ejecutarla sin levantar el orquestador.
 | Adaptador OpenPLACSP | Descargar y validar ZIP; parsear Atom y CODICE | Python, `zipfile`, XML, TLS FNMT | Implementado para licitaciones; falta estado incremental |
 | Contratos menores | Incorporar señales de contratación de menor importe | Python y formato oficial por determinar | Planificado |
 | Raw | Conservar bytes y procedencia sin sobrescrituras silenciosas | Sistema de ficheros local, checksum SHA-256 | Parcial |
-| Bronze | Representar el resultado del parsing y sus rechazos | Polars y Parquet | Implementado con métricas por fuente; payload source-specific en JSON string |
-| Silver | Mantener entidades canónicas tipadas | Polars y Parquet | `procurement_events` implementado con historial completo; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
-| Referencias | Resolver CPV y organismos mediante identificadores oficiales | CPV 2008 y DIR3 | CPV disponible; dimensiones planificadas |
-| Linkage | Detectar avisos equivalentes entre fuentes con evidencia | Python/Polars, reglas explicables y similitud textual | Baseline cross-source implementado |
-| Enrichment semántico | Añadir etiquetas de negocio multilabel auditables | Modelo preentrenado versionado | Planificado |
-| Gold | Publicar productos reproducibles para análisis y feed | Polars y Parquet; CSV solo como export | Baseline JSONL/CSV implementado |
+| Bronze | Representar el resultado del parsing y sus rechazos | Python para parsing; Polars para lotes acotados; Parquet | Implementado con métricas por fuente; payload source-specific en JSON string |
+| Silver | Mantener entidades canónicas tipadas | PySpark y Parquet | `procurement_events` implementado hoy como baseline python-row sobre frontera Polars/Parquet, con historial completo; migración a PySpark pendiente de benchmark; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
+| Referencias | Resolver CPV y organismos mediante identificadores oficiales | CPV 2008 y DIR3; construcción local acotada con Polars | CPV disponible; dimensiones planificadas |
+| Linkage | Detectar avisos equivalentes entre fuentes con evidencia | PySpark para generación de candidatos; reglas explicables y similitud textual | Baseline cross-source implementado |
+| Enrichment semántico | Añadir etiquetas de negocio multilabel auditables | PySpark + modelo preentrenado versionado | Planificado |
+| Gold | Publicar productos reproducibles para análisis y feed | PySpark y Parquet; CSV solo como export acotado | Baseline JSONL/CSV implementado |
 | Orquestación | Programación diaria, backfill, retries y logs | Airflow | Planificado |
 | Aplicación | Demostrar el consumo de productos Gold | Aplicación web ligera | Fuera del núcleo del pipeline |
 
@@ -198,9 +217,21 @@ estimaciones y los diseños futuros se etiquetarán como tales.
 
 ## 10. Decisiones de alcance
 
-- Polars es el motor tabular P0 y Parquet el formato analítico principal.
-- Spark solo se estudiará si una medición del backfill muestra una necesidad o
-  permite plantear un benchmark concreto.
+- La asignación de motores es autoritativa: Airflow como plano de control
+  sobre funciones de pipeline independientes; Python solo para API, sistema
+  de ficheros, ZIP/XML/parsing JSON y metadatos pequeños de control; Polars
+  para lotes acotados de parsing, dimensiones locales CPV/DIR3 y
+  exportaciones acotadas; PySpark para Silver canónico, joins
+  grandes/transversales, ventanas, dedup/chequeos de colisión,
+  enriquecimiento, generación de candidatos de linkage y Gold de alta
+  cardinalidad; Parquet como formato entre etapas.
+- Unas 200.000 filas son una heurística de enrutado, no un umbral rígido: la
+  forma de la carga (joins, ventanas, cardinalidad, estado) es decisiva.
+- El protocolo de comparación (comandos, perfiles, métricas y paridad) está
+  en [benchmarks](benchmarks.md). No existe ningún resultado de rendimiento
+  hasta que el harness se ejecute y sus métricas JSON se conserven.
+- Spark Silver, Bronze acotado, Airflow y la migración completa quedan fuera
+  de este cambio y se abordan en cambios separados tras el benchmark.
 - dbt solo tendrá sentido si se incorpora un serving layer SQL con un papel
   claro.
 - No se añaden infraestructura distribuida, Kubernetes, streaming ni un
