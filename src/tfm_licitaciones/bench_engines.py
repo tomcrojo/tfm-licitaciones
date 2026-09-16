@@ -468,7 +468,7 @@ def _engine_worker(payload: dict[str, Any], queue: Any) -> None:
         if engine == "python-row":
             import polars as _pl
 
-            from .silver import build_procurement_events
+            from .silver_reference import build_procurement_events_reference as build_procurement_events
 
             engine_init_s = _time.perf_counter() - init_started
             transform_started = _time.perf_counter()

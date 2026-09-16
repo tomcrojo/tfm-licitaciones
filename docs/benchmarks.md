@@ -266,3 +266,57 @@ como evidencia final. La
 responde pregunta por pregunta (shuffle, particiones, AQE, acciones, UDFs,
 JSON, sorts, codec, heap), fija codec `zstd` común y memoria driver
 reproducible, y confirma el resultado con reruns antes/después.
+
+## Motor de producción: Polars nativo (2026-09-16)
+
+Tras el experimento de motores, el motor productivo de Silver canónico es
+la implementación Polars nativa (`silver_polars.py` del experimento quedó
+como candidato acotado al contrato sintético; la implementación productiva
+`silver_native.py` cubre el contrato real completo: BOE, CPV escalar o
+lista, campos TED escalares o por idioma, instantes con subsegundos y la
+selección PLACSP por presencia de clave). La semántica del baseline
+python-row está congelada en `silver_reference.py` como oráculo de paridad,
+y `tests/test_silver_native.py` exige paridad exacta de frames y de
+mensajes de fallo contra la referencia, contra el candidato `silver_polars`
+y, con PySpark instalado, contra `silver_spark`.
+
+Medición de producción referencia vs motor nativo sobre el dataset
+sintético retenido del propio harness (semilla 7, misma frontera
+lectura→transformación, generación excluida del cronómetro, codec zstd del
+writer Polars, paridad verificada con `silver_parity` en cada perfil):
+
+| Perfil | Observaciones Bronze | Eventos Silver | python-row (ref) | polars-native (prod) | Aceleración |
+| --- | --- | --- | --- | --- | --- |
+| medium | 248.576 + 5.001 tombstones | 225.004 | 10,30 s | 3,01 s | ×3,4 |
+| large | 1.988.576 + 40.001 tombstones | 1.800.004 | 85,18 s | 24,16 s | ×3,5 |
+
+Comando reproducible (por perfil; `n_ted`/`n_placsp`/`rows_per_part` según
+la tabla de perfiles anterior):
+
+```bash
+uv run --with-editable . python - <<'PY'
+import time
+from pathlib import Path
+import polars as pl
+from tfm_licitaciones.bench_silver import write_bronze_parts
+from tfm_licitaciones.silver import build_procurement_events
+from tfm_licitaciones.silver_reference import build_procurement_events_reference
+from tfm_licitaciones.silver_parity import assert_silver_parity
+root = Path("/tmp/silver-prod-bench")
+manifest = write_bronze_parts(root, seed=7, n_ted=100_000, n_placsp=100_000, rows_per_part=10_000)
+records = pl.read_parquet(str(root / manifest["layout"]["records"]))
+tombstones = pl.read_parquet(str(root / manifest["layout"]["tombstones"]))
+t0 = time.perf_counter(); reference = build_procurement_events_reference(records, tombstones); t_ref = time.perf_counter() - t0
+t0 = time.perf_counter(); native = build_procurement_events(records, tombstones); t_nat = time.perf_counter() - t0
+assert_silver_parity(native, reference)
+print(f"reference {t_ref:.2f}s  native {t_nat:.2f}s  events {native.height}  parity ok")
+PY
+```
+
+Los 24,16 s del motor productivo en `large` son mayores que los 13 s del
+candidato experimental porque el contrato real deriva más campos con
+presencia de clave, formas polimórficas y validación decimal completa; la
+comparación honesta es contra su propia referencia python-row (85,18 s).
+El coste fijo de plan del motor nativo (~0,3 s por llamada) es irrelevante
+a esta escala y solo penaliza ejecuciones con muchos lotes diminutos
+(documentado como seguimiento para ventanas diarias pequeñas).

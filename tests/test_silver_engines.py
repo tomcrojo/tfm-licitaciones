@@ -27,7 +27,7 @@ from tfm_licitaciones.bench_engines import (
 from tfm_licitaciones.bench_silver import dataset_profile, generate_bronze_in_memory, write_bronze_parts
 from tfm_licitaciones.bronze import bronze_frame, tombstone_frame
 from tfm_licitaciones.models import PROCUREMENT_EVENT_SCHEMA
-from tfm_licitaciones.silver import build_procurement_events
+from tfm_licitaciones.silver_reference import build_procurement_events_reference as build_procurement_events
 from tfm_licitaciones.silver_parity import assert_silver_parity
 from tfm_licitaciones.silver_polars import (
     CONTRACT_SCOPE as POLARS_SCOPE,
@@ -191,7 +191,7 @@ class PolarsEngineTests(unittest.TestCase):
         # The reference must come from the SAME part files: part writers
         # assign per-part retrieved_at provenance, unlike the in-memory
         # helper where every row shares one timestamp.
-        from tfm_licitaciones.silver import build_procurement_events as baseline
+        from tfm_licitaciones.silver_reference import build_procurement_events_reference as baseline
 
         with tempfile.TemporaryDirectory() as tmp:
             write_bronze_parts(Path(tmp) / "dataset", seed=7, **dataset_profile("tiny"))
@@ -229,7 +229,7 @@ class SparkEngineTests(unittest.TestCase):
             raise unittest.SkipTest(f"no local JVM for Spark: {exc}") from exc
 
     def test_parity_on_tiny_part_files(self) -> None:
-        from tfm_licitaciones.silver import build_procurement_events as baseline
+        from tfm_licitaciones.silver_reference import build_procurement_events_reference as baseline
         from tfm_licitaciones.silver_spark import (
             build_spark_events,
             unpersist_frames,
