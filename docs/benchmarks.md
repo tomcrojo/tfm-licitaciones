@@ -174,3 +174,77 @@ el writer acotado por partes, la medición aislada, el fallo de colisión
 orden físico irrelevante y los fallos ante contenido o esquema divergente).
 No usan red y solo `tiny` corre en CI; `small`, `medium`, `large` y
 `backfill` son manuales.
+
+## Experimento de motores Silver (python-row / polars-native / spark-native)
+
+Comparación controlada offline de tres candidatos
+Bronze-Parquet→Silver-Parquet sobre el mismo dataset sintético retenido.
+**Ámbito ruidoso: los candidatos nativos solo soportan el contrato Bronze
+sintético TED/PLACSP del generador** (`scalar` JSON, CPV como arrays,
+`updated` en segundos enteros); fallan explícitamente fuera de ese
+contrato (BOE, CPV escalares, instantes con submilisegundos). No son un
+reemplazo productivo de `silver.py` y PySpark sigue siendo dependencia
+opcional solo del experimento (pin `pyspark==4.0.1`; no está en las
+dependencias base).
+
+- `python-row`: baseline actual (`build_procurement_events`).
+- `polars-native` (`src/tfm_licitaciones/silver_polars.py`): expresiones,
+  joins y agrupación Polars; cero Python por filas en el camino de éxito.
+- `spark-native` (`src/tfm_licitaciones/silver_spark.py`): DataFrame Spark
+  con funciones SQL built-in y ventanas; sin UDF, sin `coalesce(1)`; el
+  camino de éxito no trae filas al driver (solo conteos escalares) y los
+  fallos traen como máximo 5 ids para nombrarlos en el `ValueError`.
+  Una sola pasada `from_json` por rama con esquema cerrado (el rollout
+  inicial con ~20 `get_json_object` por fila superaba la capacidad del
+  codegen whole-stage de janino).
+
+El runner (`src/tfm_licitaciones/bench_engines.py`) genera el dataset una
+vez (excluido de la medición) y mide cada motor en un hijo `spawn` fresco:
+`engine_init_s` cubre imports y, solo en Spark, la creación de la sesión
+(el baseline no necesita init); `transform_s` arranca justo antes de leer
+el Bronze Parquet y cubre la misma frontera
+lectura→transformación→escritura en todos los motores (en Spark incluye
+validación, colisión y ventana sobre frames persistidos; `session.stop` y
+`unpersist` son limpieza posterior al temporizador pero dentro del `wall_s`
+frío). Los conteos de salida NO se miden en el hijo: el padre cuenta los
+Parquet escritos (reutilizando los frames ya cargados para paridad) y
+cronometra esa carga/conteo/paridad aparte como `validation_s`,
+explícitamente fuera de la etapa medida. `peak_tree_rss_bytes` se muestrea
+en el padre sobre todo el árbol del hijo (incluye la JVM Spark; método
+`psutil` o fallback `/proc`, registrado). Spark persiste ramas y unión en
+`MEMORY_AND_DISK` (ver `CACHE_STRATEGY` en `silver_spark.py`): el camino
+válido es un count de alcance sobre lectura podada, una
+materialización+validación por rama (cada fila Bronze se parsea una vez),
+una agregación de colisión y el job de ventana/escritura; tras escribir se
+hace `unpersist`. Se registran filas entrada/salida, `parquet_bytes`/
+`parquet_files` (solo `*.parquet`, comparable) junto a `artifact_bytes`/
+`artifact_files` (artefacto completo: en Spark añade `_SUCCESS`/CRC),
+versiones, configuración Spark, hardware y paridad contra `python-row` con
+`silver_parity.py`. Los timestamps Spark se leen re-etiquetando UTC sin
+desplazar valores (normalización de interop documentada en el runner).
+El orden de `array_distinct` se asume SOLO en el pin `pyspark==4.0.1`,
+fijado por prueba unitaria de orden más paridad completa en cada
+comparación.
+
+```bash
+# Smoke test tiny del harness de los tres motores
+uv run --with 'pyspark==4.0.1' --with-editable . \
+  python -m tfm_licitaciones.bench_engines --profile tiny --seed 7 \
+  --work-dir /tmp/silver-engines-tiny --output /tmp/silver-engines-tiny.json
+
+# Chequeo de colisión: los tres motores deben fallar con el mismo event_id
+uv run --with 'pyspark==4.0.1' --with-editable . \
+  python -m tfm_licitaciones.bench_engines --profile tiny --seed 7 \
+  --work-dir /tmp/silver-collision --with-collision
+
+# Pruebas (sin PySpark corren todas menos las 3 de Spark; con pin corren todas)
+uv run --with-editable . python -m unittest tests.test_silver_engines -v
+uv run --with 'pyspark==4.0.1' --with-editable . python -m unittest tests.test_silver_engines -v
+```
+
+Resultados autorizados: ver
+[docs/experiments/silver-engine-comparison-2026-09-16.md](experiments/silver-engine-comparison-2026-09-16.md),
+que contiene los resultados corregidos v2 (small/medium/large del
+2026-09-16) y explica los conteos de repetición y las limitaciones. La
+tabla tiny pre-optimización se ha retirado para no conservar números v1
+como evidencia final.
