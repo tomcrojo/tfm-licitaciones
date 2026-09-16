@@ -17,6 +17,11 @@ from .linkage import link_duplicates
 from .marts import buyer_summary, opportunities_rows, technology_summary
 from .models import OpportunityRecord, TenderRecord
 from .quality import validate_records
+from .silver import (
+    LEGACY_TENDERS_FILENAME,
+    PROCUREMENT_EVENTS_FILENAME,
+    build_procurement_events,
+)
 
 
 def fold_latest_updates(records: list[TenderRecord]) -> tuple[list[TenderRecord], int]:
@@ -63,6 +68,12 @@ def run_pipeline(
         bronze_path = configured_path(config, "bronze_dir")
         silver_path = configured_path(config, "silver_dir")
         gold_path = configured_path(config, "gold_dir")
+    # Canonical Silver is primary and preserves the full event history; the
+    # legacy current-state JSONL view is no longer persisted. Retire both
+    # exact Silver artifacts before Raw loading so a failed run cannot leave
+    # a stale file looking current; a successful run recreates the Parquet.
+    (silver_path / LEGACY_TENDERS_FILENAME).unlink(missing_ok=True)
+    (silver_path / PROCUREMENT_EVENTS_FILENAME).unlink(missing_ok=True)
 
     loaded = load_raw_records(raw_path)
     bronze_rows, records = loaded["bronze"], loaded["records"]
@@ -74,11 +85,14 @@ def run_pipeline(
         "tombstoned_removed": len(records) - len(alive_records),
         "updates_folded": folded_updates,
     }
-    write_parquet(bronze_path / "records.parquet", bronze_frame(bronze_rows))
+    records_frame = bronze_frame(bronze_rows)
+    tombstones_frame = tombstone_frame(loaded["tombstones"])
+    write_parquet(bronze_path / "records.parquet", records_frame)
     write_parquet(bronze_path / "rejections.parquet", rejection_frame(loaded["rejections"]))
-    write_parquet(bronze_path / "tombstones.parquet", tombstone_frame(loaded["tombstones"]))
+    write_parquet(bronze_path / "tombstones.parquet", tombstones_frame)
     write_json(bronze_path / "ingestion_report.json", ingestion_stats)
-    write_jsonl(silver_path / "tenders.jsonl", (record.to_dict() for record in kept_records))
+    events_frame = build_procurement_events(records_frame, tombstones_frame)
+    write_parquet(silver_path / PROCUREMENT_EVENTS_FILENAME, events_frame)
 
     classifier_config = config["classifier"]
     categories = classifier_config["categories"]
@@ -135,12 +149,14 @@ def run_pipeline(
         "raw_dir": _display_path(raw_path, Path(config["_project_root"])),
         "raw_files": [_file_manifest(path, raw_path) for path in discover_raw_files(raw_path)],
         "counts": {
-            "bronze": len(bronze_rows),
-            "silver": len(kept_records),
-            "gold": len(opportunities),
-            "gold_canonical": len(canonical),
+            "bronze_records": records_frame.height,
+            "silver_procurement_events": events_frame.height,
+            "legacy_current_state_records": len(kept_records),
+            "gold_opportunities": len(opportunities),
+            "gold_canonical_opportunities": len(canonical),
         },
-        "source_counts": dict(sorted(Counter(record.source for record in kept_records).items())),
+        "silver_source_counts": dict(sorted(Counter(events_frame["source"].to_list()).items())),
+        "legacy_source_counts": dict(sorted(Counter(record.source for record in kept_records).items())),
         "ingestion": ingestion_stats,
         "linkage": linkage.stats,
         "quality_passed": quality["passed"],

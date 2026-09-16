@@ -1,10 +1,11 @@
 # Contratos de datos
 
-Este documento separa el contrato canónico ya definido de la persistencia 0.1
-que todavía utiliza el pipeline. El modelo y el esquema tipado de
-`silver.procurement_events` existen en código, pero TED y OpenPLACSP aún
-escriben `TenderRecord` en JSONL. Esa migración se hará por límites en cambios
-posteriores; no se presenta aquí como terminada.
+Este documento separa el contrato canónico de Silver de la persistencia
+histórica 0.1. Silver canónico (`procurement_events.parquet`) es ahora la
+salida primaria y se construye desde todos los registros y tombstones tipados
+de Bronze. Gold 0.1 continúa consumiendo temporalmente la vista
+`TenderRecord` en memoria (selección de snapshot más reciente, tombstones de
+ZIP y plegado de revisiones); esa vista ya no se persiste como JSONL.
 
 ## Raw: evidencia de recuperación por artefacto
 
@@ -84,14 +85,18 @@ aceptar el candidato; Parquet reutiliza esa serialización validada. Los
 surrogates Unicode aislados se rechazan, incluso en campos anidados o claves.
 `json.loads(payload_json)` recupera el objeto del adaptador. TED conserva sus
 campos heterogéneos; Atom conserva el payload CODICE plano y `_atom_file` cuando
-procede de un ZIP. Este esquema no sustituye al contrato canónico Silver.
+procede de un ZIP. Los importes CODICE conservan además el texto numérico
+publicado en claves `*_raw` (`amount_tax_exclusive_raw`,
+`amount_estimated_overall_raw`, ...) junto a los campos float legados, para
+que Silver pueda construir `Decimal` exactos sin artefactos binarios; los
+payloads anteriores sin esas claves siguen siendo válidos. Este esquema no
+sustituye al contrato canónico Silver.
 La reproducción utiliza `source_file` + `raw_sha256` para identificar el
 artefacto y su sidecar determinista, y miembro/índice/localizador para encontrar
 el registro. El índice desambigua miembros con el mismo nombre dentro de un
 ZIP. No se crean sidecars ni checksums independientes por miembro. Fuente y
 partición/ventana del artefacto se consultan en su sidecar; no se copian ventanas
-en cada fila. En la futura migración, `ProcurementEvent.ingested_at` recibirá
-`raw_retrieved_at`. La persistencia Silver sigue sin cambios.
+en cada fila. `ProcurementEvent.ingested_at` recibe `raw_retrieved_at`.
 
 `bronze/tombstones.parquet` conserva **cada** control de borrado válido de
 Atom/XML plano y ZIP, incluidos controles repetidos y snapshots anteriores.
@@ -101,9 +106,8 @@ sin `payload_json`: `source_record_id` es el `ref` completo, y
 controles inválidos. Miembro, índice central ZIP, checksum y timestamp tienen
 la misma semántica que en registros/rechazos; en ficheros planos el miembro y
 su índice son nulos. El esquema se mantiene incluso cuando no hay controles.
-Esta tabla permitirá emitir un `ProcurementEvent` con
-`source_event_type="tombstone"` e `ingested_at=raw_retrieved_at` en la futura
-migración Bronze→Silver; aquí todavía no se construyen eventos canónicos.
+Silver canónico consume todas estas filas como eventos `tombstone`; el atributo
+Atom `when` no se retiene hoy (véase más abajo).
 
 `bronze/rejections.parquet` utiliza las mismas columnas de procedencia,
 más `rejection_reason` y `rejection_scope`, ambas string; no contiene
@@ -159,7 +163,9 @@ un ZIP corregido tampoco conserva efectos de tombstones retirados de su versión
 anterior. Se mantiene el plegado por `updated` dentro del conjunto seleccionado,
 con orden de recuperación como desempate. La vista legada sigue aplicando solo
 tombstones de ZIP; los de Atom/XML plano ya se conservan en Bronze, pero aún
-no se aplican a esta vista. No se cambia el modelo canónico ni los productos Gold.
+no se aplican a esta vista. Esta selección afecta solo a la vista legada en
+memoria que consume Gold 0.1: Silver canónico se construye desde todas las
+recuperaciones y no pliega historial.
 
 El informe añade `superseded_artifacts` y `superseded_records` a nivel de run
 para contar los artefactos y registros aceptados históricos excluidos de esa
@@ -190,20 +196,59 @@ final completo de un expediente. Un procedimiento puede tener varios eventos:
 anuncio, corrección, adjudicación o anulación, entre otros. Esto permite
 reconstruir su evolución sin sobrescribir evidencia anterior.
 
-Cada adaptador es responsable de construir identificadores deterministas:
+Silver canónico se construye desde **todas** las filas aceptadas de
+`bronze/records.parquet` y **todos** los controles de
+`bronze/tombstones.parquet`, incluidos snapshots sustituidos. Nunca se pliega
+el historial ni se aplican tombstones como borrados en esta capa.
 
-- `event_id` identifica de forma única el evento dentro de la plataforma. Se
-  deriva de la identidad inmutable publicada por la fuente y se prefija con la
-  fuente. Si una fuente reutiliza el mismo identificador para varias versiones,
-  la clave incluye su marcador de versión o timestamp de actualización.
-- `procedure_id` agrupa eventos del mismo expediente cuando la fuente permite
-  identificarlo. También queda prefijado por la fuente y puede ser nulo.
-- Reprocesar el mismo payload debe producir el mismo `event_id`.
-- Los identificadores de fuentes diferentes no se unifican en Silver. El
-  linkage posterior conserva la evidencia de esa decisión.
+Cada adaptador (`src/tfm_licitaciones/silver.py`) construye identificadores
+deterministas a partir de la identidad publicada por la fuente:
 
-Ejemplos ilustrativos de forma, no formatos que deban analizarse por posición:
-`ted:event:123-2026` y `placsp:procedure:10000101`.
+- TED: `event_id = ted:notice:<ND>`. Un número de aviso publicado (`ND`) es un
+  evento; observaciones repetidas o corregidas con la misma identidad no
+  crean filas nuevas. `procedure_id = ted:procedure:<identificador>` solo
+  cuando el payload publica exactamente un valor distinto no vacío de
+  `procedure-identifier` / `BT-04-notice`; `PR` es tipo de procedimiento y no
+  se usa. `source_event_type = notice` con `notice-type` vacío, o
+  `notice:<notice-type>` cuando existe.
+- OpenPLACSP entrada: `event_id = placsp:notice:<atom_id completo>@<updated
+  normalizado a UTC ISO>` y `procedure_id = placsp:procedure:<atom_id
+  completo>`. Cada instante válido de `updated` es una revisión distinta del
+  mismo expediente; `source_event_type = notice_snapshot`, sin etiquetar
+  primera/revisión porque el corpus puede estar incompleto. Si `updated` falta
+  o es inválido o sin zona, el marcador de identidad es `@undated`.
+- OpenPLACSP tombstone: `event_id = placsp:tombstone:<ref completo>`,
+  `procedure_id = placsp:procedure:<ref completo>` y
+  `source_event_type = tombstone`.
+- BOE (compatibilidad): `event_id = boe:notice:<item_id>`, sin
+  `procedure_id` inferido y `source_event_type = notice`.
+
+No se usan UUIDs aleatorios, posición de fila/fichero, checksum de Raw, horas
+de recuperación/transformación/ejecución, mtime ni orden de procesamiento en
+la identidad. Reprocesar el mismo payload produce el mismo `event_id`. Los
+identificadores de fuentes diferentes no se unifican en Silver; el linkage
+posterior conserva la evidencia de esa decisión.
+
+### Duplicados y colisiones
+
+Cada observación se mapea a un `ProcurementEvent` y se agrupa por `event_id`.
+Se comparan todos los campos canónicos excepto `ingested_at`:
+
+- si son iguales, son observaciones repetidas del mismo evento fuente y se
+  conserva una, seleccionada por el mínimo tuple determinista
+  `(raw_retrieved_at, source_file, source_member_index, source_member,
+  record_locator, raw_sha256)`, con `source_member_index` nulo ordenado de
+  forma explícita después de cualquier valor concreto;
+- si cualquier otro campo canónico difiere bajo el mismo `event_id`, la
+  transformación falla con un `ValueError` que nombra el identificador en
+  colisión; nunca se elige arbitrariamente el contenido más reciente o antiguo.
+
+Esto aplica a snapshots Raw corregidos con el mismo ID: una corrección que
+solo afecta campos no canónicos puede deduplicarse; una corrección con un
+marcador de versión publicado nuevo (nuevo `ND`, nuevo `updated`) es un
+evento nuevo; un cambio canónico material bajo el mismo ID falla. El
+`ingested_at` retenido es exactamente el `raw_retrieved_at` de la fila Bronze
+seleccionada. El frame final tiene `event_id` único y orden ascendente.
 
 ### Esquema
 
@@ -242,45 +287,117 @@ se normalizan a UTC. Los importes usan decimal de precisión fija para evitar
 introducir errores binarios en agregaciones monetarias.
 
 `source_event_type` no es todavía una enumeración cerrada porque las fuentes
-publican ciclos de vida diferentes. El adaptador debe documentar los valores
-que emite y no usar `status` como sustituto del tipo de evento.
+publican ciclos de vida diferentes. Los valores que emiten los adaptadores
+actuales son `notice`, `notice:<tipo>` (TED), `notice_snapshot` (OpenPLACSP) y
+`tombstone`. Nunca se usa `status` como sustituto del tipo de evento.
+
+### Reglas temporales y de importes
+
+- `ingested_at` procede únicamente del `raw_retrieved_at` de la observación
+  Bronze retenida; nunca de la hora de transformación/ejecución, mtime ni
+  estado de ingesta.
+- TED: `PD`/`publication-date` → `publication_date`; `source_updated_at` es
+  nulo porque el payload actual no aporta un timestamp de actualización
+  autoritativo; `deadline` y `status`/`nuts_code` permanecen nulos porque los
+  campos actuales son solo fecha o texto libre.
+- OpenPLACSP: `updated` → `source_updated_at` solo cuando lleva zona horaria
+  (normalizado a UTC); `publication_date` es nulo, nunca se reutiliza
+  `updated` como publicación.
+- BOE: fecha oficial de publicación → `publication_date`.
+- Importes: Silver prefiere el texto numérico publicado (texto TED o claves
+  CODICE `*_raw`) y construye `Decimal` exactos. Payloads antiguos sin texto
+  usan `Decimal(str(valor_float_legado))`, sin artefactos de coma flotante.
+  Todo importe persistido debe ser representable exactamente como
+  `decimal(20,2)` no negativo: más de dos dígitos fraccionarios no nulos o
+  exceso de precisión fallan explícitamente en lugar de redondearse; los
+  ceros fraccionarios finales pueden normalizarse. Importes opcionales
+  malformados o negativos permanecen nulos, como permite el contrato de
+  aceptación Bronze; no se fabrica otro valor numérico. La moneda está
+  apareada al importe canónico aceptado: si el importe seleccionado es
+  nulo, `currency` es nula aunque la fuente publique una moneda.
+
+### Mapeo por fuente
+
+TED: `buyer_id` solo con exactamente un valor distinto no vacío publicado de
+`buyer-identifier`/`BI`; nombre/título/descripción con la extracción localizada
+existente; `cpv_codes` con todos los valores `PC`/cpv en orden fuente
+deduplicados de forma estable (un orden CPV distinto bajo la misma identidad es
+una diferencia material); `estimated_value` con la precedencia
+`estimated-value-lot` → `framework-maximum-value-lot` → `amount` leída del
+texto fuente; `awarded_value` nulo; moneda explícita o EUR solo bajo el
+comportamiento documentado de TED Search con importe normalizado; país acepta
+alpha-2 mayúscula, mapea `ESP`→`ES` y deja nulo un alpha-3 desconocido;
+`source_url` de URL explícita o la extracción determinista de `links`.
+
+OpenPLACSP: `buyer_id` es el `buyer_dir3` publicado (sin join DIR3); todos los
+`cpv` en orden fuente deduplicado; `estimated_value` prefiere
+`amount_estimated_overall` y luego `amount_tax_exclusive`, con moneda del
+campo elegido; `awarded_value` nulo (no se infiere); `status` de
+`status_code`; `nuts_code` solo del `nuts_code` publicado (nunca de la región
+de texto libre); país `ES`; `source_url` de `url`.
+
+BOE: item/título/sumario/comprador-o-departamento/fecha/URL directos y país
+`ES`; identificador de comprador, CPV, importes, moneda, estado, NUTS,
+deadline y timestamp de actualización permanecen nulos salvo que el payload
+oficial los proporcione de forma explícita e inequívoca.
+
+No hay joins ni enriquecimiento CPV/DIR3 en esta capa.
+
+### Persistencia
+
+La salida primaria es `<silver_dir>/procurement_events.parquet` con el esquema
+exacto `PROCUREMENT_EVENT_SCHEMA`, tipado incluso vacío, `event_id` único y
+orden determinista por `event_id`. El JSONL legado
+`<silver_dir>/tenders.jsonl` ya no se escribe; si existe de una ejecución
+anterior exactamente en esa ruta, se elimina para que no parezca vigente.
 
 ### Revisiones y tombstones
 
 Una revisión obtiene su propio `event_id`, conserva el mismo `procedure_id` y
 usa un `source_event_type` explícito. Un tombstone también es una fila: puede
 tener vacíos los atributos descriptivos, pero conserva identidad, fuente y
-timestamps. No borra físicamente los eventos anteriores. Una vista posterior
+`ingested_at`. No borra físicamente los eventos anteriores; una vista posterior
 podrá calcular el estado vigente sin perder el historial.
 
-La implementación 0.1 todavía pliega revisiones de OpenPLACSP y elimina los
-identificadores tombstoned. Esa conducta se mantiene por compatibilidad hasta
-que la transformación Bronze→Silver adopte este contrato.
+Los tombstones son evidencia de borrado sin orden: el contrato Bronze actual
+no retiene el atributo Atom `when`, por lo que ciclos repetidos de
+borrado/publicación/borrado sobre el mismo `ref` no se pueden distinguir hoy y
+nunca se inventa orden a partir del tiempo de recuperación. Conservar `when`
+es un prerrequisito futuro para derivar estado vigente. Una corrección Raw
+posterior que omita un evento o tombstone no elimina la fila histórica
+canónica anterior.
 
-### Frontera de compatibilidad
+### Frontera de compatibilidad con Gold 0.1
 
-`TenderRecord` continúa siendo el modelo consumido por el pipeline actual.
-`procurement_event_from_tender` permite migrarlo de forma gradual, pero exige
-que el adaptador entregue `event_id`, `procedure_id`, tipo de evento y las tres
+Gold 0.1 sigue consumiendo la vista legada en memoria `TenderRecord`: selección
+del snapshot más reciente por partición, eliminación de tombstones de ZIP y
+plegado de revisiones (`fold_latest_updates`) existen solo en esa frontera y
+pueden colapsar el historial que Silver canónico conserva. El
+`silver/tenders.jsonl` ya no se persiste. `procurement_event_from_tender`
+permite migrar gradualmente consumidores restantes, pero exige que el
+adaptador entregue `event_id`, `procedure_id`, tipo de evento y las tres
 decisiones temporales. No copia automáticamente `published_date`, porque en el
-adaptador OpenPLACSP 0.1 ese campo procede de `updated`.
+adaptador OpenPLACSP legado ese campo procede de `updated`.
 
-La conversión conserva el único CPV actual dentro de la lista, interpreta el
-importe actual como valor estimado y no convierte el texto libre `region` en
-`nuts_code`. `procurement_events_frame` genera el `DataFrame` con el esquema
-completo incluso para un lote vacío, listo para la frontera Parquet ya
-disponible.
+El manifiesto Gold expone conteos explícitos y no ambiguos:
+`counts.bronze_records`, `counts.silver_procurement_events`,
+`counts.legacy_current_state_records`, `counts.gold_opportunities` y
+`counts.gold_canonical_opportunities`, junto a `silver_source_counts` (eventos
+canónicos por fuente, tombstones incluidos) y `legacy_source_counts` (vista
+legada por fuente). El `run_at` operativo permanece fuera de la identidad y
+del determinismo de los datos canónicos.
 
 El contrato no contiene supuestos sectoriales: CPV, comprador, territorio,
 fechas, importes y estado sirven para obras, restauración, sanidad, logística,
 energía, servicios profesionales o tecnología. Las etiquetas semánticas de
 negocio pertenecen a enriquecimiento, no a esta entidad canónica.
 
-## Silver 0.1 en producción local: `TenderRecord`
+## Silver legado en memoria: `TenderRecord`
 
-Grano actual: una versión consolidada por `(source, tender_id)`. Las revisiones
-de OpenPLACSP se pliegan mediante el timestamp `updated` y los identificadores
-marcados como tombstone se excluyen.
+Vista de estado vigente consumida por Gold 0.1. Grano: una versión consolidada
+por `(source, tender_id)`. Las revisiones de OpenPLACSP se pliegan mediante el
+timestamp `updated` y los identificadores marcados como tombstone (solo ZIP)
+se excluyen. Ya no se persiste como JSONL.
 
 | Campo | Tipo | Regla actual |
 | --- | --- | --- |
@@ -332,10 +449,11 @@ artefacto versionado se conserva para representar fielmente el baseline.
 
 | Área | Situación actual | Corrección prevista |
 | --- | --- | --- |
-| Fechas PLACSP | `updated` se reutiliza como `published_date` | Separar publicación y actualización |
+| Fechas PLACSP | Silver canónico separa `source_updated_at` de `publication_date` (nulo); la vista legada para Gold aún deriva `published_date` de `updated` | Migrar Gold al contrato canónico y eliminar la vista legada |
+| Tombstones | Silver conserva el control histórico, pero Bronze no retiene Atom `when`, así que el orden de borrados no es derivable | Retener `when` y derivar estado vigente |
 | Rechazos | Bronze los contabiliza; `quality_passed` solo evalúa Silver/Gold | Integrar el estado de ingesta en la decisión global de calidad |
 | Completitud | Una partición que falla puede no impedir el run | Registrar esperadas/descargadas y estado incompleto |
-| Persistencia | Bronze usa Parquet; Silver y Gold usan JSONL/CSV | Migrar las demás capas por límites a Parquet |
+| Persistencia | Bronze y Silver canónico usan Parquet; Gold sigue en JSONL/CSV | Migrar Gold por límites a Parquet |
 | TED | La configuración aplica una query tecnológica | Hacer el filtro sectorial opcional y downstream |
 
 Estas limitaciones son trabajo pendiente conocido. No invalidan las pruebas del

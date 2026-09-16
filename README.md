@@ -20,8 +20,10 @@ Incluye:
 - conservación local de los payloads descargados;
 - parsing de JSON, ZIP, Atom y CODICE/XML;
 - Bronze Parquet con procedencia, rechazos localizados y conteos de ingesta;
-- normalización a un `TenderRecord` común;
-- plegado de revisiones y aplicación de tombstones de OpenPLACSP;
+- Silver canónico `procurement_events.parquet` que preserva el histórico de
+  avisos, revisiones y tombstones como eventos con identidad determinista;
+- una vista legada de estado vigente (`TenderRecord`, en memoria) que Gold 0.1
+  sigue consumiendo con plegado de revisiones y tombstones;
 - clasificación tecnológica por reglas y CPV como baseline;
 - un enlace heurístico de avisos y controles de calidad básicos;
 - artefactos de ejecución con conteos y checksums.
@@ -29,13 +31,16 @@ Incluye:
 El [manifest versionado](data/gold/run_manifest.json) corresponde a una
 ejecución del 2 de septiembre de 2026 sobre 9.905 avisos TED y 129.090 avisos
 OpenPLACSP tras el plegado. Estos datos describen ese corpus concreto; no son
-una estimación del histórico completo.
+una estimación del histórico completo. Este artefacto versionado conserva los
+nombres de campos históricos del manifest 0.1 y no es un ejemplo del nuevo
+contrato de manifest en ejecución; los nombres vigentes están documentados en
+el [contrato de datos](docs/data_contract.md).
 
-Bronze utiliza Parquet; Silver y Gold todavía usan JSONL/CSV y ejecución manual.
-La migración hacia ingesta incremental idempotente, Polars en las
-transformaciones, Parquet en las demás capas, nuevas fuentes y Airflow está
-descrita en la [arquitectura](docs/architecture.md). Las limitaciones conocidas
-se documentan en el [contrato de datos](docs/data_contract.md).
+Bronze y Silver canónico utilizan Parquet; Gold todavía usa JSONL/CSV y
+ejecución manual. La migración hacia ingesta incremental idempotente,
+Polars en las transformaciones restantes, Parquet en Gold, nuevas fuentes y
+Airflow está descrita en la [arquitectura](docs/architecture.md). Las
+limitaciones conocidas se documentan en el [contrato de datos](docs/data_contract.md).
 
 ## Ejecución local
 

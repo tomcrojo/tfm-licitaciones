@@ -38,7 +38,7 @@ Se generan:
 /tmp/tfm-licitaciones-fixture/bronze/rejections.parquet
 /tmp/tfm-licitaciones-fixture/bronze/tombstones.parquet
 /tmp/tfm-licitaciones-fixture/bronze/ingestion_report.json
-/tmp/tfm-licitaciones-fixture/silver/tenders.jsonl
+/tmp/tfm-licitaciones-fixture/silver/procurement_events.parquet
 /tmp/tfm-licitaciones-fixture/gold/opportunities.jsonl
 /tmp/tfm-licitaciones-fixture/gold/opportunities.csv
 /tmp/tfm-licitaciones-fixture/gold/technology_summary.csv
@@ -48,9 +48,12 @@ Se generan:
 /tmp/tfm-licitaciones-fixture/gold/run_manifest.json
 ```
 
-Bronze ya no escribe `records.jsonl`. Los Parquet de registros, rechazos y tombstones
-conservan esquema explícito, incluso vacíos. El [contrato](data_contract.md)
-define payload, procedencia, motivos y la unidad de conteo.
+Bronze ya no escribe `records.jsonl` y Silver ya no escribe `tenders.jsonl`;
+si ese fichero legado existe de ejecuciones anteriores exactamente en el
+directorio Silver seleccionado, `run` lo elimina para que no parezca vigente.
+Los Parquet de registros, rechazos, tombstones y eventos canónicos conservan
+esquema explícito, incluso vacíos. El [contrato](data_contract.md) define
+payload, procedencia, motivos, identidad canónica y la unidad de conteo.
 
 Revise `bronze/ingestion_report.json` junto a `gold/quality_report.json`:
 el primero informa `parsed`, `accepted`, `rejected`, tombstones válidos, errores
@@ -127,13 +130,24 @@ Un sidecar presente pero inválido nunca se repara automáticamente. El refresco
 ordinario de meses cacheados sigue pendiente.
 
 Bronze conserva todos los snapshots recuperados, incluidos sus tombstones y
-rechazos. Silver/Gold legado recibe únicamente el snapshot más reciente por
-fuente, partición y ventana, según el sidecar; por ello no reaplica un tombstone
-retirado de un ZIP corregido ni conserva una versión TED/BOE antigua por orden
-léxico. El informe muestra `superseded_artifacts` y `superseded_records` para
-explicar la diferencia. Un empate de timestamps máximos con bytes distintos
-falla explícitamente. Consulte el [contrato](data_contract.md) para las reglas
-de inputs sin partición y la compatibilidad de tombstones Atom planos.
+rechazos. Silver canónico (`silver/procurement_events.parquet`) se construye
+desde todas esas filas y conserva el historial completo de eventos: revisiones
+con nuevo marcador de versión publicado y controles de borrado son filas, no
+operaciones destructivas. Un cambio canónico material bajo el mismo
+`event_id` (por ejemplo, un mismo `ND` con otro título) hace fallar la
+transformación de forma explícita.
+
+La vista legada que consume Gold 0.1 continúa en memoria: recibe únicamente el
+snapshot más reciente por fuente, partición y ventana, según el sidecar; por
+ello puede colapsar revisiones y no reaplica un tombstone retirado de un ZIP
+corregido. El informe muestra `superseded_artifacts` y `superseded_records`
+para explicar la diferencia, y el manifiesto separa
+`silver_procurement_events` (histórico canónico) de
+`legacy_current_state_records` (vista legada), con `silver_source_counts` y
+`legacy_source_counts` por fuente. Un empate de timestamps máximos con bytes
+distintos falla explícitamente. Consulte el [contrato](data_contract.md) para
+las reglas de inputs sin partición y la compatibilidad de tombstones Atom
+planos.
 
 ## Comportamiento y límites de la versión 0.1
 
@@ -147,8 +161,8 @@ de inputs sin partición y la compatibilidad de tombstones Atom planos.
   completitud de ventana.
 - La transformación `run` es offline y determinista respecto a sus inputs de
   negocio, salvo por los timestamps técnicos de ejecución.
-- Bronze utiliza Parquet; JSONL y CSV siguen siendo formatos transitorios de
-  Silver y Gold.
+- Bronze y Silver canónico utilizan Parquet; JSONL y CSV siguen siendo formatos
+  transitorios de Gold.
 
 Estas limitaciones se mantienen visibles para que los siguientes cambios
 puedan demostrar qué propiedad añaden.

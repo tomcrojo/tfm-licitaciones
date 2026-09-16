@@ -26,23 +26,25 @@ flowchart LR
     TED["TED API<br/>JSON"] --> RAW["Raw local<br/>JSONL"]
     PLACSP["OpenPLACSP<br/>ZIP · Atom · CODICE/XML"] --> RAW
     RAW --> BRONZE["Bronze<br/>Parquet source-specific + rejects"]
-    BRONZE --> SILVER["Silver<br/>TenderRecord · JSONL"]
-    SILVER --> LINK["Linkage heurístico<br/>comprador · CPV · fecha · TF-IDF"]
-    SILVER --> CLASS["Baseline<br/>keywords + CPV"]
+    BRONZE --> SILVER["Silver canónico<br/>procurement_events Parquet"]
+    BRONZE --> LEGACY["Vista legada en memoria<br/>TenderRecord (Gold 0.1)"]
+    LEGACY --> LINK
+    LEGACY --> CLASS["Baseline<br/>keywords + CPV"]
     LINK --> GOLD["Gold<br/>JSONL · CSV · informes"]
     CLASS --> GOLD
 ```
 
 Los adaptadores y parsers están implementados con la biblioteca estándar de
 Python. `run` no accede a la red: descubre los ficheros raw, normaliza los
-registros, pliega actualizaciones, calcula enlace y clasificación, evalúa la
-calidad y escribe las salidas.
+registros, construye Silver canónico desde todos los registros y tombstones de
+Bronze, y alimenta una vista legada en memoria (`TenderRecord`) con el
+snapshot más reciente para Gold 0.1, que calcula enlace y clasificación,
+evalúa la calidad y escribe las salidas.
 
 Esta base tiene limitaciones conocidas: no mantiene estado de ventanas de
-ingesta, no garantiza la completitud de una descarga, usa el timestamp de
-actualización de PLACSP como fecha publicada, separa el estado de ingesta de los
-gates de calidad Silver/Gold y el enlace todavía puede comparar avisos de la
-misma fuente. Estas
+ingesta, no garantiza la completitud de una descarga, la vista legada todavía
+reutiliza el timestamp de actualización de PLACSP como fecha publicada y
+separa el estado de ingesta de los gates de calidad. Estas
 limitaciones se corregirán en cambios separados y verificables.
 
 ## 3. Arquitectura objetivo P0
@@ -100,9 +102,9 @@ ejecutarla sin levantar el orquestador.
 | Contratos menores | Incorporar señales de contratación de menor importe | Python y formato oficial por determinar | Planificado |
 | Raw | Conservar bytes y procedencia sin sobrescrituras silenciosas | Sistema de ficheros local, checksum SHA-256 | Parcial |
 | Bronze | Representar el resultado del parsing y sus rechazos | Polars y Parquet | Implementado con métricas por fuente; payload source-specific en JSON string |
-| Silver | Mantener entidades canónicas tipadas | Polars y Parquet | Contrato definido; migración de persistencia planificada |
+| Silver | Mantener entidades canónicas tipadas | Polars y Parquet | `procurement_events` implementado con historial completo; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
 | Referencias | Resolver CPV y organismos mediante identificadores oficiales | CPV 2008 y DIR3 | CPV disponible; dimensiones planificadas |
-| Linkage | Detectar avisos equivalentes entre fuentes con evidencia | Python/Polars, reglas explicables y similitud textual | Baseline implementado con correcciones pendientes |
+| Linkage | Detectar avisos equivalentes entre fuentes con evidencia | Python/Polars, reglas explicables y similitud textual | Baseline cross-source implementado |
 | Enrichment semántico | Añadir etiquetas de negocio multilabel auditables | Modelo preentrenado versionado | Planificado |
 | Gold | Publicar productos reproducibles para análisis y feed | Polars y Parquet; CSV solo como export | Baseline JSONL/CSV implementado |
 | Orquestación | Programación diaria, backfill, retries y logs | Airflow | Planificado |
@@ -129,8 +131,11 @@ deadline              ingested_at
 
 El modelo se completa con dimensiones `buyers`, `cpv`, `regions` y, cuando las
 fuentes lo permitan, `suppliers`. Las uniones deben utilizar códigos oficiales
-antes que nombres normalizados. El cambio desde `TenderRecord` se hará mediante
-una frontera de compatibilidad para no migrar todo el pipeline en un único PR.
+antes que nombres normalizados. La transformación Bronze→Silver canónica ya
+está implementada con identidad determinista por fuente, deduplicación
+explícita de observaciones repetidas y fallo ante colisiones materiales; la
+migración de Gold y del enlace a esta entidad se hará mediante una frontera de
+compatibilidad para no reescribir todo el pipeline en un único PR.
 
 ## 6. Histórico e incremental
 

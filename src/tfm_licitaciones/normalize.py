@@ -43,8 +43,8 @@ def _parse_date(value: Any) -> date | None:
         return None
 
 
-def _parse_amount(value: Any) -> float | None:
-    """Parse a simple numeric amount while leaving ambiguous values null."""
+def _normalize_amount_text(value: Any) -> str | None:
+    """Normalize decimal/thousands separators, or None when not parseable text."""
 
     text = _first_text(value).replace(" ", "")
     if not text:
@@ -52,13 +52,20 @@ def _parse_amount(value: Any) -> float | None:
     if "," in text and "." in text:
         decimal_separator = "," if text.rfind(",") > text.rfind(".") else "."
         thousands_separator = "." if decimal_separator == "," else ","
-        normalized = text.replace(thousands_separator, "").replace(decimal_separator, ".")
-    elif "," in text:
-        normalized = text.replace(",", ".")
-    elif text.count(".") == 1:
-        normalized = text
-    else:
-        normalized = text.replace(".", "")
+        return text.replace(thousands_separator, "").replace(decimal_separator, ".")
+    if "," in text:
+        return text.replace(",", ".")
+    if text.count(".") == 1:
+        return text
+    return text.replace(".", "")
+
+
+def _parse_amount(value: Any) -> float | None:
+    """Parse a simple numeric amount while leaving ambiguous values null."""
+
+    normalized = _normalize_amount_text(value)
+    if normalized is None:
+        return None
     try:
         amount = float(normalized)
     except ValueError:
@@ -96,7 +103,7 @@ def normalize_ted(raw: dict[str, Any]) -> TenderRecord:
         title=title,
         summary=summary,
         buyer=buyer,
-        published_date=_parse_date(raw.get("PD") or raw.get("publication_date")),
+        published_date=_parse_date(raw.get("PD") or raw.get("publication_date") or raw.get("publication-date")),
         amount=amount,
         # The TED Search API normalizes value fields to EUR, so the currency
         # is inferred and kept explicit for downstream aggregation.
