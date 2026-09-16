@@ -96,6 +96,25 @@ def fingerprint_dataset_dir(dataset_dir: str | Path) -> dict[str, Any]:
     }
 
 
+def is_historical_workload_pinned(
+    profile: str, seed: int, with_collision: bool = False
+) -> bool:
+    """Return whether a workload key is pinned (cheap; no dataset I/O)."""
+
+    return (profile, seed, with_collision) in HISTORICAL_WORKLOADS
+
+
+def _manifest_counts(dataset_dir: str | Path) -> dict[str, int]:
+    """Read Bronze counts from ``dataset.json`` without touching part files."""
+
+    manifest = json.loads((Path(dataset_dir) / "dataset.json").read_text(encoding="utf-8"))
+    inputs = manifest["inputs"]
+    return {
+        "bronze_records": int(inputs["bronze_records"]),
+        "bronze_tombstones": int(inputs["bronze_tombstones"]),
+    }
+
+
 def assert_historical_workload(
     dataset_dir: str | Path,
     *,
@@ -105,17 +124,21 @@ def assert_historical_workload(
 ) -> dict[str, Any]:
     """Fail loudly when a pinned historical workload no longer matches.
 
-    Only the workloads in :data:`HISTORICAL_WORKLOADS` are pinned; any
-    other (profile, seed) combination is returned unchecked so exploratory
-    runs stay possible. On mismatch a ``ValueError`` names the expected
+    The pin is checked BEFORE any fingerprinting: unpinned workloads
+    (anything outside :data:`HISTORICAL_WORKLOADS`, e.g. medium/large/backfill
+    or other seeds) return lightweight manifest metadata with
+    ``pinned=False`` and ``sha256=None`` without reading, sorting or
+    materializing the Bronze frames — fingerprinting multi-million-row
+    exploratory datasets just to discard the digest would be pure overhead
+    before measurement. On mismatch a ``ValueError`` names the expected
     and actual digests and points at the generator commit pin.
     """
 
     key = (profile, seed, with_collision)
     expected = HISTORICAL_WORKLOADS.get(key)
-    actual = fingerprint_dataset_dir(dataset_dir)
     if expected is None:
-        return actual
+        return {"pinned": False, "sha256": None, **_manifest_counts(dataset_dir)}
+    actual = fingerprint_dataset_dir(dataset_dir)
     problems: list[str] = []
     if actual["sha256"] != expected["sha256"]:
         problems.append(f"sha256 {actual['sha256']} != pinned {expected['sha256']}")
@@ -131,4 +154,4 @@ def assert_historical_workload(
             f"the generator changed since. Do not compare new timings against "
             f"the retained reports/results."
         )
-    return actual
+    return {"pinned": True, **actual}

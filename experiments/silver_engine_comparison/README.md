@@ -121,10 +121,13 @@ generator, the experiment pins it cheaply:
   `HISTORICAL_WORKLOADS`).
 
 `bench_engines.run_comparison` asserts the pin for those workloads before
-measuring, and `tests/test_workload_fingerprint.py` asserts it in CI
-(including a sensitivity test proving the digest moves on a
-count-preserving content change). Any other profile/seed runs unchecked so
-exploratory runs stay possible.
+measuring (metrics record `workload_sha256` and `workload_pinned`), and
+`tests/test_workload_fingerprint.py` asserts it in CI (including a
+sensitivity test proving the digest moves on a count-preserving content
+change). The pin is checked first: any other profile/seed returns manifest
+counts with `workload_pinned: false` / `workload_sha256: null` without
+reading, sorting or materializing the Bronze frames, so exploratory runs
+at medium/large/backfill scale pay no fingerprinting overhead.
 
 ## Errata (reports stay byte-identical)
 

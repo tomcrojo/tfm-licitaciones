@@ -742,8 +742,9 @@ def run_comparison(
         # the exact Bronze dataset behind the retained measurements. A
         # generator change that keeps row counts but alters payloads would
         # otherwise move the "reproducible" benchmark silently (see
-        # workload.HISTORICAL_WORKLOADS). Unpinned profiles/seeds run
-        # unchecked so exploratory runs stay possible.
+        # workload.HISTORICAL_WORKLOADS). Unpinned profiles/seeds skip
+        # fingerprinting entirely (manifest counts only) so exploratory
+        # runs at medium/large/backfill scale pay no overhead.
         workload = assert_historical_workload(
             dataset_dir, profile=profile, seed=seed, with_collision=with_collision
         )
@@ -906,6 +907,7 @@ def run_comparison(
             **manifest["inputs"],
             "layout": manifest["layout"],
             "workload_sha256": workload["sha256"],
+            "workload_pinned": workload["pinned"],
             "workload_generator_commit": WORKLOAD_GENERATOR_COMMIT,
         },
         "stage": STAGE_DESCRIPTION,

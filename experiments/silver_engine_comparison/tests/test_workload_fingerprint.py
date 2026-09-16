@@ -4,7 +4,9 @@ The ``python-row`` baseline is frozen, but the workload itself comes from
 the live production generator (``tfm_licitaciones.bench_silver``). These
 tests pin the exact Bronze bytes-behind-the-metrics for tiny/small seed 7
 (fingerprint over canonicalized logical row values, never Parquet writer
-bytes) and prove the fingerprint is sensitive to generator changes.
+bytes), prove the fingerprint is sensitive to generator changes, and prove
+unpinned exploratory workloads bypass fingerprinting entirely (no frame
+reads/sorts/materialization at medium/large/backfill scale).
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from experiments.silver_engine_comparison.workload import (
     WORKLOAD_GENERATOR_COMMIT,
     assert_historical_workload,
     fingerprint_dataset_dir,
+    is_historical_workload_pinned,
 )
 from tfm_licitaciones.bench_silver import dataset_profile, write_bronze_parts
 
@@ -35,6 +38,7 @@ class WorkloadPinTests(unittest.TestCase):
             write_bronze_parts(Path(tmp) / "ds", seed=7, with_collision=False, **dataset_profile("tiny"))
             actual = assert_historical_workload(Path(tmp) / "ds", profile="tiny", seed=7)
         expected = HISTORICAL_WORKLOADS[("tiny", 7, False)]
+        self.assertTrue(actual["pinned"])
         self.assertEqual(actual["sha256"], expected["sha256"])
         self.assertEqual(actual["bronze_records"], 303)
         self.assertEqual(actual["bronze_tombstones"], 7)
@@ -44,6 +48,7 @@ class WorkloadPinTests(unittest.TestCase):
             write_bronze_parts(Path(tmp) / "ds", seed=7, with_collision=False, **dataset_profile("small"))
             actual = assert_historical_workload(Path(tmp) / "ds", profile="small", seed=7)
         expected = HISTORICAL_WORKLOADS[("small", 7, False)]
+        self.assertTrue(actual["pinned"])
         self.assertEqual(actual["sha256"], expected["sha256"])
         # Cross-checked against the retained small-profile evidence:
         # results/engines-small-seed7-2026-09-16.json (24 862 + 501 = 25 363).
@@ -75,7 +80,58 @@ class WorkloadPinTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             write_bronze_parts(Path(tmp) / "ds", seed=11, with_collision=False, **dataset_profile("tiny"))
             actual = assert_historical_workload(Path(tmp) / "ds", profile="tiny", seed=11)
+        self.assertFalse(actual["pinned"])
+        self.assertIsNone(actual["sha256"])
         self.assertGreater(actual["bronze_records"], 0)
+
+    def test_pin_gate_is_cheap_and_exact(self) -> None:
+        self.assertTrue(is_historical_workload_pinned("tiny", 7))
+        self.assertTrue(is_historical_workload_pinned("small", 7))
+        self.assertFalse(is_historical_workload_pinned("tiny", 11))
+        self.assertFalse(is_historical_workload_pinned("medium", 7))
+        self.assertFalse(is_historical_workload_pinned("large", 7))
+        self.assertFalse(is_historical_workload_pinned("backfill", 7))
+        self.assertFalse(is_historical_workload_pinned("tiny", 7, with_collision=True))
+
+    def test_unpinned_workload_never_fingerprints_frames(self) -> None:
+        # Regression guard for the harness overhead bug: unpinned workloads
+        # (medium/large/backfill scale) must bypass fingerprint_dataset_dir
+        # entirely — no frame reads, sorts or to_dicts() materialization.
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            write_bronze_parts(Path(tmp) / "ds", seed=11, with_collision=False, **dataset_profile("tiny"))
+            with mock.patch(
+                "experiments.silver_engine_comparison.workload.fingerprint_dataset_dir",
+                side_effect=AssertionError("must not fingerprint unpinned workloads"),
+            ):
+                actual = assert_historical_workload(Path(tmp) / "ds", profile="tiny", seed=11)
+        self.assertFalse(actual["pinned"])
+        self.assertIsNone(actual["sha256"])
+        # Manifest counts still reported without touching part files.
+        self.assertEqual(actual["bronze_records"], 303)
+        self.assertEqual(actual["bronze_tombstones"], 7)
+
+    def test_unpinned_run_skips_fingerprint_and_records_not_pinned(self) -> None:
+        # End-to-end: an exploratory run executes successfully with the
+        # heavy fingerprint path disabled, and its metrics say so.
+        from unittest import mock
+
+        from experiments.silver_engine_comparison.bench_engines import run_comparison
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch(
+                "experiments.silver_engine_comparison.workload.fingerprint_dataset_dir",
+                side_effect=AssertionError("must not fingerprint unpinned workloads"),
+            ):
+                metrics = run_comparison(
+                    "tiny", seed=11, work_dir=Path(tmp) / "work",
+                    engines=("python-row", "polars-native"),
+                )
+        self.assertFalse(metrics["dataset"]["workload_pinned"])
+        self.assertIsNone(metrics["dataset"]["workload_sha256"])
+        for engine in ("python-row", "polars-native"):
+            self.assertTrue(metrics["parity"]["per_engine"][engine]["parity_ok"])
 
 
 if __name__ == "__main__":
