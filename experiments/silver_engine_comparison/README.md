@@ -7,10 +7,10 @@
 ## What this is
 
 A controlled offline comparison of three Bronze-Parquet → Silver-Parquet
-engine candidates (python-row baseline, native Polars, native Spark) on the
-same retained synthetic TED/PLACSP datasets, plus an adversarial audit of
-the Spark benchmark and a same-host standalone-cluster run. It produced the
-measured evidence behind the production engine decision:
+engine candidates (frozen python-row baseline, native Polars, native Spark)
+on the same retained synthetic TED/PLACSP datasets, plus an adversarial
+audit of the Spark benchmark and a same-host standalone-cluster run. It
+produced the measured evidence behind the production engine decision:
 
 - **Polars wins canonical Silver in the measured single-node envelope**
   (large profile: ~13 s Polars vs ~33 s Spark `local[16]` vs ~43 s
@@ -33,6 +33,7 @@ experiments/silver_engine_comparison/
 ├── README.md                  # this file
 ├── bench_engines.py           # 3-engine runner (fresh spawn child per engine)
 ├── engines/
+│   ├── python_row_reference.py  # FROZEN python-row baseline (e69016f semantics, no prod imports)
 │   ├── polars_candidate.py    # native Polars candidate (synthetic contract only)
 │   └── spark_candidate.py     # native Spark candidate (synthetic contract only)
 ├── reports/                   # dated evidence, kept byte-identical
@@ -43,7 +44,7 @@ experiments/silver_engine_comparison/
 │   └── engines-small-seed7-2026-09-16.json   # small-profile metrics JSON
 └── tests/
     ├── test_engine_parity.py       # parity/collision/guard tests (Spark parts skip without PySpark)
-    └── test_no_production_imports.py  # src/ never imports experiments/
+    └── test_no_production_imports.py  # src/ never imports experiments/; experiment never uses prod Silver facade
 ```
 
 The directory uses underscores (`silver_engine_comparison`) instead of
@@ -63,8 +64,49 @@ The native candidates support **only** the TED/PLACSP synthetic Bronze
 contract emitted by `tfm_licitaciones.bench_silver` (scalar string/number
 JSON payloads, CPV as JSON arrays of strings, whole-second `updated`
 instants). They fail explicitly outside that contract and are not
-production replacements. The production pipeline and its frozen python-row
-reference live in `src/tfm_licitaciones/` and never import from here.
+production replacements. Nothing under `src/` depends on this directory.
+
+## Frozen python-row baseline (reproducibility)
+
+The `python-row` engine is **frozen**, not current. It executes
+`engines/python_row_reference.py`, a self-contained copy of the exact
+python-row semantics shipped at:
+
+    e69016f62fb985639e17153e24b3a570f2f39c20
+
+Why: `bench_engines.py` used to import the live production facade
+`tfm_licitaciones.silver.build_procurement_events` as the `python-row`
+baseline. PR #17 turns that facade into native Polars, so rerunning the
+experiment after PR #17 would silently benchmark production Polars under
+the `python-row` label. The frozen copy prevents that: the label keeps its
+historical meaning before and after PR #17.
+
+What is frozen (verbatim, no "improvements"): the Silver python-row
+transform (`_exact_amount`, `_aware_instant`, `_single_published_value`,
+`_ted_country`, TED/PLACSP/BOE event mapping, tombstone mapping,
+deterministic provenance selection, canonical-collision detection) plus its
+transitive transformation semantics (`_first_text`, `_parse_date`,
+`_normalize_amount_text`, `_parse_amount`, `_url_from_links`,
+`_as_code_list`, `normalize_ted`, `normalize_boe`) and the data containers
+it materializes through (`PROCUREMENT_EVENT_SCHEMA`, `TenderRecord`,
+`ProcurementEvent` with UTC coercion, `procurement_events_frame`). The
+frozen module imports nothing from `tfm_licitaciones` (stdlib + polars
+only); static and dynamic regression tests enforce that a future
+production refactor cannot silently change it.
+
+Intentionally shared (harness, not baseline semantics): the synthetic
+dataset generator (`tfm_licitaciones.bench_silver`), the Bronze frame
+constructors (`tfm_licitaciones.bronze`) and the parity comparator
+(`tfm_licitaciones.silver_parity`). If production ever changes the
+canonical schema, parity will fail loudly instead of moving the historical
+baseline.
+
+The historical conclusion is unchanged: Polars won canonical Silver in the
+measured single-node envelope; Spark local and same-host standalone were
+slower at that scale; Spark remains relevant for distributed and
+high-cardinality workloads. Do not rerun benchmarks to get prettier numbers
+and do not overwrite the retained reports/results: a smoke/tiny rerun only
+validates the frozen wiring, it is not replacement evidence.
 
 ## Reproduce
 

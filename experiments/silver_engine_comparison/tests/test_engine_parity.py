@@ -31,10 +31,13 @@ from experiments.silver_engine_comparison.bench_engines import (
     read_spark_silver,
     run_comparison,
 )
+from experiments.silver_engine_comparison.engines.python_row_reference import (
+    FROZEN_BASELINE_COMMIT,
+    build_procurement_events as build_frozen_python_row,
+)
 from tfm_licitaciones.bench_silver import dataset_profile, generate_bronze_in_memory, write_bronze_parts
 from tfm_licitaciones.bronze import bronze_frame, tombstone_frame
 from tfm_licitaciones.models import PROCUREMENT_EVENT_SCHEMA
-from tfm_licitaciones.silver import build_procurement_events
 from tfm_licitaciones.silver_parity import assert_silver_parity
 from experiments.silver_engine_comparison.engines.polars_candidate import (
     CONTRACT_SCOPE as POLARS_SCOPE,
@@ -135,8 +138,16 @@ def _dataframe_coalesce_calls(tree: ast.Module) -> list[str]:
 
 
 def build_reference(seed: int = 7, with_collision: bool = False) -> pl.DataFrame:
+    """Build the historical oracle with the frozen experiment-local baseline.
+
+    This MUST NOT use the mutable production Silver facade
+    (``tfm_licitaciones.silver``): after PR #17 that facade is native
+    Polars, while the ``python-row`` label keeps meaning the e69016f
+    semantics frozen in ``engines/python_row_reference.py``.
+    """
+
     dataset = generate_bronze_in_memory(seed=seed, with_collision=with_collision)
-    return build_procurement_events(
+    return build_frozen_python_row(
         bronze_frame(dataset["records"]), tombstone_frame(dataset["tombstones"])
     )
 
@@ -185,6 +196,111 @@ class StaticGuardTests(unittest.TestCase):
         )
 
 
+class FrozenBaselineIsolationTests(unittest.TestCase):
+    """The historical python-row oracle must not track production refactors.
+
+    ``python-row`` is frozen from e69016f in
+    ``engines/python_row_reference.py``. After PR #17 the production facade
+    ``tfm_licitaciones.silver.build_procurement_events`` becomes native
+    Polars: any experiment import of that facade as the benchmark oracle
+    would silently relabel Polars as ``python-row``. These guards fail
+    loudly instead.
+    """
+
+    FROZEN_COMMIT = "e69016f62fb985639e17153e24b3a570f2f39c20"
+    # Production Silver facade/reference modules that must never serve as
+    # the historical oracle. ``silver_parity`` is intentionally NOT here:
+    # it only compares frames, it does not define the baseline transform.
+    FORBIDDEN_FACADE_MODULES = frozenset(
+        {
+            "tfm_licitaciones.silver",
+            "tfm_licitaciones.silver_reference",
+            "tfm_licitaciones.silver_native",
+        }
+    )
+
+    @staticmethod
+    def _imported_modules(path: Path) -> set[str]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        modules: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    modules.add(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    modules.add(node.module)
+        return modules
+
+    @classmethod
+    def _is_forbidden(cls, module: str) -> bool:
+        return any(
+            module == forbidden or module.startswith(forbidden + ".")
+            for forbidden in cls.FORBIDDEN_FACADE_MODULES
+        )
+
+    def test_frozen_commit_is_documented(self) -> None:
+        self.assertEqual(FROZEN_BASELINE_COMMIT, self.FROZEN_COMMIT)
+        from experiments.silver_engine_comparison.engines import python_row_reference
+
+        self.assertEqual(python_row_reference.FROZEN_BASELINE_COMMIT, self.FROZEN_COMMIT)
+        self.assertEqual(python_row_reference.IMPLEMENTATION, "python-row")
+
+    def test_frozen_module_has_no_production_imports(self) -> None:
+        modules = self._imported_modules(EXPERIMENT_SRC / "engines" / "python_row_reference.py")
+        offenders = sorted(
+            module for module in modules if module == "tfm_licitaciones" or module.startswith("tfm_licitaciones.")
+        )
+        self.assertEqual(offenders, [])
+
+    def test_no_experiment_module_uses_production_silver_facade(self) -> None:
+        offenders: list[str] = []
+        for path in sorted(EXPERIMENT_SRC.rglob("*.py")):
+            for module in sorted(self._imported_modules(path)):
+                if self._is_forbidden(module):
+                    offenders.append(f"{path.relative_to(EXPERIMENT_SRC.parent.parent)}: {module}")
+        self.assertEqual(offenders, [])
+
+
+class FrozenBaselineIndependenceTests(unittest.TestCase):
+    """Dynamically prove the frozen baseline ignores production mutations."""
+
+    def test_frozen_baseline_survives_broken_production_facade(self) -> None:
+        from unittest import mock
+
+        dataset = generate_bronze_in_memory(seed=7)
+        records = bronze_frame(dataset["records"])
+        tombstones = tombstone_frame(dataset["tombstones"])
+        expected = build_frozen_python_row(records, tombstones)
+        self.assertGreater(expected.height, 0)
+        with mock.patch(
+            "tfm_licitaciones.silver.build_procurement_events",
+            side_effect=AssertionError("production facade must not be used"),
+        ):
+            actual = build_frozen_python_row(records, tombstones)
+        assert_silver_parity(actual, expected)
+
+    def test_frozen_baseline_ignores_mutated_production_normalize(self) -> None:
+        from unittest import mock
+
+        dataset = generate_bronze_in_memory(seed=7)
+        records = bronze_frame(dataset["records"])
+        tombstones = tombstone_frame(dataset["tombstones"])
+        expected = build_frozen_python_row(records, tombstones)
+        with mock.patch(
+            "tfm_licitaciones.normalize._first_text",
+            side_effect=lambda *args, **kwargs: "MUTATED",
+        ), mock.patch(
+            "tfm_licitaciones.normalize.normalize_ted",
+            side_effect=AssertionError("production normalize must not be used"),
+        ), mock.patch(
+            "tfm_licitaciones.normalize.normalize_boe",
+            side_effect=AssertionError("production normalize must not be used"),
+        ):
+            actual = build_frozen_python_row(records, tombstones)
+        assert_silver_parity(actual, expected)
+
+
 class PolarsEngineTests(unittest.TestCase):
     """Native Polars parity and collision behavior (no Spark needed)."""
 
@@ -198,8 +314,11 @@ class PolarsEngineTests(unittest.TestCase):
     def test_parity_on_retained_part_files(self) -> None:
         # The reference must come from the SAME part files: part writers
         # assign per-part retrieved_at provenance, unlike the in-memory
-        # helper where every row shares one timestamp.
-        from tfm_licitaciones.silver import build_procurement_events as baseline
+        # helper where every row shares one timestamp. The oracle is the
+        # frozen experiment-local python-row baseline, never production.
+        from experiments.silver_engine_comparison.engines.python_row_reference import (
+            build_procurement_events as baseline,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             write_bronze_parts(Path(tmp) / "dataset", seed=7, **dataset_profile("tiny"))
@@ -237,7 +356,9 @@ class SparkEngineTests(unittest.TestCase):
             raise unittest.SkipTest(f"no local JVM for Spark: {exc}") from exc
 
     def test_parity_on_tiny_part_files(self) -> None:
-        from tfm_licitaciones.silver import build_procurement_events as baseline
+        from experiments.silver_engine_comparison.engines.python_row_reference import (
+            build_procurement_events as baseline,
+        )
         from experiments.silver_engine_comparison.engines.spark_candidate import (
             build_spark_events,
             unpersist_frames,
