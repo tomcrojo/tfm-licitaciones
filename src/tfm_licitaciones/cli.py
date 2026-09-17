@@ -59,6 +59,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="fecha de evaluación YYYY-MM-DD para la política deadline (UTC)",
     )
+
+    build_analytics = subparsers.add_parser(
+        "build-analytics",
+        help="construir la capa analítica DuckDB desde el Gold open_opportunities",
+    )
+    build_analytics.add_argument("--gold-dir", type=Path, help="directorio Gold alternativo")
+    build_analytics.add_argument("--analytics-dir", type=Path, help="directorio analítico alternativo")
+    build_analytics.add_argument("--reference-dir", type=Path, help="directorio de referencia alternativo")
+    build_analytics.add_argument("--config", type=Path, help="configuración JSON alternativa")
     return parser
 
 
@@ -158,6 +167,36 @@ def main(argv: list[str] | None = None) -> int:
                     "current_state_rows": result["current_state_rows"],
                     "current_state_issues_rows": result["current_state_issues_rows"],
                     "open_opportunities_rows": result["open_opportunities_rows"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+    if args.command == "build-analytics":
+        from .analytics_duckdb import build_analytics_duckdb
+
+        def _resolve_dir(explicit: Path | None, key: str) -> Path:
+            resolved = explicit or configured_path(config, key)
+            if not resolved.is_absolute():
+                resolved = Path(config["_project_root"]) / resolved
+            return resolved
+
+        try:
+            result = build_analytics_duckdb(
+                _resolve_dir(args.gold_dir, "gold_dir"),
+                _resolve_dir(args.analytics_dir, "analytics_dir"),
+                reference_dir=_resolve_dir(args.reference_dir, "reference_dir"),
+            )
+        except ValueError as exc:
+            raise SystemExit(f"build-analytics falló: {exc}") from exc
+        print(
+            json.dumps(
+                {
+                    "analytics_duckdb": result["duckdb_path"],
+                    "duckdb_version": result["duckdb_version"],
+                    "views": result["views"],
+                    "cpv_dimension_available": result["cpv_dimension"]["available"],
+                    "counts": result["counts"],
                 },
                 ensure_ascii=False,
             )

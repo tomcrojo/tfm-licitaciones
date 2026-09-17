@@ -22,3 +22,6 @@ data/reference/
 # Dimension DIR3: XLSX oficiales descargados y Parquet regenerable con cli dir3
 data/raw/dir3/*.xlsx
 data/reference/dir3/*.parquet
+
+# Capa analitica DuckDB regenerable con licitaciones-pipeline build-analytics
+data/analytics/
