@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -32,6 +33,20 @@ def _row(
         "raw_sha256": "a" * 64,
         "raw_retrieved_at": retrieved_at,
         "source_deleted_at": source_deleted_at,
+    }
+
+
+def _record_row(payload: dict, *, source: str = "ted") -> dict:
+    return {
+        "source": source,
+        "source_file": f"{source}/sample.jsonl",
+        "source_member": None,
+        "source_member_index": None,
+        "record_locator": "line:1",
+        "source_record_id": None,
+        "raw_sha256": "b" * 64,
+        "raw_retrieved_at": RETRIEVED,
+        "payload_json": json.dumps(payload, ensure_ascii=False, sort_keys=True),
     }
 
 
@@ -94,6 +109,26 @@ class TombstoneSourceTimeTests(unittest.TestCase):
         self.assertEqual(events["event_id"][0], _event_id(when))
         self.assertEqual(events["source_updated_at"][0], when)
         self.assertEqual(events["ingested_at"][0], early)
+
+    def test_source_time_survives_reference_fallback_route(self) -> None:
+        when = datetime(2026, 1, 10, 16, 1, 39, 351000, tzinfo=UTC)
+        # Non-ASCII TED country text is intentionally outside the native
+        # eligibility domain but remains valid for the frozen reference,
+        # forcing this batch through the reference-fallback route.
+        ted = {
+            "_source": "ted",
+            "ND": "N-FALLBACK",
+            "TI": "Fallback control",
+            "CY": "España",
+        }
+        events = build_procurement_events(
+            bronze_frame([_record_row(ted)]),
+            tombstone_frame([_row(when)]),
+        )
+        rows = {row["event_id"]: row for row in events.iter_rows(named=True)}
+        tombstone = rows[_event_id(when)]
+        self.assertEqual(tombstone["procedure_id"], f"placsp:procedure:{REF}")
+        self.assertEqual(tombstone["source_updated_at"], when)
 
     def test_legacy_undated_tombstone_keeps_historical_identity(self) -> None:
         events = build_procurement_events(bronze_frame([]), tombstone_frame([_row(None)]))
