@@ -108,6 +108,21 @@ las versiones (`CPV_ENRICHED_SCHEMA_VERSION`,
 `BUYER_DIR3_ENRICHED_SCHEMA_VERSION`) quedan listas para persistirse en el
 manifiesto de construcción cuando esos artefactos se produzcan.
 
+## Composición en el Gold principal (`open_opportunities`)
+
+El builder `tfm_licitaciones.gold_open_opportunities` compone ambos
+enriquecimientos **solo para métricas medidas**, sin duplicar su lógica:
+
+- CPV: el array canónico `cpv_codes` se conserva intacto en
+  `open_opportunities` (una fila por `procedure_id`, sin explosión ni
+  colapso); `enrich_cpv` corre sobre el conjunto abierto y sus
+  `resolved/unresolved` van al `gold_manifest.json`. No se persiste ningún
+  dataset secundario `opportunity_cpv`: el array ya transporta todos los
+  códigos publicados.
+- DIR3: `enrich_buyers_dir3` corre sobre el conjunto abierto solo para
+  métricas; `buyer_id`/`buyer_name` nunca se reescriben y una dimensión
+  ausente deja `dir3.available=false` sin bloquear Gold.
+
 ## Ejecución
 
 ```bash
