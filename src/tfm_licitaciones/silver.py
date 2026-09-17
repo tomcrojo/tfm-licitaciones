@@ -30,14 +30,16 @@ timestamps); a fallback run is never labelled as native. The routing decision
 is logged once per batch (route, fallback reason category and row counts).
 
 The frozen reference predates source-dated tombstones and stays untouched.
-After route selection, the facade gives each guard-compatible tombstone a
-temporary, injective routing identity. Dated and undated controls use disjoint
-internal namespaces, so an arbitrary published ref cannot collide with the
-source-time encoding. After either route, the facade restores canonical
-tombstone event ids, the published ref as ``procedure_id`` and the
-authoritative source time. Tombstone rows outside the guard's reference domain
-are never decorated, preserving historical failure/value semantics and
-first-error behavior on the fallback route.
+Batches with no dated tombstones are passed to the selected engine as the exact
+original frames. Only when at least one source-dated delete exists does the
+facade, after route selection, give guard-compatible tombstones temporary,
+injective routing identities. Dated and undated controls use disjoint internal
+namespaces, so an arbitrary published ref cannot collide with the source-time
+encoding. After either route, the facade restores canonical tombstone event
+ids, the published ref as ``procedure_id`` and the authoritative source time.
+Tombstone rows outside the guard's reference domain are never decorated,
+preserving historical failure/value semantics and first-error behavior on the
+fallback route.
 
 A PySpark candidate is retained as an experimental scale-out path (see
 ``experiments/``) to be productionized separately if larger deployments
@@ -66,7 +68,7 @@ IMPLEMENTATION = "hybrid-native-reference"
 IMPLEMENTATION_DETAIL = (
     f"eligibility-guarded hybrid: {_NATIVE_KERNEL_DETAIL} for batches inside "
     "the documented domain; otherwise the frozen python-row reference after "
-    "selection (never a try/except fallback); guard-compatible PLACSP tombstones "
+    "selection (never a try/except fallback); source-dated PLACSP tombstones "
     "receive injective internal routing identities and canonical source-time "
     "enrichment without changing the frozen reference"
 )
@@ -88,17 +90,23 @@ def _select_route(eligibility: NativeEligibility) -> str:
 def _prepare_tombstone_identities(
     tombstones: pl.DataFrame,
 ) -> tuple[pl.DataFrame, pl.DataFrame | None]:
-    """Route guard-compatible tombstones through an injective namespace.
+    """Route source-dated, guard-compatible tombstones injectively.
 
-    The frozen builders derive tombstone identity from ``source_record_id``.
-    Every guard-compatible PLACSP tombstone is therefore decorated after the
-    eligibility decision: undated and dated controls occupy disjoint internal
-    namespaces, and dated identities put the semantic discriminator before the
-    arbitrary source ref. Rows the guard rejects for source/ref semantics are
-    left byte-for-byte unchanged so reference fallback sees the original input.
+    If the batch contains no source-dated deletion, return the exact input
+    frame object: the historical native/reference routing contract remains
+    byte-for-byte and identity-preserving for every pre-extension batch.
+
+    When at least one dated delete exists, the frozen builders still derive
+    tombstone identity from ``source_record_id``. Guard-compatible PLACSP
+    tombstones therefore receive disjoint internal identities after the guard
+    decision. Rows the guard rejects for source/ref semantics are left
+    byte-for-byte unchanged so reference fallback sees the original values.
     """
 
     if _TOMBSTONE_SOURCE_TIME not in tombstones.columns or tombstones.height == 0:
+        return tombstones, None
+    source_times = tombstones.get_column(_TOMBSTONE_SOURCE_TIME)
+    if source_times.null_count() == tombstones.height:
         return tombstones, None
 
     original_ref = pl.col("source_record_id")
@@ -178,11 +186,10 @@ def build_procurement_events(records: pl.DataFrame, tombstones: pl.DataFrame) ->
     The eligibility guard inspects the complete *original* batch first.
     Eligible batches run the native Polars kernel
     (:mod:`tfm_licitaciones.silver_native`); every other batch runs the frozen
-    python-row reference (:mod:`tfm_licitaciones.silver_reference`). Only after
-    that route decision are guard-compatible tombstone refs replaced by
-    injective internal identities required to express source-dated deletion
-    cycles. Guard-rejected rows remain unchanged, preserving reference errors,
-    values and ordering.
+    python-row reference (:mod:`tfm_licitaciones.silver_reference`). Undated
+    batches are handed to that selected engine unchanged. Only batches that
+    actually contain source-dated deletes need injective internal tombstone
+    identities, and guard-rejected rows remain unchanged inside those batches.
     """
 
     eligibility = assess_native_eligibility(records, tombstones)
