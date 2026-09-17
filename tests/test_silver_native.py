@@ -307,7 +307,7 @@ def _parity_cases():
             _ted({**TED_PAYLOAD, "estimated-value-lot": "125000.500"}, source_file="ted/b.jsonl", retrieved_at=LATER),
         ), ()),
         # --- Collisions on more fields live in FailureParityTests ---
-        # --- Independent-audit regressions (Astra) ---
+        # --- Numeric, temporal and localized-text regressions ---
         ("audit microsecond .123 event id", [_placsp({**PLACSP_PAYLOAD, "updated": "2026-01-08T10:00:00.123+01:00"})], ()),
         ("audit microsecond .001 event id", [_placsp({**PLACSP_PAYLOAD, "updated": "2026-01-08T10:00:00.001+01:00"})], ()),
         ("audit localized list first non-empty", [_ted({**TED_PAYLOAD, "TI": {"eng": ["", "Useful title"]}})], ()),

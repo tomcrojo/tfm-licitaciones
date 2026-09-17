@@ -3,28 +3,21 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.egg-info/
+build/
+dist/
 
-# Regenerables con: python -m tfm_licitaciones.cli ingest (no commitar batches reales)
-data/raw/ted/ted-*.jsonl
-data/raw/boe/boe-*.jsonl
+# Raw, derived datasets, manifests and exports are regenerated locally.
+/data/
+*.duckdb
+*.duckdb.wal
+*.log
+.sparkStaging/
+artifacts/
+spark-warehouse/
 
-# Corpus raw y capas derivadas grandes: regenerables con cli ingest + run
-data/raw/placsp/placsp-*.zip
-data/raw/**/*.provenance.json
-data/bronze/records.jsonl
-data/silver/tenders.jsonl
-data/gold/opportunities.jsonl
-data/gold/opportunities.csv
-
-# Dimensiones de referencia regenerables desde config/reference
-data/reference/
-
-# Dimension DIR3: XLSX oficiales descargados y Parquet regenerable con cli dir3
-data/raw/dir3/*.xlsx
-data/reference/dir3/*.parquet
-
-# Capa analitica DuckDB regenerable con licitaciones-pipeline build-analytics
-data/analytics/
-
-# CSV Tableau regenerables con licitaciones-pipeline export-tableau
-data/exports/
+# Local credentials and editor/OS files.
+.env
+.env.*
+!.env.example
+.DS_Store
+.ipynb_checkpoints/

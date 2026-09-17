@@ -9,8 +9,8 @@
 --     (identity_basis = 'buyer_name'), so different unnamed buyers are never
 --     collapsed into one another; opportunities with neither id nor name
 --     stay observable as the (null, null) bucket.
--- avg_estimated_value is rounded to 6 fractional digits (DECIMAL(38,6)) so
--- monetary aggregates never silently become floating point.
+-- avg_estimated_value is cast to DECIMAL(38,6) after DuckDB AVG computes
+-- in DOUBLE; the published type does not imply exact decimal averaging.
 CREATE OR REPLACE VIEW buyer_summary AS
 SELECT
     buyer_id,

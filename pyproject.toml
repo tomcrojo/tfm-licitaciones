@@ -1,7 +1,7 @@
 [project]
 name = "tfm-licitaciones"
 version = "0.1.0"
-description = "Pipeline DataOps reproducible para licitaciones públicas tecnológicas."
+description = "Pipeline DataOps reproducible para contratación pública."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Tomás Campoy Rojo" }]

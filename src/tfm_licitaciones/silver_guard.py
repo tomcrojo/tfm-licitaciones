@@ -386,7 +386,7 @@ def _placsp_amount_field_eligible(payload: dict[str, Any], key: str) -> bool:
     presence gate. A float needs validated raw text, so only its non-null
     presence is used; its backend-decoded spelling never reaches Decimal.
     Keep the previous plain-spelling bound even on these float gates to
-    avoid expanding the eligible domain while closing the audit defects.
+    keep the eligible domain limited to values with exact reference parity.
     """
 
     raw = payload.get(f"{key}_raw")

@@ -1,11 +1,8 @@
 """Offline Bronze-Parquet-to-Silver-Parquet benchmark harness.
 
-Baseline under measurement: a python-row baseline over a Polars/Parquet
-boundary. The current canonical implementation receives Polars frames but
-executes per-row Python: ``iter_rows``, one ``json.loads`` per row,
-``ProcurementEvent`` object allocation, Python dict grouping with
-dedup/collision comparison, and a Python sort. This module must keep naming
-that accurately: it is not a vectorized Polars execution.
+The measured implementation is the frozen python-row reference from
+silver_reference, not the hybrid production facade. It uses iter_rows,
+json.loads, Python grouping and sorting over a Polars/Parquet boundary.
 
 The manual scale path never holds the corpus in memory. Dataset generation
 streams logical rows through a bounded buffer and writes deterministic Bronze

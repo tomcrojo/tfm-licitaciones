@@ -1,121 +1,123 @@
 # tfm-licitaciones
 
-Pipeline reproducible para integrar y analizar datos de contratación pública.
-Es el repositorio del Trabajo Fin de Máster de la opción de Data Engineering de
-la UCM.
+Prototipo del Trabajo Fin de Máster de Data Engineering de la UCM para
+integrar datos de contratación pública, conservar su procedencia y preparar
+análisis de oportunidades en Tableau. El modelo es generalista; la tecnología
+es el caso de estudio de la [propuesta académica](docs/propuesta/propuesta-enviada.md).
 
-La plataforma objetivo es generalista: debe poder procesar contratación de
-cualquier sector representado por CPV. La tecnología se mantiene como caso de
-estudio de la memoria, de acuerdo con la
-[propuesta enviada](docs/propuesta/propuesta-enviada.md).
+## Fuentes y arquitectura
 
-## Estado del proyecto
+TED aporta avisos europeos y OpenPLACSP aporta licitaciones españolas mediante
+ZIP mensuales con Atom/CODICE. CPV 2008 permite analizar categorías y DIR3
+aporta referencias de organismos. BOE tiene un adaptador de compatibilidad,
+deshabilitado por defecto. Los contratos menores no están integrados.
 
-La versión actual es un punto de partida funcional, no la arquitectura final.
-Incluye:
+```text
+Raw → Bronze Parquet → Silver Parquet → Gold Parquet → DuckDB → CSV → Tableau
+      parsing/rechazos  histórico       oportunidades  vistas   exportación
+```
 
-- descarga explícita desde TED y OpenPLACSP;
-- dimensión de referencia DIR3 de unidades orgánicas por ámbito (AGE, CCAA,
-  EELL, Universidades, Otras Instituciones y Justicia);
-- conservación local de los payloads descargados;
-- parsing de JSON, ZIP, Atom y CODICE/XML;
-- Bronze Parquet con procedencia, rechazos localizados y conteos de ingesta;
-- Silver canónico `procurement_events.parquet` que preserva el histórico de
-  avisos, revisiones y tombstones como eventos con identidad determinista;
-- una vista legada de estado vigente (`TenderRecord`, en memoria) que Gold 0.1
-  sigue consumiendo con plegado de revisiones y tombstones;
-- clasificación tecnológica por reglas y CPV como baseline;
-- un enlace heurístico de avisos y controles de calidad básicos;
-- artefactos de ejecución con conteos y checksums.
+Python descarga y parsea los datos. Polars procesa Bronze, referencias y Silver;
+Silver usa una referencia Python cuando el lote queda fuera del dominio del
+kernel nativo. PySpark resuelve el estado vigente y construye Gold. DuckDB
+consulta Gold con SQL versionado; Tableau consume los CSV exportados.
+Airflow y los modelos semánticos preentrenados son trabajo futuro.
 
-El [manifest versionado](data/gold/run_manifest.json) corresponde a una
-ejecución del 2 de septiembre de 2026 sobre 9.905 avisos TED y 129.090 avisos
-OpenPLACSP tras el plegado. Estos datos describen ese corpus concreto; no son
-una estimación del histórico completo. Este artefacto versionado conserva los
-nombres de campos históricos del manifest 0.1 y no es un ejemplo del nuevo
-contrato de manifest en ejecución; los nombres vigentes están documentados en
-el [contrato de datos](docs/data_contract.md).
-
-Bronze y Silver canónico utilizan Parquet. Silver canónico (`procurement_events`)
-se ejecuta con una ruta híbrida: una guarda de elegibilidad inspecciona el
-batch completo y decide antes de ejecutar entre el kernel nativo de Polars
-para su dominio admitido y la referencia python-row congelada (mismos
-frames) para cualquier batch fuera de él, con la semántica histórica
-como oráculo de paridad y la ruta registrada por batch. Se conserva un candidato
-PySpark como ruta de scale-out evaluada fuera del pipeline
-productivo, con paridad acreditada solo sobre el contrato sintético
-TED/PLACSP del experimento (sin BOE ni instantes subsegundo); Gold todavía usa JSONL/CSV y
-ejecución manual. El objetivo asigna Python al
-parsing y control, Polars a lotes acotados, dimensiones locales y Silver
-canónico dentro del envelope medido, y PySpark a joins grandes, generación de
-candidatos de linkage y Gold de alta cardinalidad, con Parquet entre etapas y
-Airflow como plano de control. La migración hacia ingesta incremental idempotente,
-Parquet en Gold, nuevas fuentes y Airflow está descrita en la
-[arquitectura](docs/architecture.md). La frontera contractual preparada para la
-siguiente etapa Silver→Spark→Gold se documenta en
-[Gold/Spark contract foundation](docs/gold_spark_contract.md). El
-[benchmark](docs/benchmarks.md) fija el protocolo de comparación y recoge los
-resultados medidos, incluida la decisión del motor de Silver. Las limitaciones
-conocidas se documentan en el [contrato de datos](docs/data_contract.md).
+`run` genera Bronze y Silver y conserva salidas JSONL/CSV de un baseline
+anterior (clasificación tecnológica y linkage). La cadena analítica actual
+continúa explícitamente con `build-gold`, `build-analytics` y `export-tableau`.
 
 ## Ejecución local
 
-Requisitos: Python 3.10 o posterior y
-[`uv`](https://docs.astral.sh/uv/).
+Desde la raíz del repositorio, con Python 3.10+, `uv` y Java 17+ para Gold.
+La instalación inicial necesita red; este ejemplo usa únicamente fixtures
+locales. `uv.lock` fija las dependencias base; PySpark se solicita con versión
+explícita porque es una dependencia opcional.
 
 ```bash
-uv run --with-editable . python -m unittest discover -s tests -v
-
-uv run --with-editable . python -m tfm_licitaciones.cli run \
-  --raw-dir tests/fixtures/raw \
-  --output-root /tmp/tfm-licitaciones-fixture
+uv run --locked --with-editable . licitaciones-pipeline --help
+uv run --locked --with-editable . licitaciones-pipeline run \
+  --raw-dir tests/fixtures/raw --output-root data/demo
+uv run --locked --with 'pyspark==4.0.1' --with-editable . \
+  licitaciones-pipeline build-gold --silver-dir data/demo/silver \
+  --gold-dir data/demo/gold --reference-dir data/demo/reference --as-of 2026-01-01
+uv run --locked --with-editable . licitaciones-pipeline build-analytics \
+  --gold-dir data/demo/gold --analytics-dir data/demo/analytics \
+  --reference-dir data/demo/reference
+uv run --locked --with-editable . licitaciones-pipeline export-tableau \
+  --analytics-dir data/demo/analytics --exports-dir data/demo/exports
 ```
 
-Las pruebas y el ejemplo anterior trabajan con fixtures locales. La descarga
-desde fuentes oficiales es una operación separada y requiere red:
+Los fixtures prueban el recorrido técnico, no representan una muestra de mercado.
+Con estos fixtures, Gold produce cero oportunidades abiertas y los CSV conservan
+sus cabeceras: es el resultado esperado de la política conservadora.
+Las referencias ausentes se registran como tales; véase cómo construir
+[CPV y DIR3](docs/references.md). Para datos reales, primero ejecutar `ingest`
+con fuente y fechas explícitas según la [guía de reproducción](docs/reproducibility.md).
+La configuración está en [config/pipeline.json](config/pipeline.json).
+
+Salidas del ejemplo (los directorios por defecto no incluyen `demo/`):
+
+| Ruta bajo `data/demo/` | Contenido |
+| --- | --- |
+| `bronze/` | Registros, rechazos, tombstones e informe de ingesta |
+| `silver/procurement_events.parquet` | Histórico canónico |
+| `gold/open_opportunities/` | Oportunidades abiertas en Parquet |
+| `gold/gold_manifest.json` | Versiones, conteos y métricas Gold |
+| `analytics/licitaciones.duckdb` | Vistas SQL sobre Gold |
+| `exports/tableau/` | Cinco CSV y manifest de exportación |
+
+El montaje del dashboard en Tableau es manual; el repositorio genera sus datos.
+La [guía analítica](docs/analytics.md) explica los granos y cómo evitar doble
+conteo al analizar varios CPV por oportunidad.
+
+## Pruebas
+
+La suite utiliza **unittest**, fixtures locales y HTTP simulado:
 
 ```bash
-uv run --with-editable . python -m tfm_licitaciones.cli ingest \
-  --start 2026-01-01 --end 2026-06-30 --source ted
-
-uv run --with-editable . python -m tfm_licitaciones.cli ingest \
-  --start 2026-01-01 --end 2026-06-30 --source placsp
-
-uv run --with-editable . python -m tfm_licitaciones.cli ingest \
-  --start 2026-09-15 --end 2026-09-15 --source dir3
-
-# dimensión DIR3 offline a partir de data/raw/dir3 (ver docs/dir3-reference.md)
-uv run --with-editable . python -m tfm_licitaciones.cli dir3
+uv run --locked --with-editable . python -m unittest discover -s tests -v
+uv run --locked --with 'pyspark==4.0.1' --with-editable . \
+  python -m unittest discover -s tests -v
 ```
 
-La [guía de ejecución](docs/run.md) explica las salidas y las limitaciones del
-flujo actual.
+La primera ejecución omite las pruebas Spark si PySpark no está instalado.
+La segunda incluye esas pruebas. Los experimentos tienen una suite separada,
+documentada junto con los [smoke tests y benchmarks](docs/reproducibility.md).
 
-## Estructura
+## Estructura y documentación
 
 ```text
-config/                       configuración y referencias
-data/raw/                     descargas originales no versionadas
-data/bronze/                  representación source-specific
-data/silver/                  registros normalizados
-data/gold/                    resultados y evidencia ligera
-src/tfm_licitaciones/         implementación Python
-tests/                        pruebas y fixtures offline
-docs/                         arquitectura, contrato y operación
+config/       configuración, certificado público FNMT y vocabulario CPV
+src/          adaptadores, transformaciones y CLI
+sql/duckdb/   vistas analíticas versionadas
+tests/        pruebas de regresión y fixtures pequeños
+experiments/  comparación reproducible de motores Silver
+docs/         contratos, operación y evidencia seleccionada
+data/         datos y outputs locales, excluidos de Git
 ```
 
-Documentación principal:
+- [Arquitectura](docs/architecture.md): componentes actuales y límites.
+- [Contrato de datos](docs/data_contract.md): Raw, Bronze, Silver y Gold.
+- [Analítica](docs/analytics.md): DuckDB y exportación Tableau.
+- [Reproducibilidad](docs/reproducibility.md): ingesta, ejecución y validación.
+- [Referencias](docs/references.md): CPV y DIR3.
+- [Experimento de motores](experiments/silver_engine_comparison/README.md): método y evidencia.
 
-- [arquitectura técnica](docs/architecture.md);
-- [contrato Gold/Spark](docs/gold_spark_contract.md);
-- [capa analítica DuckDB](docs/analytics.md);
-- [enriquecimiento Gold CPV/DIR3](docs/gold_enrichment.md);
-- [benchmark Bronze→Silver y paridad](docs/benchmarks.md);
-- [contrato de datos actual](docs/data_contract.md);
-- [guía de ejecución](docs/run.md);
-- [evolución desde los prototipos](docs/prototype_migration.md);
-- [propuesta académica enviada](docs/propuesta/propuesta-enviada.md).
+## Limitaciones del prototipo
 
-## Licencia
+- TED conserva un filtro tecnológico en la configuración de descarga.
+- La CLI no integra todavía un estado persistente de completitud de ventanas;
+  un fallo parcial de descarga exige revisar los logs. Los ZIP cacheados no se
+  refrescan automáticamente.
+- Silver no mapea actualmente `deadline`; TED tampoco aporta `status` al
+  contrato. Gold aplica una política conservadora y no publica como abiertas
+  las filas sin evidencia suficiente. PLACSP usa el estado `PUB`.
+- `publication_date` de PLACSP es nula: su fecha de actualización no se utiliza
+  como fecha de publicación. El agregado mensual puede quedar vacío.
+- La calidad del baseline y los rechazos Bronze se informan por separado.
+  No existe una certificación global de completitud o calidad del corpus.
+- Las pruebas locales y el benchmark sintético no acreditan operación en
+  producción ni escalabilidad distribuida del pipeline completo.
 
-MIT. Véase [LICENSE](LICENSE).
+Licencia [MIT](LICENSE).
