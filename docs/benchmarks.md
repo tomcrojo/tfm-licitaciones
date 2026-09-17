@@ -176,47 +176,61 @@ orden físico irrelevante y los fallos ante contenido o esquema divergente).
 No usan red y solo `tiny` corre en CI; `small`, `medium`, `large` y
 `backfill` son manuales.
 
-## Motor de producción: Polars nativo (2026-09-16)
+## Motor de producción: híbrido con guarda de elegibilidad (2026-09-17)
 
-El motor productivo de Silver canónico es la implementación Polars nativa
-(`src/tfm_licitaciones/silver_native.py`), que cubre el contrato real
-completo: BOE, CPV escalar o lista, campos TED escalares o por idioma,
-instantes con subsegundos y la selección PLACSP por presencia de clave. La
-semántica del baseline python-row está congelada en
-`src/tfm_licitaciones/silver_reference.py` como oráculo de paridad, y
-`tests/test_silver_native.py` exige paridad exacta de frames y de mensajes
-de fallo contra la referencia. La comparación controlada entre motores
-(python-row, Polars nativo, Spark nativo) y su auditoría adversarial viven
-como evidencia experimental en `experiments/silver_engine_comparison/`;
-concluyen que Polars gana Silver canónico en el envelope medido de un solo
-nodo y que Spark queda reservado a scale-out y joins de alta cardinalidad.
+El motor productivo de Silver canónico es híbrido: `build_procurement_events`
+inspecciona el batch completo (records y tombstones) con
+`src/tfm_licitaciones/silver_guard.py` *antes* de ejecutar nada y decide la
+ruta:
 
-Medición de producción referencia vs motor nativo sobre el dataset
+- **nativa** (`src/tfm_licitaciones/silver_native.py`) si todas las filas
+  pertenecen al dominio elegible documentado en la guarda: identidades de
+  texto no vacías, texto localizado plano (cadenas o listas planas de
+  cadenas), CPV escalar/lista de cadenas, importes decimales simples,
+  fechas con prefijo `YYYY-MM-DD` estricto, instantes RFC 3339 estrictos con
+  segundos y offset de minutos completos (o formas que la referencia
+  resuelve como "sin fecha"), y tombstones PLACSP con referencia completa;
+- **referencia python-row congelada** (`src/tfm_licitaciones/silver_reference.py`)
+  con los frames originales para cualquier batch fuera de ese dominio.
+
+Una sola fila no elegible envía el batch completo a la referencia, que
+conserva valores, orden del primer error y mensajes. La guarda usa
+`json.loads` de CPython sobre `payload_json` (sin conversiones ni pérdida de
+precisión) y la ruta elegida se registra una vez por batch en el logger
+`tfm_licitaciones.silver` (`route`, `fallback_reason`, `records`,
+`tombstones`). Una ejecución con fallback no se etiqueta como nativa.
+
+La semántica histórica sigue congelada en `silver_reference.py` como oráculo
+de paridad, y `tests/test_silver_native.py` exige paridad exacta de frames y
+de mensajes contra ella para ambas rutas, además de cubrir la propia frontera
+(una fila inelegible activa fallback, la referencia recibe los frames
+originales, las excepciones nativas no se ocultan). La comparación controlada
+entre motores y su auditoría adversarial viven como evidencia experimental en
+`experiments/silver_engine_comparison/`; concluyen que Polars gana Silver
+canónico en el envelope medido de un solo nodo y que Spark queda reservado a
+scale-out y joins de alta cardinalidad.
+
+Medición de la API productiva completa (guarda incluida) sobre el dataset
 sintético retenido del generador (`bench_silver`, semilla 7, misma frontera
 lectura→transformación, generación excluida del cronómetro, paridad
-verificada con `silver_parity` en cada perfil):
+verificada con `silver_parity` en la ruta nativa):
 
-| Perfil | Observaciones Bronze | Eventos Silver | python-row (ref) | polars-native (prod) | Aceleración |
+| Perfil | Observaciones Bronze | Eventos Silver | python-row (ref) | híbrido API completa | Aceleración |
 | --- | --- | --- | --- | --- | --- |
-| medium | 248.576 + 5.001 tombstones | 225.004 | 10,60 s | 5,88 s | ×1,8 |
-| large | 1.988.576 + 40.001 tombstones | 1.800.004 | 84,75 s | 43,68 s | ×1,9 |
+| medium elegible | 248.576 + 5.001 tombstones | 225.004 | 10,70 s | 5,86 s (guarda 2,78 s) | ×1,8 |
+| large elegible | 1.988.576 + 40.001 tombstones | 1.800.004 | 80,27 s | 45,06 s (guarda 20,65 s) | ×1,8 |
+| medium con fallback¹ | 248.577 + 5.001 tombstones | 225.005 | 10,12 s | 13,17 s (guarda 2,65 s) | ×0,8 |
 
-Las cifras anteriores (medium 4,15 s / large 27,16 s) correspondían al motor
-nativo antes de la corrección de paridad de la auditoría independiente:
-probes de tipo estructurales y path-aware (`$["key"][?(@ >= "")]`, una
-travesía JSON extra por campo en vez del regex no estructural), puerto
-exacto de `datetime.fromisoformat` (incluido reemplazo textual de `Z`),
-diagnóstico de colisiones del primer conflicto y `str(float)` de Python
-para exponentes. La versión actual mide 5,88 s / 43,68 s en la misma
-máquina y protocolo (coste de la corrección: +1,7 s en medium, +16,5 s en
-large; paridad verificada en cada perfil, frames y mensajes de fallo). El
-grueso del coste es la segunda travesía JSON por campo de los probes
-estructurales; reducirlos con un único decode para campos estables es el
-seguimiento ya registrado y no se ha debilitado ninguna semántica para
-recuperar velocidad.
+¹ Un lote con una única identidad numérica fuera de dominio: la guarda
+recorre el batch y la referencia lo procesa entero, por lo que el coste del
+fallback es guarda + referencia. Los corpora sintéticos completos de los
+perfiles tiny..large son elegibles.
+
+Configuración medida: Python 3.11.16, Polars 1.44.2, 16 CPU, semilla 7.
 
 Comando reproducible (por perfil; `n_ted`/`n_placsp`/`rows_per_part` según
-la tabla de perfiles del protocolo):
+la tabla de perfiles del protocolo; añadir una fila no elegible para medir
+el fallback):
 
 ```bash
 uv run --with-editable . python - <<'PY'
@@ -225,20 +239,23 @@ from pathlib import Path
 import polars as pl
 from tfm_licitaciones.bench_silver import write_bronze_parts
 from tfm_licitaciones.silver import build_procurement_events
+from tfm_licitaciones.silver_guard import assess_native_eligibility
 from tfm_licitaciones.silver_reference import build_procurement_events_reference
 from tfm_licitaciones.silver_parity import assert_silver_parity
 root = Path("/tmp/silver-prod-bench")
 manifest = write_bronze_parts(root, seed=7, n_ted=100_000, n_placsp=100_000, rows_per_part=10_000)
 records = pl.read_parquet(str(root / manifest["layout"]["records"]))
 tombstones = pl.read_parquet(str(root / manifest["layout"]["tombstones"]))
+t0 = time.perf_counter(); eligibility = assess_native_eligibility(records, tombstones); t_guard = time.perf_counter() - t0
 t0 = time.perf_counter(); reference = build_procurement_events_reference(records, tombstones); t_ref = time.perf_counter() - t0
-t0 = time.perf_counter(); native = build_procurement_events(records, tombstones); t_nat = time.perf_counter() - t0
-assert_silver_parity(native, reference)
-print(f"reference {t_ref:.2f}s  native {t_nat:.2f}s  events {native.height}  parity ok")
+t0 = time.perf_counter(); public = build_procurement_events(records, tombstones); t_pub = time.perf_counter() - t0
+assert_silver_parity(public, reference)
+print(f"eligible={eligibility.eligible} guard {t_guard:.2f}s  reference {t_ref:.2f}s  "
+      f"public {t_pub:.2f}s  events {public.height}  parity ok")
 PY
 ```
 
-El coste fijo de plan del motor nativo (~1,3 s por llamada tras el puerto
-temporal exacto, medido en el build de una fila) es irrelevante a esta
-escala y solo penaliza ejecuciones con muchos lotes diminutos (documentado
-como seguimiento para ventanas diarias pequeñas).
+El coste fijo de plan del kernel nativo (~0,6 s por llamada, medido en el
+build de una fila) es irrelevante a esta escala y solo penaliza ejecuciones
+con muchos lotes diminutos (documentado como seguimiento para ventanas
+diarias pequeñas).

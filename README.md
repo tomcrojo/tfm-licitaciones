@@ -37,9 +37,12 @@ contrato de manifest en ejecución; los nombres vigentes están documentados en
 el [contrato de datos](docs/data_contract.md).
 
 Bronze y Silver canónico utilizan Parquet. Silver canónico (`procurement_events`)
-se ejecuta desde la medición disponible con el motor nativo de Polars, con la
-semántica python-row congelada como oráculo de paridad y un candidato
-PySpark conservado como ruta de scale-out evaluada fuera del pipeline
+se ejecuta con una ruta híbrida: una guarda de elegibilidad inspecciona el
+batch completo y decide antes de ejecutar entre el kernel nativo de Polars
+para su dominio admitido y la referencia python-row congelada (mismos
+frames) para cualquier batch fuera de él, con la semántica histórica
+como oráculo de paridad y la ruta registrada por batch. Se conserva un candidato
+PySpark como ruta de scale-out evaluada fuera del pipeline
 productivo, con paridad acreditada solo sobre el contrato sintético
 TED/PLACSP del experimento (sin BOE ni instantes subsegundo); Gold todavía usa JSONL/CSV y
 ejecución manual. El objetivo asigna Python al

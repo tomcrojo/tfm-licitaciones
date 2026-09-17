@@ -2,14 +2,16 @@
 
 This module preserves, unchanged, the per-row Python semantics that
 :mod:`tfm_licitaciones.silver` shipped before the native Polars engine became
-the production default. It is retained as the parity oracle for tests and for
-the engine benchmarks: :mod:`tfm_licitaciones.bench_silver` measures it as the
-``python-row`` baseline, and ``tests/test_silver_native.py`` asserts that the
-production native engine produces exactly the same frames and the same
-explicit failures.
+the production default. It is the historical parity oracle for tests and for
+the engine benchmarks, and it is also the production **fallback**: the hybrid
+routing in :mod:`tfm_licitaciones.silver` hands it the original frames for
+every batch outside the native eligibility domain, so the historical values,
+first errors and failure messages are preserved for the whole accepted
+Bronze domain.
 
-It is NOT used by the production ``run`` pipeline. Do not refactor it into the
-native engine or "improve" its semantics: its value is being frozen.
+It is NOT refactored or "improved": its value is being frozen and independent
+from the native kernel. Do not make its semantics depend on mutable
+production code.
 
 Frozen baseline: ``e69016f62fb985639e17153e24b3a570f2f39c20`` (the ``main``
 merge of PR #15, the parent of the engine migration). The reference copies

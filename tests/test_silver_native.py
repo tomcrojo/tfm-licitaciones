@@ -1,19 +1,24 @@
-"""Parity and native-execution tests for the production Polars Silver engine.
+"""Parity, routing and native-execution tests for the hybrid Silver engine.
 
-The frozen python-row semantics live in ``tfm_licitaciones.silver_reference``
-and the production engine in ``tfm_licitaciones.silver_native``: this suite
-asserts that both produce exactly the same frames, the same explicit
-failures (including message text) on an adversarial shape matrix, and that
-the native engine never uses per-row Python on its success path. Cross-engine
-parity with the experimental candidates lives in the experiment area
-(``experiments/silver_engine_comparison/tests/``), not here.
+Production Silver is hybrid: ``tfm_licitaciones.silver`` asks
+``tfm_licitaciones.silver_guard`` whether the complete batch belongs to the
+narrow native domain and otherwise hands the original frames to the frozen
+python-row reference. This suite asserts that both routes produce exactly
+the same frames and the same explicit failures (including message text) on
+an adversarial shape matrix, exercises the routing boundary itself (native
+for eligible batches, whole-batch fallback with the original frames, no
+try/except hiding), and keeps the native kernel free of per-row Python.
+Cross-engine parity with the experimental candidates lives in the
+experiment area (``experiments/silver_engine_comparison/tests/``), not here.
 
-Coverage: identities (including the ``"0"`` vs ``0`` truthiness matrix as
-primary and fallback values), procedure/buyer IDs, CPV scalar/list/order/
-dedup, localized-text recursion, JSON escape semantics, amount presence vs
-truthiness, exact Decimal boundaries, timestamps, provenance-minimum
-selection, repeated observations, collisions, unsupported/null sources,
-tombstones, multi-error failure ordering and determinism.
+Coverage: identities (including the ``"0"`` vs ``0`` truthiness matrix and
+numeric identities routed to the reference), procedure/buyer IDs, CPV
+scalar/list/order/dedup, localized-text recursion, JSON escape semantics,
+amount presence vs truthiness, exact Decimal boundaries, timestamps,
+publication dates, provenance-minimum selection, repeated observations,
+collisions, unsupported/null sources, tombstones, multi-error failure
+ordering, determinism, the Raw->Bronze->public-API audit regressions and
+the frozen reference's independence.
 """
 
 from __future__ import annotations
@@ -21,12 +26,15 @@ from __future__ import annotations
 import ast
 import json
 import random
+import re
+import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
 
+from raw_fixtures import evidence_for_fixture
 from test_silver import (
     BOE_PAYLOAD,
     PLACSP_PAYLOAD,
@@ -34,9 +42,10 @@ from test_silver import (
     record_row,
     tombstone_row,
 )
-from tfm_licitaciones.bronze import bronze_frame, tombstone_frame
+from tfm_licitaciones.bronze import bronze_frame, load_raw_records, tombstone_frame
 from tfm_licitaciones.models import PROCUREMENT_EVENT_SCHEMA
 from tfm_licitaciones.silver import build_procurement_events
+from tfm_licitaciones.silver_guard import assess_native_eligibility
 from tfm_licitaciones.silver_parity import assert_silver_parity
 from tfm_licitaciones.silver_reference import build_procurement_events_reference
 
@@ -1000,24 +1009,69 @@ class TemporalDomainParityTests(unittest.TestCase):
             return None
         return parsed.astimezone(timezone.utc)
 
-    def test_native_parser_matches_fromisoformat_over_generated_corpus(self) -> None:
-        from tfm_licitaciones.silver_native import _attach_aware_instant
+    # Independent restatement of the guard's strict temporal domain.
+    _STRICT = re.compile(
+        r"^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-](\d{2}):(\d{2}))$"
+    )
 
-        cases = sorted(set(self.EXPLICIT + self._generated() + self._wild()))
-        frame = pl.DataFrame({"text": cases}).lazy()
-        actual = (
-            _attach_aware_instant(frame, "text")
-            .select("__updated")
-            .collect()["__updated"]
-            .to_list()
+    @classmethod
+    def _eligible(cls, text: str) -> bool:
+        stripped = text.strip()
+        if stripped == "":
+            return True
+        match = cls._STRICT.fullmatch(stripped)
+        if match is not None:
+            year, month, day, hour, minute, second = (int(part) for part in match.groups()[:6])
+            zone, offset_hour, offset_minute = match.groups()[7], match.groups()[8], match.groups()[9]
+            return (
+                2 <= year <= 9998
+                and 1 <= month <= 12
+                and 1 <= day <= 31
+                and hour <= 23
+                and minute <= 59
+                and second <= 59
+                and (zone == "Z" or (int(offset_hour) <= 23 and int(offset_minute) <= 59))
+            )
+        # Outside the strict pattern the native kernel yields null, which is
+        # exact when the reference is also undated.
+        try:
+            parsed = datetime.fromisoformat(stripped.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        return parsed.tzinfo is None or parsed.utcoffset() is None
+
+    def test_native_parser_matches_fromisoformat_on_eligible_subset(self) -> None:
+        # Inside the admitted domain the kernel itself must be exact; outside
+        # it the public API routes the batch to the reference (next tests).
+        from tfm_licitaciones.silver_native import _aware_instant
+
+        cases = sorted(
+            {
+                case
+                for case in self.EXPLICIT + self._generated() + self._wild()
+                if self._eligible(case)
+            }
         )
+        frame = pl.DataFrame({"text": cases})
+        actual = frame.select(_aware_instant(pl.col("text")).alias("instant"))["instant"].to_list()
         for text, got in zip(cases, actual):
             with self.subTest(text=text):
                 self.assertEqual(got, self._expected(text))
 
-    # Representative end-to-end sample: the parser differential above
-    # already covers the full corpus cheaply; building full frames is slow,
-    # so only one shape per temporal class goes through the engines.
+    def test_guard_temporal_domain_matches_strict_predicate(self) -> None:
+        for text in sorted(set(self.EXPLICIT + [
+            "2026-01-08T10:00:00+00:00:00.5",
+            "2026-01-08T10:00:00-00:00:00.5",
+        ])):
+            with self.subTest(text=text):
+                payload = {**PLACSP_PAYLOAD, "updated": text}
+                records = bronze_frame([record_row(payload, source="placsp", source_file="placsp/a.zip")])
+                eligibility = assess_native_eligibility(records, tombstone_frame([]))
+                self.assertEqual(eligibility.eligible, self._eligible(text), eligibility.reason)
+
+    # Representative end-to-end sample: the kernel differential above covers
+    # the full corpus cheaply; building full frames is slow, so only one
+    # shape per temporal class goes through the public API.
     FRAME_CASES = (
         "2026-01-08T10:00:00Z",
         "2026-01-08T10:00+01:00",
@@ -1031,6 +1085,8 @@ class TemporalDomainParityTests(unittest.TestCase):
         "2026-01-08100000+01",
         "2026-01-08T100000Z",
         "2026-01-08T10.30Z",
+        "2026-01-08T10:00:00+00:00:00.5",
+        "2026-01-08T10:00:00-00:00:00.5",
         "",
         "not-a-timestamp",
         "2026-01-08T10:00:00+24:00",
@@ -1044,8 +1100,8 @@ class TemporalDomainParityTests(unittest.TestCase):
                 payload = {**PLACSP_PAYLOAD, "updated": text}
                 records = bronze_frame([record_row(payload, source="placsp", source_file="placsp/a.zip")])
                 reference = build_procurement_events_reference(records, tombstone_frame([]))
-                native = build_procurement_events(records, tombstone_frame([]))
-                assert_silver_parity(native, reference)
+                public = build_procurement_events(records, tombstone_frame([]))
+                assert_silver_parity(public, reference)
 
 
 class FrozenReferenceGuardTests(unittest.TestCase):
@@ -1074,6 +1130,415 @@ class FrozenReferenceGuardTests(unittest.TestCase):
             after = build_procurement_events_reference(records, tombstone_frame([]))
         self.assertTrue(before.equals(after))
         self.assertEqual(after["title"][0], "Servicio de migración cloud")
+
+
+class GuardBoundaryTests(unittest.TestCase):
+    """The hybrid routing boundary: guard first, whole-batch fallback."""
+
+    @staticmethod
+    def _eligible_records():
+        return bronze_frame(
+            [
+                record_row(TED_PAYLOAD, source="ted", source_file="ted/a.jsonl"),
+                record_row(PLACSP_PAYLOAD, source="placsp", source_file="placsp/a.zip"),
+                record_row(BOE_PAYLOAD, source="boe", source_file="boe/a.jsonl"),
+            ]
+        )
+
+    def test_eligible_batch_runs_native_and_never_reference(self) -> None:
+        from unittest import mock
+
+        from tfm_licitaciones import silver
+
+        records = self._eligible_records()
+        tombstones = tombstone_frame([tombstone_row("https://example.invalid/1")])
+        with mock.patch.object(
+            silver, "build_procurement_events_native", wraps=silver.build_procurement_events_native
+        ) as native, mock.patch.object(
+            silver, "build_procurement_events_reference", wraps=silver.build_procurement_events_reference
+        ) as reference:
+            result = silver.build_procurement_events(records, tombstones)
+        self.assertEqual(native.call_count, 1)
+        reference.assert_not_called()
+        self.assertIs(native.call_args.args[0], records)
+        self.assertIs(native.call_args.args[1], tombstones)
+        self.assertEqual(result.height, 4)
+
+    def test_single_ineligible_row_sends_whole_batch_to_reference(self) -> None:
+        from unittest import mock
+
+        from tfm_licitaciones import silver
+
+        records = bronze_frame(
+            [
+                record_row(TED_PAYLOAD, source="ted", source_file="ted/a.jsonl"),
+                record_row({**TED_PAYLOAD, "ND": 1e-5}, source="ted", source_file="ted/b.jsonl"),
+                record_row(PLACSP_PAYLOAD, source="placsp", source_file="placsp/a.zip"),
+            ]
+        )
+        tombstones = tombstone_frame([tombstone_row("https://example.invalid/1")])
+        with mock.patch.object(
+            silver, "build_procurement_events_native", side_effect=AssertionError("native must not run")
+        ) as native, mock.patch.object(
+            silver, "build_procurement_events_reference", wraps=silver.build_procurement_events_reference
+        ) as reference:
+            result = silver.build_procurement_events(records, tombstones)
+        native.assert_not_called()
+        # The reference receives the exact original frames, unfiltered.
+        self.assertIs(reference.call_args.args[0], records)
+        self.assertIs(reference.call_args.args[1], tombstones)
+        expected = build_procurement_events_reference(records, tombstones)
+        self.assertTrue(result.equals(expected))
+
+    def test_native_exception_propagates_and_never_falls_back(self) -> None:
+        from unittest import mock
+
+        from tfm_licitaciones import silver
+
+        records = self._eligible_records()
+        with mock.patch.object(
+            silver, "build_procurement_events_native", side_effect=RuntimeError("boom")
+        ), mock.patch.object(silver, "build_procurement_events_reference") as reference:
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                silver.build_procurement_events(records, tombstone_frame([]))
+        reference.assert_not_called()
+
+    def test_route_logging_reports_route_reason_and_counts(self) -> None:
+        records = self._eligible_records()
+        with self.assertLogs("tfm_licitaciones.silver", level="INFO") as captured:
+            build_procurement_events(records, tombstone_frame([]))
+        eligible_record = captured.records[-1]
+        self.assertEqual(eligible_record.route, "native")
+        self.assertIsNone(eligible_record.fallback_reason)
+        self.assertEqual(eligible_record.records, records.height)
+        self.assertEqual(eligible_record.tombstones, 0)
+
+        ineligible = bronze_frame(
+            [record_row({**TED_PAYLOAD, "ND": 1e-5}, source="ted", source_file="ted/a.jsonl")]
+        )
+        with self.assertLogs("tfm_licitaciones.silver", level="INFO") as captured:
+            build_procurement_events(ineligible, tombstone_frame([]))
+        fallback_record = captured.records[-1]
+        self.assertEqual(fallback_record.route, "reference-fallback")
+        self.assertEqual(fallback_record.fallback_reason, "identity_out_of_domain")
+        self.assertEqual(fallback_record.records, 1)
+
+    @staticmethod
+    def _ted_case(payload) -> dict:
+        return record_row(payload, source="ted", source_file="ted/a.jsonl")
+
+    @staticmethod
+    def _placsp_case(payload) -> dict:
+        return record_row(payload, source="placsp", source_file="placsp/a.zip")
+
+    @staticmethod
+    def _boe_case(payload) -> dict:
+        return record_row(payload, source="boe", source_file="boe/a.jsonl")
+
+    def _adversarial_cases(self):
+        ted = self._ted_case
+        placsp = self._placsp_case
+        boe = self._boe_case
+        cases = [
+            # Identities: strings, falsy fallbacks, numbers, bools, containers.
+            ("ted identity digits", [ted({**TED_PAYLOAD, "ND": "000123"})], ()),
+            ("ted identity numeric zero fallback", [ted({**TED_PAYLOAD, "ND": 0, "notice_id": "N9"})], ()),
+            ("ted identity exponent number", [ted({**TED_PAYLOAD, "ND": 1e-5})], ()),
+            ("ted identity big int", [ted({**TED_PAYLOAD, "ND": 10**20})], ()),
+            ("ted identity bool", [ted({**TED_PAYLOAD, "ND": True})], ()),
+            ("ted identity empty list fallback", [ted({**TED_PAYLOAD, "ND": [], "notice_id": "N9"})], ()),
+            ("ted identity empty string fallback", [ted({**TED_PAYLOAD, "ND": "", "notice_id": "N9"})], ()),
+            ("ted identity missing", [ted({k: v for k, v in TED_PAYLOAD.items() if k not in ("ND", "notice_id")})], ()),
+            # Localized text recursion and JSON types.
+            ("ted text plain", [ted({**TED_PAYLOAD, "TI": "Plain"})], ()),
+            ("ted text spa", [ted({**TED_PAYLOAD, "TI": {"spa": "Título"}})], ()),
+            ("ted text eng list empties", [ted({**TED_PAYLOAD, "TI": {"eng": ["", "B"]}})], ()),
+            ("ted text eng numbers", [ted({**TED_PAYLOAD, "TI": {"eng": [1, 2]}})], ()),
+            ("ted text eng null element", [ted({**TED_PAYLOAD, "TI": {"eng": [None, "B"]}})], ()),
+            ("ted text nested dict", [ted({**TED_PAYLOAD, "TI": {"spa": {"x": "y"}}})], ()),
+            ("ted text list of dicts", [ted({**TED_PAYLOAD, "TI": [{"spa": "B"}]})], ()),
+            ("ted text empty list fallback", [ted({**TED_PAYLOAD, "TI": [], "title": "Fallback"})], ()),
+            ("ted text dict null member", [ted({**TED_PAYLOAD, "TI": {"eng": None, "spa": "B"}})], ()),
+            # Codes.
+            ("ted cpv string scalar", [ted({**TED_PAYLOAD, "PC": "72415000"})], ()),
+            ("ted cpv number scalar", [ted({**TED_PAYLOAD, "PC": 72415000})], ()),
+            ("ted cpv number list", [ted({**TED_PAYLOAD, "PC": [72415000]})], ()),
+            ("ted cpv empty list fallback", [ted({**TED_PAYLOAD, "PC": [], "cpv": ["48000000"]})], ()),
+            # Amounts.
+            ("ted amount plain text", [ted({**TED_PAYLOAD, "estimated-value-lot": "125000.50"})], ()),
+            ("ted amount number", [ted({**TED_PAYLOAD, "estimated-value-lot": 125000.5})], ()),
+            ("ted amount malformed text", [ted({**TED_PAYLOAD, "estimated-value-lot": "n/a"})], ()),
+            ("ted amount NaN", [ted({**TED_PAYLOAD, "estimated-value-lot": "NaN"})], ()),
+            ("ted amount underscores", [ted({**TED_PAYLOAD, "estimated-value-lot": "1_000.00"})], ()),
+            ("ted amount exponent", [ted({**TED_PAYLOAD, "estimated-value-lot": "1e3"})], ()),
+            ("ted amount scale", [ted({**TED_PAYLOAD, "estimated-value-lot": "100.005"})], ()),
+            ("ted amount precision", [ted({**TED_PAYLOAD, "estimated-value-lot": "1234567890123456789"})], ()),
+            ("ted amount limit", [ted({**TED_PAYLOAD, "estimated-value-lot": "999999999999999999.99"})], ()),
+            ("ted amount negative", [ted({**TED_PAYLOAD, "estimated-value-lot": "-5"})], ()),
+            ("ted amount zero", [ted({**TED_PAYLOAD, "estimated-value-lot": "0"})], ()),
+            ("ted amount bool", [ted({**TED_PAYLOAD, "estimated-value-lot": True})], ()),
+            ("ted amount dict", [ted({**TED_PAYLOAD, "estimated-value-lot": {"x": 1}})], ()),
+            ("ted amount exponent number", [ted({**TED_PAYLOAD, "estimated-value-lot": 1e-05})], ()),
+            # Dates.
+            ("ted date strict", [ted({**TED_PAYLOAD, "PD": "2026-01-05"})], ()),
+            ("ted date suffix", [ted({**TED_PAYLOAD, "PD": "2026-01-05Z"})], ()),
+            ("ted date basic", [ted({**TED_PAYLOAD, "PD": "20260108"})], ()),
+            ("ted date loose", [ted({**TED_PAYLOAD, "PD": "2026-1-8"})], ()),
+            ("ted date invalid day", [ted({**TED_PAYLOAD, "PD": "2026-02-30"})], ()),
+            ("ted date number", [ted({**TED_PAYLOAD, "PD": 20260108})], ()),
+            # PLACSP.
+            ("placsp base", [placsp(PLACSP_PAYLOAD)], ()),
+            ("placsp offset seconds", [placsp({**PLACSP_PAYLOAD, "updated": "2026-01-08T10:00:00+00:00:00.5"})], ()),
+            ("placsp hour offset", [placsp({**PLACSP_PAYLOAD, "updated": "2026-01-08T10:00+01:00"})], ()),
+            ("placsp leap second", [placsp({**PLACSP_PAYLOAD, "updated": "2026-01-08T10:00:60+01:00"})], ()),
+            ("placsp updated number", [placsp({**PLACSP_PAYLOAD, "updated": 20260108})], ()),
+            ("placsp updated list", [placsp({**PLACSP_PAYLOAD, "updated": ["2026-01-08T10:00:00+01:00"]})], ()),
+            ("placsp updated naive", [placsp({**PLACSP_PAYLOAD, "updated": "2026-01-11T10:15:00"})], ()),
+            ("placsp updated invalid", [placsp({**PLACSP_PAYLOAD, "updated": "not-a-timestamp"})], ()),
+            ("placsp updated lowercase z", [placsp({**PLACSP_PAYLOAD, "updated": "2026-01-08T09:00:00z"})], ()),
+            (
+                "placsp updated year-edge offset",
+                [placsp({**PLACSP_PAYLOAD, "updated": "0001-01-01T00:00:00+23:59"})],
+                (),
+            ),
+            ("placsp atom numeric", [placsp({**PLACSP_PAYLOAD, "atom_id": 0})], ()),
+            (
+                "placsp legacy numeric",
+                [placsp({k: v for k, v in PLACSP_PAYLOAD.items() if not k.startswith("amount_estimated_overall")})],
+                (),
+            ),
+            ("placsp raw malformed", [placsp({**PLACSP_PAYLOAD, "amount_estimated_overall_raw": "n/a"})], ()),
+            ("placsp raw empty", [placsp({**PLACSP_PAYLOAD, "amount_estimated_overall_raw": ""})], ()),
+            (
+                # Regression: the kernel resolves the legacy fallback of the
+                # unchosen amount field eagerly, so a shape it cannot decode
+                # must exclude the batch even when raw text is present.
+                "placsp unchosen tax nested array",
+                [placsp({**PLACSP_PAYLOAD, "amount_tax_exclusive": [[1]]})],
+                (),
+            ),
+            (
+                "placsp amount nested array with raw",
+                [
+                    placsp(
+                        {
+                            **PLACSP_PAYLOAD,
+                            "amount_estimated_overall": [[1]],
+                            "amount_estimated_overall_raw": "240000.0",
+                        }
+                    )
+                ],
+                (),
+            ),
+            (
+                "placsp value null raw malformed",
+                [placsp({**PLACSP_PAYLOAD, "amount_estimated_overall": None, "amount_estimated_overall_raw": "n/a"})],
+                (),
+            ),
+            (
+                "placsp negative amount",
+                [placsp({**PLACSP_PAYLOAD, "amount_estimated_overall": -5.0, "amount_estimated_overall_raw": "-5.0"})],
+                (),
+            ),
+            ("placsp cpv scalar", [placsp({**PLACSP_PAYLOAD, "cpv": "72415000"})], ()),
+            ("placsp cpv number list", [placsp({**PLACSP_PAYLOAD, "cpv": [72415000]})], ()),
+            ("placsp title dict", [placsp({**PLACSP_PAYLOAD, "title": {"spa": "x"}})], ()),
+            # BOE.
+            ("boe base", [boe(BOE_PAYLOAD)], ()),
+            ("boe basic date", [boe({**BOE_PAYLOAD, "publication_date": "20260108"})], ()),
+            ("boe item number", [boe({**BOE_PAYLOAD, "item_id": 7})], ()),
+            ("boe title dict", [boe({**BOE_PAYLOAD, "title": {"spa": "x"}})], ()),
+            # Mixed batches and tombstones.
+            (
+                "mixed eligible plus big-int identity",
+                [ted(TED_PAYLOAD), ted({**TED_PAYLOAD, "ND": 10**20, "TI": {"spa": "Big"}}), placsp(PLACSP_PAYLOAD)],
+                (),
+            ),
+            ("tombstone valid only", [], (tombstone_row("https://example.invalid/1"),)),
+            (
+                "tombstone bad source",
+                [],
+                (dict(tombstone_row("https://example.invalid/1"), source="ted"),),
+            ),
+            ("tombstone missing ref", [], (tombstone_row(""),)),
+            (
+                "eligible record plus invalid tombstone",
+                [ted(TED_PAYLOAD)],
+                (dict(tombstone_row("https://example.invalid/1"), source=None),),
+            ),
+        ]
+        return cases
+
+    def test_error_batches_route_to_reference_and_keep_first_error(self) -> None:
+        # Row-level failures are outside the native domain on purpose: the
+        # reference decides the first historical error, and reversing the
+        # error order still reproduces it exactly.
+        from unittest import mock
+
+        from tfm_licitaciones import silver
+
+        amount_error = record_row(
+            {**TED_PAYLOAD, "ND": "A", "estimated-value-lot": "100.005"},
+            source="ted",
+            source_file="ted/a.jsonl",
+            record_locator="line:1",
+        )
+        identity_error = record_row(
+            {**TED_PAYLOAD, "ND": ""},
+            source="ted",
+            source_file="ted/b.jsonl",
+            record_locator="line:2",
+        )
+        for label, rows in (
+            ("amount first", [amount_error, identity_error]),
+            ("identity first", [identity_error, amount_error]),
+        ):
+            with self.subTest(case=label):
+                records = bronze_frame(rows)
+                self.assertFalse(assess_native_eligibility(records, tombstone_frame([])).eligible)
+                with mock.patch.object(
+                    silver,
+                    "build_procurement_events_native",
+                    side_effect=AssertionError("native must not run"),
+                ):
+                    with self.assertRaises(ValueError) as public_error:
+                        silver.build_procurement_events(records, tombstone_frame([]))
+                with self.assertRaises(ValueError) as reference_error:
+                    build_procurement_events_reference(records, tombstone_frame([]))
+                self.assertEqual(str(public_error.exception), str(reference_error.exception))
+
+    def test_guard_eligible_implies_native_parity_and_fallback_is_exact(self) -> None:
+        # Adversarial guard invariant: admitted batches are executed by the
+        # native kernel and must equal the reference; rejected batches must
+        # match the reference through the public API.
+        from tfm_licitaciones import silver_native
+
+        for name, records, tombstones in self._adversarial_cases():
+            with self.subTest(case=name):
+                records_frame = bronze_frame(list(records))
+                tombstones_frame = tombstone_frame(list(tombstones))
+                eligibility = assess_native_eligibility(records_frame, tombstones_frame)
+                try:
+                    expected = ("OK", build_procurement_events_reference(records_frame, tombstones_frame))
+                except Exception as exc:  # noqa: BLE001
+                    expected = ("RAISE", f"{type(exc).__name__}: {exc}")
+                if eligibility.eligible:
+                    try:
+                        native = (
+                            "OK",
+                            silver_native.build_procurement_events_native(records_frame, tombstones_frame),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        native = ("RAISE", f"{type(exc).__name__}: {exc}")
+                    self.assertEqual(native[0], expected[0], f"native/ref status: {native!r} vs {expected!r}")
+                    if expected[0] == "OK":
+                        assert_silver_parity(native[1], expected[1])
+                    else:
+                        self.assertEqual(native[1], expected[1])
+                try:
+                    public = ("OK", build_procurement_events(records_frame, tombstones_frame))
+                except Exception as exc:  # noqa: BLE001
+                    public = ("RAISE", f"{type(exc).__name__}: {exc}")
+                self.assertEqual(public[0], expected[0], f"public/ref status: {public!r} vs {expected!r}")
+                if expected[0] == "OK":
+                    assert_silver_parity(public[1], expected[1])
+                else:
+                    self.assertEqual(public[1], expected[1])
+
+
+class RawBronzeRegressionTests(unittest.TestCase):
+    """Second-audit cases through Raw -> Bronze -> public API."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.raw = Path(self.temporary.name) / "raw"
+        self.raw.mkdir()
+        self._counter = 0
+
+    def _frames(self, source: str, payloads: list[dict]):
+        self._counter += 1
+        directory = self.raw / source
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"sample-{self._counter}.jsonl"
+        path.write_text("\n".join(json.dumps(payload) for payload in payloads) + "\n", encoding="utf-8")
+        evidence_for_fixture(self.raw, path, source)
+        loaded = load_raw_records(self.raw)
+        self.assertEqual(loaded["ingestion"]["rejected"], 0, loaded["rejections"])
+        return bronze_frame(loaded["bronze"]), tombstone_frame(loaded["tombstones"])
+
+    def _assert_public_matches_reference(self, records, tombstones) -> pl.DataFrame:
+        try:
+            reference = ("OK", build_procurement_events_reference(records, tombstones))
+        except Exception as exc:  # noqa: BLE001
+            reference = ("RAISE", f"{type(exc).__name__}: {exc}")
+        try:
+            public = ("OK", build_procurement_events(records, tombstones))
+        except Exception as exc:  # noqa: BLE001
+            public = ("RAISE", f"{type(exc).__name__}: {exc}")
+        self.assertEqual(public[0], reference[0])
+        if reference[0] == "OK":
+            assert_silver_parity(public[1], reference[1])
+            return public[1]
+        self.assertEqual(public[1], reference[1])
+        return pl.DataFrame(schema=PROCUREMENT_EVENT_SCHEMA)
+
+    def test_r2_1_localized_text_domain(self) -> None:
+        payloads = [
+            {**TED_PAYLOAD, "ND": "R21-A", "TI": {"eng": [1, 2]}},
+            {**TED_PAYLOAD, "ND": "R21-B", "TI": {"eng": [None, "Useful title"]}},
+            {**TED_PAYLOAD, "ND": "R21-C", "TI": [{"spa": "Useful title"}]},
+        ]
+        records, tombstones = self._frames("ted", payloads)
+        self.assertFalse(assess_native_eligibility(records, tombstones).eligible)
+        public = self._assert_public_matches_reference(records, tombstones)
+        by_id = {row["event_id"]: row["title"] for row in public.iter_rows(named=True)}
+        self.assertEqual(by_id["ted:notice:R21-A"], "1")
+        self.assertEqual(by_id["ted:notice:R21-B"], "Useful title")
+        self.assertEqual(by_id["ted:notice:R21-C"], "Useful title")
+
+    def test_r2_3_numeric_identities_keep_every_event(self) -> None:
+        large_one = 100000000000000000001
+        large_two = 100000000000000000002
+        payloads = [
+            {**TED_PAYLOAD, "ND": 1e-5, "TI": {"spa": "Uno"}},
+            {**TED_PAYLOAD, "ND": large_one, "TI": {"spa": "Dos"}},
+            {**TED_PAYLOAD, "ND": large_two, "TI": {"spa": "Tres"}},
+        ]
+        records, tombstones = self._frames("ted", payloads)
+        self.assertFalse(assess_native_eligibility(records, tombstones).eligible)
+        public = self._assert_public_matches_reference(records, tombstones)
+        self.assertEqual(public.height, 3)
+        identifiers = set(public["event_id"].to_list())
+        self.assertIn("ted:notice:1e-05", identifiers)
+        self.assertIn(f"ted:notice:{large_one}", identifiers)
+        self.assertIn(f"ted:notice:{large_two}", identifiers)
+
+    def test_r2_2_offset_seconds_stay_in_the_reference_domain(self) -> None:
+        payloads = [
+            {**PLACSP_PAYLOAD, "atom_id": "https://example.invalid/a", "updated": "2026-01-08T10:00:00+00:00:00.5"},
+            {**PLACSP_PAYLOAD, "atom_id": "https://example.invalid/b", "updated": "2026-01-08T10:00:00-00:00:00.5"},
+        ]
+        records, tombstones = self._frames("placsp", payloads)
+        self.assertFalse(assess_native_eligibility(records, tombstones).eligible)
+        public = self._assert_public_matches_reference(records, tombstones)
+        expected = {
+            "placsp:notice:https://example.invalid/a@2026-01-08T10:00:00+00:00",
+            "placsp:notice:https://example.invalid/b@2026-01-08T10:00:00+00:00",
+        }
+        self.assertEqual(set(public["event_id"].to_list()), expected)
+
+    def test_r2_4_publication_date_domain(self) -> None:
+        payloads = [
+            {**TED_PAYLOAD, "ND": "R24-A", "PD": "20260108"},
+            {**TED_PAYLOAD, "ND": "R24-B", "PD": "2026-1-8"},
+        ]
+        records, tombstones = self._frames("ted", payloads)
+        self.assertFalse(assess_native_eligibility(records, tombstones).eligible)
+        public = self._assert_public_matches_reference(records, tombstones)
+        by_id = {row["event_id"]: row["publication_date"] for row in public.iter_rows(named=True)}
+        self.assertEqual(by_id["ted:notice:R24-A"], date(2026, 1, 8))
+        self.assertIsNone(by_id["ted:notice:R24-B"])
 
 
 class DeterminismTests(unittest.TestCase):
@@ -1123,9 +1588,9 @@ class DeterminismTests(unittest.TestCase):
 
 
 class NativeExecutionGuardTests(unittest.TestCase):
-    """The success path must stay free of per-row Python."""
+    """The native kernel's success path must stay free of per-row Python."""
 
-    # Per-row Python mechanisms: forbidden everywhere, including helpers.
+    # Per-row Python mechanisms: forbidden everywhere in the kernel.
     FORBIDDEN_ATTRS = {
         "iter_rows",
         "iter_slices",
@@ -1135,18 +1600,11 @@ class NativeExecutionGuardTests(unittest.TestCase):
         "to_pandas",
         "to_dict",
     }
-    # Bounded driver fetches: confined to explicit failure helpers.
+    # Bounded driver fetches: confined to the explicit collision diagnostic.
     FETCH_ATTRS = {"to_dicts", "to_list", "to_series", "get_column", "row", "rows"}
     FORBIDDEN_NAMES = {"ProcurementEvent", "loads", "dumps", "json"}
-    # Bounded diagnostic fetches (at most _MAX_FAILURE_IDS rows to name the
-    # offending row in an explicit ValueError) may only appear in these
-    # explicit failure helpers. Everything else must stay lazy/native.
-    FETCH_HELPERS = {
-        "_fetch_first_by_order",
-        "_fetch_first_unsupported_source",
-        "_raise_failures_in_reference_order",
-        "_raise_collisions",
-    }
+    # The collision diagnostic is the only place rows reach the driver.
+    FETCH_HELPERS = {"_raise_collisions"}
 
     def test_silver_native_has_no_per_row_python(self) -> None:
         tree = ast.parse((SRC / "silver_native.py").read_text(encoding="utf-8"))
@@ -1164,11 +1622,29 @@ class NativeExecutionGuardTests(unittest.TestCase):
                         violations.append(f"{node.name}: {child.id}")
         self.assertEqual(violations, [])
 
-    def test_silver_facade_wires_the_native_engine(self) -> None:
+    def test_guard_uses_no_polars_udfs_and_stays_independent(self) -> None:
+        # The selector is authorized to use CPython (json.loads, iterating the
+        # batch columns), but it must not smuggle per-row Python into Polars
+        # nor depend on the mutable engines it routes between.
+        tree = ast.parse((SRC / "silver_guard.py").read_text(encoding="utf-8"))
+        violations: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in {"map_elements", "map_batches", "apply"}:
+                violations.append(f".{node.attr}")
+            if isinstance(node, ast.ImportFrom) and (node.module or "") in {"silver_native", "silver_reference"}:
+                violations.append(f"import {node.module}")
+            if isinstance(node, ast.Import):
+                violations.extend(
+                    alias.name for alias in node.names if alias.name.split(".")[-1] in {"silver_native", "silver_reference"}
+                )
+        self.assertEqual(violations, [])
+
+    def test_silver_facade_labels_the_hybrid_route(self) -> None:
         from tfm_licitaciones import silver, silver_native
 
-        self.assertEqual(silver.IMPLEMENTATION, "polars-native")
-        self.assertEqual(silver.IMPLEMENTATION_DETAIL, silver_native.IMPLEMENTATION_DETAIL)
+        self.assertEqual(silver.IMPLEMENTATION, "hybrid-native-reference")
+        self.assertIn("hybrid", silver.IMPLEMENTATION_DETAIL)
+        self.assertNotEqual(silver.IMPLEMENTATION, silver_native.IMPLEMENTATION)
         records = bronze_frame([record_row(TED_PAYLOAD, source="ted", source_file="ted/a.jsonl")])
         self.assertTrue(
             silver.build_procurement_events(records, tombstone_frame([])).equals(

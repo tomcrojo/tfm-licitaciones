@@ -202,10 +202,10 @@ Silver canónico se construye desde **todas** las filas aceptadas de
 el historial ni se aplican tombstones como borrados en esta capa.
 
 Cada adaptador construye identificadores deterministas a partir de la
-identidad publicada por la fuente (la implementación productiva es el motor
-nativo de Polars en `src/tfm_licitaciones/silver_native.py`; la semántica
-exacta está congelada como oráculo de paridad en
-`src/tfm_licitaciones/silver_reference.py`):
+identidad publicada por la fuente (la implementación productiva decide la
+ruta por batch con la guarda de elegibilidad: kernel nativo de Polars
+`src/tfm_licitaciones/silver_native.py` o referencia congelada
+`src/tfm_licitaciones/silver_reference.py`; ambas comparten este contrato):
 
 - TED: `event_id = ted:notice:<ND>`. Un número de aviso publicado (`ND`) es un
   evento; observaciones repetidas o corregidas con la misma identidad no
@@ -358,17 +358,22 @@ anterior exactamente en esa ruta, se elimina para que no parezca vigente.
 
 El contrato de esta sección (grano, identidad, duplicados/colisiones,
 esquema, reglas temporales y de importes, mapeo por fuente y persistencia)
-es independiente del motor de ejecución. Polars nativo
-(`silver_native.py`) es el motor productivo por defecto dentro del envelope
-medido de un solo nodo (ver `docs/benchmarks.md`); la semántica exacta
-queda además congelada en la referencia python-row (`silver_reference.py`),
-usada como oráculo de paridad por los tests y por los benchmarks. Se
-conserva además un candidato PySpark como ruta de scale-out evaluada fuera
-del pipeline productivo, cuya paridad medida se limita al contrato sintético
-TED/PLACSP del experimento (payloads escalares, CPV como listas de cadenas
-e instantes con segundos enteros) y no cubre BOE ni instantes con fracción
-de segundo. No existe selección de motor por configuración en el pipeline
-productivo.
+es independiente del motor de ejecución. La ejecución productiva es
+híbrida y se decide por batch antes de transformar: `silver_guard.py`
+inspecciona todas las filas con el parser JSON de CPython y admite solo el
+dominio nativo estrecho (identidades de texto, texto localizado plano, CPV
+de cadenas, importes decimales simples, fechas estrictas, instantes
+RFC 3339 estrictos y tombstones PLACSP completos); si alguna fila queda
+fuera, el batch completo se procesa con la referencia python-row congelada
+(`silver_reference.py`) sobre los frames originales. Ambas rutas emiten
+exactamente el mismo contrato y la misma semántica de errores, y la ruta
+elegida se registra una vez por batch; una ejecución con fallback nunca se
+etiqueta como nativa. No existe selección de motor por configuración ni
+doble pipeline. Se conserva además un candidato PySpark como ruta de
+scale-out evaluada fuera del pipeline productivo, cuya paridad medida se
+limita al contrato sintético TED/PLACSP del experimento (payloads
+escalares, CPV como listas de cadenas e instantes con segundos enteros) y
+no cubre BOE ni instantes con fracción de segundo.
 
 ### Revisiones y tombstones
 

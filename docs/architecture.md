@@ -37,7 +37,9 @@ flowchart LR
 Los adaptadores y parsers están implementados con la biblioteca estándar de
 Python. `run` no accede a la red: descubre los ficheros raw, normaliza los
 registros, construye Silver canónico desde todos los registros y tombstones de
-Bronze con el motor nativo de Polars, y alimenta una vista legada en memoria
+Bronze con la ruta híbrida (guarda de elegibilidad que decide por batch entre
+el kernel nativo de Polars y la referencia congelada), y alimenta una vista
+legada en memoria
 (`TenderRecord`) con el snapshot más reciente para Gold 0.1, que calcula
 enlace y clasificación, evalúa la calidad y escribe las salidas. La
 semántica exacta de Silver canónico está congelada en una implementación de
@@ -108,21 +110,27 @@ de la carga (joins, ventanas, cardinalidad, estado) es decisiva.
 Decisión medida para Silver canónico (ver
 [benchmarks](benchmarks.md) y la evidencia del experimento de motores
 curada en `experiments/silver_engine_comparison/`):
-Polars nativo es el motor productivo por defecto de Silver canónico dentro
-del envelope medido de un solo nodo; se conserva un candidato PySpark
-evaluado como ruta de scale-out para despliegues mayores, sin conectarlo
-todavía al pipeline productivo. La paridad medida de ese candidato se limita
-al contrato sintético TED/PLACSP del experimento
-(`experiments/silver_engine_comparison/`: payloads escalares, CPV como
-listas de cadenas e instantes con segundos enteros); no cubre BOE ni
-instantes con fracción de segundo, que sí forman parte del contrato
-productivo. El contrato canónico
-(esquema `PROCUREMENT_EVENT_SCHEMA`, identidad, revisiones, tombstones,
-semántica de colisión explícita y selección de procedencia) es independiente
-del motor por construcción: la referencia python-row congelada
-(`silver_reference.py`) y el motor Polars de producción (`silver_native.py`)
-consumen el mismo Bronze Parquet y emiten exactamente el mismo esquema, y
-los tests de paridad (`tests/test_silver_native.py`) lo garantizan. Bronze
+la ruta productiva es **híbrida con guarda de elegibilidad**. Antes de
+ejecutar nada, `silver_guard.py` inspecciona el batch completo (records y
+tombstones) con el parser JSON de CPython y admite solo el dominio nativo
+estrecho documentado allí (identidades de texto, texto localizado plano,
+CPV de cadenas, importes decimales simples, fechas estrictas, instantes
+RFC 3339 estrictos, tombstones PLACSP completos); si una sola fila queda
+fuera, el batch completo se procesa con la referencia python-row congelada
+sobre los frames originales, conservando valores, orden del primer error y
+mensajes. Ambas rutas emiten el mismo contrato canónico (esquema
+`PROCUREMENT_EVENT_SCHEMA`, identidad, revisiones, tombstones, semántica de
+colisión explícita y selección de procedencia), y la ruta elegida se
+registra una vez por batch; una ejecución con fallback nunca se etiqueta
+como nativa. El contrato es independiente del motor por construcción: la
+referencia congelada (`silver_reference.py`) y el kernel Polars
+(`silver_native.py`) consumen el mismo Bronze Parquet y los tests de
+paridad (`tests/test_silver_native.py`) cubren ambas rutas y la frontera.
+Se conserva además un candidato PySpark evaluado como ruta de scale-out para
+despliegues mayores, sin conectarlo todavía al pipeline productivo; su
+paridad medida se limita al contrato sintético TED/PLACSP del experimento
+(payloads escalares, CPV como listas de cadenas e instantes con segundos
+enteros) y no cubre BOE ni instantes con fracción de segundo. Bronze
 acotado, Airflow y la migración completa se abordan en cambios separados.
 
 ## 4. Componentes y tecnologías
@@ -134,7 +142,7 @@ acotado, Airflow y la migración completa se abordan en cambios separados.
 | Contratos menores | Incorporar señales de contratación de menor importe | Python y formato oficial por determinar | Planificado |
 | Raw | Conservar bytes y procedencia sin sobrescrituras silenciosas | Sistema de ficheros local, checksum SHA-256 | Parcial |
 | Bronze | Representar el resultado del parsing y sus rechazos | Python para parsing; Polars para lotes acotados; Parquet | Implementado con métricas por fuente; payload source-specific en JSON string |
-| Silver | Mantener entidades canónicas tipadas | Polars nativo (motor productivo por defecto dentro del envelope medido) + Parquet; contrato engine-neutral; candidato PySpark de scale-out con paridad acreditada solo sobre el contrato sintético TED/PLACSP | `procurement_events` implementado con historial completo; referencia python-row congelada como oráculo de paridad; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
+| Silver | Mantener entidades canónicas tipadas | Ruta híbrida: guarda de elegibilidad en Python + kernel Polars nativo para el dominio admitido, referencia python-row congelada para el resto (mismos frames); candidato PySpark de scale-out con paridad acreditada solo sobre el contrato sintético TED/PLACSP | `procurement_events` implementado con historial completo; guarda y fallback cubiertos por tests; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
 | Referencias | Resolver CPV y organismos mediante identificadores oficiales | CPV 2008 y DIR3; construcción local acotada con Polars | CPV disponible; dimensiones planificadas |
 | Linkage | Detectar avisos equivalentes entre fuentes con evidencia | PySpark para generación de candidatos; reglas explicables y similitud textual | Baseline cross-source implementado |
 | Enrichment semántico | Añadir etiquetas de negocio multilabel auditables | PySpark + modelo preentrenado versionado | Planificado |
@@ -234,7 +242,8 @@ estimaciones y los diseños futuros se etiquetarán como tales.
   sobre funciones de pipeline independientes; Python solo para API, sistema
   de ficheros, ZIP/XML/parsing JSON y metadatos pequeños de control; Polars
   para lotes acotados de parsing, dimensiones locales CPV/DIR3, Silver
-  canónico (motor productivo por defecto dentro del envelope medido) y
+  canónico (guarda de elegibilidad que decide por batch entre el kernel
+  nativo y la referencia congelada) y
   exportaciones acotadas; PySpark para joins grandes/transversales,
   ventanas, dedup/chequeos de colisión, enriquecimiento, generación de
   candidatos de linkage, Gold de alta cardinalidad y, si un despliegue mayor
