@@ -89,7 +89,9 @@ uv run --with-editable . python -m tfm_licitaciones.cli dir3
 ```
 
 La [guía de ejecución](docs/run.md) explica las salidas y las limitaciones del
-flujo actual.
+flujo actual. El mismo runtime también está empaquetado como imagen Docker
+reproducible (Python 3.11 + lock + Java 17 + PySpark 4.0.1); ver
+[ejecución con Docker](docs/docker.md).
 
 ## Estructura
 
@@ -112,6 +114,7 @@ Documentación principal:
 - [benchmark Bronze→Silver y paridad](docs/benchmarks.md);
 - [contrato de datos actual](docs/data_contract.md);
 - [guía de ejecución](docs/run.md);
+- [ejecución con Docker](docs/docker.md);
 - [evolución desde los prototipos](docs/prototype_migration.md);
 - [propuesta académica enviada](docs/propuesta/propuesta-enviada.md).
 
