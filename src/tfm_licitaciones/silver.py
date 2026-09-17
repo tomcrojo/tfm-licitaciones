@@ -11,7 +11,9 @@ canonical event identities and expose that instant through ``source_updated_at``
 missing source time remains explicit unordered evidence, while malformed
 published ``when`` values are also surfaced as Bronze control errors. Downstream
 current-state logic can therefore order source-dated deletes without inventing
-time from ingestion provenance.
+time from ingestion provenance. Canonical timestamp precision is microseconds
+(``timestamp[us, UTC]``), matching the existing Silver schema and Parquet
+boundary; finer source fractions, if ever published, collapse to that precision.
 
 Production routing is hybrid by construction:
 
