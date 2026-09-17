@@ -15,6 +15,21 @@ reference uses, so arbitrary-precision integers and JSON types are seen
 exactly as the oracle sees them) and rejects any shape the kernel does not
 implement exactly. When in doubt it falls back.
 
+Before any field check, the **whole parsed document** (unused fields,
+keys and values included) must stay inside the backend JSON parser's
+domain, because ``json_path_match`` parses the complete payload and fails
+silently -- every path resolves to null -- outside its own limits:
+
+- at most 64 nested containers (the backend rejects deeper documents at
+  ~127 levels; the guard keeps a 2x margin and real payloads are shallow);
+- integers within signed 64-bit range (JSON integers of arbitrary
+  magnitude are parsed by the backend as doubles until they overflow);
+- finite floats only (``1e309`` parses as infinity in CPython and is
+  rejected by the backend);
+- no string containing the ASCII information separators U+001C-U+001F:
+  CPython ``str.strip`` treats them as whitespace and the backend
+  ``strip_chars`` does not, so any trimmed use would diverge.
+
 Eligible domain (per record ``source``):
 
 - ``ted``: identity keys (``ND``/``notice_id``) resolve through the
@@ -24,25 +39,32 @@ Eligible domain (per record ``source``):
   are strings/flat string lists. Code keys (``PC``/``cpv``) are strings or
   flat string lists. Amount keys are plain decimals
   (``[+-]?digits(.[0-9]{1,2})?``, at most 18 integer digits), digit-free
-  strings (the historical float gate yields null) or JSON numbers whose
-  Python ``str()`` is a plain decimal. Scalar keys (``currency``,
+  strings whose separator-free projection is not a positive-infinity
+  spelling (both engines resolve them to null) or JSON numbers whose Python
+  ``str()`` is a plain decimal; positive-infinity spellings and non-plain
+  digit-bearing spellings are decided by the reference. Scalar keys (``currency``,
   ``procedure-identifier``, ``BT-04-notice``, ``buyer-identifier``, ``BI``,
   ``notice-type``, ``CY``, ``country``, ``url``) and ``links.html`` values
-  are strings. Date keys (``PD``/``publication_date``/``publication-date``)
-  are strings whose first ten stripped characters are ``YYYY-MM-DD`` with a
-  valid year/month/day range.
+  are strings. Country keys additionally admit only ``ESP`` or an ASCII
+  uppercase two-letter pair where the reference ``isalpha()/isupper()``
+  rule and the native uppercase-letter rule agree. Date keys
+  (``PD``/``publication_date``/``publication-date``) are strings whose
+  first ten stripped characters are ``YYYY-MM-DD`` with a valid
+  year/month/day range.
 - ``placsp``: ``atom_id`` is a non-empty string; ``updated`` is empty, a
   strict RFC 3339 instant with seconds (``YYYY-MM-DD[T ]HH:MM:SS[.f{1,9}]
   (Z|±HH:MM)``) whose components are in range, or a shape the reference
   also resolves to "undated" (invalid/naive instants, checked with the same
   ``datetime.fromisoformat`` step as the oracle); text/code/scalar keys are
-  strings or flat string lists; amounts follow the retained ``*_raw``
-  plain-decimal rule or, for the legacy numeric path, values whose Python
-  ``str()`` is a plain decimal.
+  strings or flat string lists. Both amount fields are checked eagerly: a
+  present ``*_raw`` must be a plain-decimal string (or absent/null) even
+  when the value gate is null or the value key is absent, because the
+  kernel's plan decodes it regardless; a present value must be null or a
+  plain decimal (the legacy numeric path).
 - ``boe``: identity/text/scalar keys as above; ``publication_date`` follows
   the TED date rule.
 - tombstones: ``source`` is exactly ``placsp`` and ``source_record_id``
-  strips to a non-empty string.
+  strips to a non-empty string without the divergent separators above.
 
 Additionally, no probed key may appear nested anywhere in a payload: the
 kernel's quoted-string probes are textual and rely on Bronze's canonical
@@ -58,6 +80,7 @@ ineligible and stays exact through the reference.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -69,10 +92,14 @@ import polars as pl
 REASON_UNSUPPORTED_SOURCE = "unsupported_source"
 REASON_INVALID_JSON = "invalid_json"
 REASON_PAYLOAD_NOT_OBJECT = "payload_not_object"
+REASON_DOCUMENT_DEPTH = "document_depth_out_of_domain"
+REASON_NUMBER_DOMAIN = "numeric_domain_out_of_domain"
+REASON_STRING_DOMAIN = "string_domain_out_of_domain"
 REASON_IDENTITY = "identity_out_of_domain"
 REASON_LOCALIZED_TEXT = "localized_text_out_of_domain"
 REASON_CODE_LIST = "cpv_out_of_domain"
 REASON_SCALAR_TEXT = "scalar_text_out_of_domain"
+REASON_COUNTRY = "country_out_of_domain"
 REASON_AMOUNT = "amount_out_of_domain"
 REASON_DATE = "publication_date_out_of_domain"
 REASON_TIMESTAMP = "timestamp_out_of_domain"
@@ -88,7 +115,21 @@ _RFC3339 = re.compile(
 )
 _PLAIN_DECIMAL = re.compile(r"^[+-]?[0-9]{1,18}(?:\.[0-9]{1,2})?$")
 _DIGIT_FREE = re.compile(r"^[^0-9]*$")
-_SPECIAL_FLOAT = re.compile(r"(?i)^[-+]?(?:s?nan|inf(?:inity)?)$")
+_INFINITY_SPELLING = re.compile(r"^\+?(?:inf|infinity)$", re.IGNORECASE)
+_ASCII_ALPHA2 = re.compile(r"^[A-Z]{2}$")
+# CPython ``str.strip`` trims the ASCII information separators; the native
+# ``strip_chars`` (Rust ``char::is_whitespace``) does not. Every other
+# whitespace code point behaves identically in both runtimes.
+_DIVERGENT_WHITESPACE = re.compile(r"[\x1c-\x1f]")
+
+# Whole-document limits of the backend JSON parser. Polars 1.44.2 resolves
+# every path to null once a payload nests 127 containers and rejects integer
+# or float literals beyond the double range; the guard keeps a 2x margin on
+# depth and a signed-64-bit bound for integers instead of depending on the
+# exact parser ceiling.
+_MAX_CONTAINER_DEPTH = 64
+_INT64_MIN = -(2**63)
+_INT64_MAX = 2**63 - 1
 
 # Keys whose value/type the native kernel probes textually. The guard rejects
 # payloads where any of them also appears nested (see module docstring).
@@ -138,6 +179,80 @@ class NativeEligibility:
 
     eligible: bool
     reason: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Whole-document domain of the backend JSON parser
+# ---------------------------------------------------------------------------
+
+
+def _scalar_domain_reason(value: Any) -> str | None:
+    """Reject one scalar outside the numeric/string domain of the backend."""
+
+    kind = type(value)
+    if kind is int:
+        if value < _INT64_MIN or value > _INT64_MAX:
+            return REASON_NUMBER_DOMAIN
+    elif kind is float:
+        if not math.isfinite(value):
+            return REASON_NUMBER_DOMAIN
+    elif kind is str:
+        if _DIVERGENT_WHITESPACE.search(value) is not None:
+            return REASON_STRING_DOMAIN
+    return None
+
+
+def _document_domain_reason(payload: dict[str, Any]) -> str | None:
+    """Check the whole parsed document, unused fields and keys included.
+
+    The backend parses the complete payload for every path expression and
+    silently resolves every path to null once the document leaves its own
+    parser limits, so field-level validation is not enough. Keys are checked
+    too: the rule is "no string in the document", which keeps the predicate
+    simple and conservative. Traversal is iterative so an extreme document
+    cannot raise ``RecursionError`` here.
+    """
+
+    stack: list[tuple[Any, int]] = [(payload, 1)]
+    search = _DIVERGENT_WHITESPACE.search
+    while stack:
+        value, depth = stack.pop()
+        kind = type(value)
+        if kind is dict:
+            if depth > _MAX_CONTAINER_DEPTH:
+                return REASON_DOCUMENT_DEPTH
+            for key, item in value.items():
+                if search(key) is not None:
+                    return REASON_STRING_DOMAIN
+                item_kind = type(item)
+                if item_kind is str:
+                    if search(item) is not None:
+                        return REASON_STRING_DOMAIN
+                elif item_kind is dict or item_kind is list:
+                    stack.append((item, depth + 1))
+                else:
+                    reason = _scalar_domain_reason(item)
+                    if reason is not None:
+                        return reason
+        elif kind is list:
+            if depth > _MAX_CONTAINER_DEPTH:
+                return REASON_DOCUMENT_DEPTH
+            for item in value:
+                item_kind = type(item)
+                if item_kind is str:
+                    if search(item) is not None:
+                        return REASON_STRING_DOMAIN
+                elif item_kind is dict or item_kind is list:
+                    stack.append((item, depth + 1))
+                else:
+                    reason = _scalar_domain_reason(item)
+                    if reason is not None:
+                        return reason
+        else:
+            reason = _scalar_domain_reason(value)
+            if reason is not None:
+                return reason
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -209,11 +324,20 @@ def _plain_decimal(value: Any) -> bool:
 
 
 def _ted_amount_value(value: Any) -> bool:
-    """Eligible TED amount value: plain decimal or digit-free gate failure.
+    """Eligible TED amount value: plain decimal or a proven textual gate failure.
 
-    The reference float gate rejects non-finite/negative/underscore/exponent
-    spellings; those stay out of the native domain (fallback), while
-    digit-free strings are exact because both engines yield null.
+    For strings with digits, only the plain-decimal spelling is admitted; the
+    reference normalizes separators and exponents before parsing, and that
+    normalizer is out of the contract. For digit-free strings the historical
+    float gate can only yield null (``float`` accepts ``inf``/``nan`` and
+    fails on everything else), and the kernel's float cast also yields null,
+    with one exception: when the reference normalizer produces a
+    positive-infinity spelling it raises after the gate, while the kernel
+    stays null. The normalizer only strips outer whitespace and removes or
+    replaces separators, never reordering letters or signs, so that class is
+    exactly the strings whose separator-free projection is an ``inf``/
+    ``infinity`` spelling; those fall back. Every other digit-free spelling
+    (``"n/a"``, ``"abc"``, ``"nan"``, ``"-inf"``) is exact in both engines.
     """
 
     if value is None:
@@ -221,30 +345,59 @@ def _ted_amount_value(value: Any) -> bool:
     if isinstance(value, str):
         if not value.isascii():
             return False
-        if _SPECIAL_FLOAT.fullmatch(value):
-            return False
         if _PLAIN_DECIMAL.fullmatch(value):
             return True
-        return _DIGIT_FREE.fullmatch(value) is not None
+        if _DIGIT_FREE.fullmatch(value) is None:
+            return False
+        projection = value.strip().replace(" ", "").replace(",", "").replace(".", "")
+        return _INFINITY_SPELLING.fullmatch(projection) is None
     if isinstance(value, bool):
         return False
     return _plain_decimal(value)
 
 
 def _placsp_amount_field_eligible(payload: dict[str, Any], key: str) -> bool:
+    """Restrict one PLACSP amount field and its retained raw text.
+
+    The kernel plan resolves the retained text and the legacy fallback of
+    **both** amount fields eagerly, even when the value gate is null or the
+    value key is absent, so a present ``*_raw`` must always be a
+    plain-decimal string (or null). The legacy value is only consulted when
+    the key is present and not JSON-null, exactly like the reference
+    presence gate.
+    """
+
+    raw = payload.get(f"{key}_raw")
+    if raw is not None and not (
+        isinstance(raw, str) and _PLAIN_DECIMAL.fullmatch(raw) is not None
+    ):
+        return False
     if key not in payload:
         return True
     value = payload[key]
     if value is None:
-        # The reference presence gate returns None without looking at the raw text.
         return True
-    # The kernel resolves the legacy fallback of the field eagerly even when
-    # retained raw text exists, so the value shape must be in-domain always.
-    if not _plain_decimal(value):
+    return _plain_decimal(value)
+
+
+def _country_value(value: Any) -> bool:
+    """Eligible country value for the TED ``_ted_country`` mapping.
+
+    The reference accepts any two-character ``isalpha() and isupper()``
+    value, which includes pairs with uncased letters (``"A中"``), while the
+    native rule accepts only two uppercase letters. The guard admits
+    ``ESP`` (the documented alpha-3 mapping) and two-character values that
+    the reference does not accept, plus ASCII uppercase pairs; anything
+    where the reference would accept and ASCII would not falls back.
+    """
+
+    if value is None:
+        return True
+    if not isinstance(value, str):
         return False
-    raw = payload.get(f"{key}_raw")
-    if raw is not None and not (isinstance(raw, str) and _PLAIN_DECIMAL.fullmatch(raw) is not None):
-        return False
+    text = value.strip()
+    if len(text) == 2 and text.isalpha() and text.isupper():
+        return _ASCII_ALPHA2.fullmatch(text) is not None
     return True
 
 
@@ -397,6 +550,9 @@ def _check_ted(payload: dict[str, Any]) -> str | None:
     for key in _TED_SCALAR_KEYS:
         if not _optional_string(payload.get(key)):
             return REASON_SCALAR_TEXT
+    for key in ("CY", "country"):
+        if not _country_value(payload.get(key)):
+            return REASON_COUNTRY
     for key in ("PD", "publication_date", "publication-date"):
         if not _date_value(payload.get(key)):
             return REASON_DATE
@@ -462,10 +618,17 @@ def assess_native_eligibility(records: pl.DataFrame, tombstones: pl.DataFrame) -
             return NativeEligibility(False, REASON_UNSUPPORTED_SOURCE)
         try:
             payload = json.loads(payload_json)
+        except RecursionError:
+            # The document is far deeper than any admitted depth; the
+            # reference hits the same CPython limit on these payloads.
+            return NativeEligibility(False, REASON_DOCUMENT_DEPTH)
         except (TypeError, ValueError):
             return NativeEligibility(False, REASON_INVALID_JSON)
         if not isinstance(payload, dict):
             return NativeEligibility(False, REASON_PAYLOAD_NOT_OBJECT)
+        reason = _document_domain_reason(payload)
+        if reason is not None:
+            return NativeEligibility(False, reason)
         reason = checker(payload)
         if reason is not None:
             return NativeEligibility(False, reason)
@@ -476,6 +639,8 @@ def assess_native_eligibility(records: pl.DataFrame, tombstones: pl.DataFrame) -
         if source != "placsp":
             return NativeEligibility(False, REASON_TOMBSTONE_SOURCE)
         if not _identity(reference):
+            return NativeEligibility(False, REASON_TOMBSTONE_REF)
+        if isinstance(reference, str) and _DIVERGENT_WHITESPACE.search(reference) is not None:
             return NativeEligibility(False, REASON_TOMBSTONE_REF)
 
     return NativeEligibility(True)

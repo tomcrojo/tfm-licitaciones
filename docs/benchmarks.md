@@ -184,12 +184,21 @@ inspecciona el batch completo (records y tombstones) con
 ruta:
 
 - **nativa** (`src/tfm_licitaciones/silver_native.py`) si todas las filas
-  pertenecen al dominio elegible documentado en la guarda: identidades de
+  pertenecen al dominio elegible documentado en la guarda. El chequeo cubre
+  el **documento JSON completo** (campos no usados y claves incluidos)
+  porque el backend resuelve todas las rutas a nulo en silencio fuera de sus
+  límites: máximo 64 contenedores anidados, enteros de 64 bits con signo,
+  flotantes finitos y ninguna cadena con los separadores ASCII U+001C–U+001F
+  (CPython los recorta como espacio y el backend no). Además: identidades de
   texto no vacías, texto localizado plano (cadenas o listas planas de
-  cadenas), CPV escalar/lista de cadenas, importes decimales simples,
-  fechas con prefijo `YYYY-MM-DD` estricto, instantes RFC 3339 estrictos con
-  segundos y offset de minutos completos (o formas que la referencia
-  resuelve como "sin fecha"), y tombstones PLACSP con referencia completa;
+  cadenas), CPV escalar/lista de cadenas, importes decimales simples (las
+  cadenas sin dígitos son elegibles solo cuando su proyección sin
+  separadores no es un deletreo de infinito positivo: la referencia las
+  normaliza a `inf` y lanza, el kernel devolvería nulo), países limitados a
+  `ESP` o pares ASCII en mayúsculas, fechas con prefijo `YYYY-MM-DD`
+  estricto, instantes RFC 3339 estrictos con segundos y offset de minutos
+  completos (o formas que la referencia resuelve como "sin fecha"), y
+  tombstones PLACSP con referencia completa sin esos separadores;
 - **referencia python-row congelada** (`src/tfm_licitaciones/silver_reference.py`)
   con los frames originales para cualquier batch fuera de ese dominio.
 
@@ -213,28 +222,41 @@ scale-out y joins de alta cardinalidad.
 Medición de la API productiva completa (guarda incluida) sobre el dataset
 sintético retenido del generador (`bench_silver`, semilla 7, misma frontera
 lectura→transformación, generación excluida del cronómetro, paridad
-verificada con `silver_parity` en la ruta nativa):
+verificada con `silver_parity` en todas las rutas ejecutadas):
 
 | Perfil | Observaciones Bronze | Eventos Silver | python-row (ref) | híbrido API completa | Aceleración |
 | --- | --- | --- | --- | --- | --- |
-| medium elegible | 248.576 + 5.001 tombstones | 225.004 | 10,70 s | 5,86 s (guarda 2,78 s) | ×1,8 |
-| large elegible | 1.988.576 + 40.001 tombstones | 1.800.004 | 80,27 s | 45,06 s (guarda 20,65 s) | ×1,8 |
-| medium con fallback¹ | 248.577 + 5.001 tombstones | 225.005 | 10,12 s | 13,17 s (guarda 2,65 s) | ×0,8 |
+| medium generado (fallback)² | 248.576 + 5.001 tombstones | 225.004 | 10,34 s | 14,78 s (guarda 4,33 s) | ×0,7 |
+| medium control nativo³ | 248.575 + 5.001 tombstones | 225.003 | 10,52 s | 7,40 s (guarda 4,46 s) | ×1,4 |
+| large generado (fallback)² | 1.988.576 + 40.001 tombstones | 1.800.004 | 84,65 s | 116,94 s (guarda 34,60 s) | ×0,7 |
+| large control nativo³ | 1.988.575 + 40.001 tombstones | 1.800.003 | 84,24 s | 59,83 s (guarda 35,29 s) | ×1,4 |
+| medium fallback forzado⁴ | 248.576 + 5.001 tombstones | 225.004 | 10,54 s | 10,12 s (guarda 0,01 s) | ×1,0 |
 
-¹ Un lote con una única identidad numérica fuera de dominio: la guarda
-recorre el batch y la referencia lo procesa entero, por lo que el coste del
-fallback es guarda + referencia. Los corpora sintéticos completos de los
-perfiles tiny..large son elegibles.
+² El corpus que genera el harness incluye una observación PLACSP edge-max
+(`amount_estimated_overall = 1e18` con texto retenido
+`999999999999999999.99`): su valor legacy no es un decimal simple y la
+guarda conservadora envía el lote completo a la referencia. Esa fila ya era
+inelegible en el head auditado `64024a8` (guarda medida allí sobre el mismo
+corpus: 2,84 s, `amount_out_of_domain`), así que la etiqueta "elegible" de
+la tabla anterior no era reproducible con este generador.
+³ Control nativo: el mismo corpus generado con la única observación edge-max
+filtrada (248.575 / 1.988.575 registros); es la medición comparable del
+camino rápido (guarda + kernel).
+⁴ Fallback forzado: el corpus con una única fila añadida fuera de dominio
+(`unused = 10**400`) en primera posición; la guarda sale en la primera fila
+y el coste es guarda + referencia. Un lote con una sola fila inelegible
+activa el fallback para todo el batch; por eso el perfil "generado" paga
+guarda completa + referencia.
 
 Configuración medida: Python 3.11.16, Polars 1.44.2, 16 CPU, semilla 7.
 
 Comando reproducible (por perfil; `n_ted`/`n_placsp`/`rows_per_part` según
-la tabla de perfiles del protocolo; añadir una fila no elegible para medir
-el fallback):
+la tabla de perfiles del protocolo; las tres rutas —generada, control nativo
+y fallback forzado— se miden sobre el mismo corpus):
 
 ```bash
 uv run --with-editable . python - <<'PY'
-import time
+import json, time
 from pathlib import Path
 import polars as pl
 from tfm_licitaciones.bench_silver import write_bronze_parts
@@ -242,16 +264,28 @@ from tfm_licitaciones.silver import build_procurement_events
 from tfm_licitaciones.silver_guard import assess_native_eligibility
 from tfm_licitaciones.silver_reference import build_procurement_events_reference
 from tfm_licitaciones.silver_parity import assert_silver_parity
-root = Path("/tmp/silver-prod-bench")
+root = Path("/tmp/silver-prod-bench-r3")
 manifest = write_bronze_parts(root, seed=7, n_ted=100_000, n_placsp=100_000, rows_per_part=10_000)
 records = pl.read_parquet(str(root / manifest["layout"]["records"]))
 tombstones = pl.read_parquet(str(root / manifest["layout"]["tombstones"]))
-t0 = time.perf_counter(); eligibility = assess_native_eligibility(records, tombstones); t_guard = time.perf_counter() - t0
-t0 = time.perf_counter(); reference = build_procurement_events_reference(records, tombstones); t_ref = time.perf_counter() - t0
-t0 = time.perf_counter(); public = build_procurement_events(records, tombstones); t_pub = time.perf_counter() - t0
-assert_silver_parity(public, reference)
-print(f"eligible={eligibility.eligible} guard {t_guard:.2f}s  reference {t_ref:.2f}s  "
-      f"public {t_pub:.2f}s  events {public.height}  parity ok")
+# Observación edge-max fuera de dominio del generador (ver nota 2).
+edge = records["payload_json"].str.contains('"amount_estimated_overall_raw": "999999999999999999.99"')
+first = records.head(1).row(0, named=True)
+payload = json.loads(first["payload_json"]); payload["unused"] = 10**400
+first["payload_json"] = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+forced = pl.concat([pl.DataFrame([first], schema=records.schema), records.slice(1)])
+
+def measure(label, recs):
+    t0 = time.perf_counter(); verdict = assess_native_eligibility(recs, tombstones); guard = time.perf_counter() - t0
+    t0 = time.perf_counter(); reference = build_procurement_events_reference(recs, tombstones); ref = time.perf_counter() - t0
+    t0 = time.perf_counter(); public = build_procurement_events(recs, tombstones); pub = time.perf_counter() - t0
+    assert_silver_parity(public, reference)
+    print(f"{label}: route={'native' if verdict.eligible else 'fallback'} reason={verdict.reason} "
+          f"guard {guard:.2f}s reference {ref:.2f}s public {pub:.2f}s events {public.height} parity ok")
+
+measure("generated", records)
+measure("native-control", records.filter(~edge))
+measure("forced-fallback", forced)
 PY
 ```
 

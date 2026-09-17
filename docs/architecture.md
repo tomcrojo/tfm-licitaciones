@@ -81,7 +81,7 @@ flowchart TB
     CPV --> RAW2
     DIR3 --> RAW2
     RAW2 --> BRONZE2
-    BRONZE2 -->|"Polars nativo<br/>(por defecto medido)"| SILVER2
+    BRONZE2 -->|"Guarda híbrida:<br/>kernel Polars nativo<br/>o referencia congelada"| SILVER2
     SILVER2 -->|"PySpark"| ENRICH
     ENRICH -->|"PySpark"| GOLD2
 
@@ -113,10 +113,12 @@ curada en `experiments/silver_engine_comparison/`):
 la ruta productiva es **híbrida con guarda de elegibilidad**. Antes de
 ejecutar nada, `silver_guard.py` inspecciona el batch completo (records y
 tombstones) con el parser JSON de CPython y admite solo el dominio nativo
-estrecho documentado allí (identidades de texto, texto localizado plano,
-CPV de cadenas, importes decimales simples, fechas estrictas, instantes
-RFC 3339 estrictos, tombstones PLACSP completos); si una sola fila queda
-fuera, el batch completo se procesa con la referencia python-row congelada
+estrecho documentado allí (documento completo dentro del dominio del parser:
+máximo 64 contenedores anidados, enteros de 64 bits, flotantes finitos y
+sin separadores U+001C–U+001F; identidades de texto, texto localizado plano,
+CPV de cadenas, importes decimales simples, países ASCII, fechas estrictas,
+instantes RFC 3339 estrictos, tombstones PLACSP completos); si una sola fila
+queda fuera, el batch completo se procesa con la referencia python-row congelada
 sobre los frames originales, conservando valores, orden del primer error y
 mensajes. Ambas rutas emiten el mismo contrato canónico (esquema
 `PROCUREMENT_EVENT_SCHEMA`, identidad, revisiones, tombstones, semántica de

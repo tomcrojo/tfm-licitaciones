@@ -14,6 +14,9 @@ payloads the guard excludes:
 - localized text is a string, a flat string list, or an object of
   strings/flat string lists (the ``spa`` preference and document-order
   fallback of ``_first_text`` are kept);
+- link URLs keep the reference's raw-truthiness preference order
+  (``ENG``, ``SPA``, ``DEU``, ``FRA``) before stripping and then fall back
+  to the first published value in document order;
 - code lists are strings or flat string lists;
 - amounts are plain decimals (optional sign, at most 18 integer digits and
   two fractional digits), digit-free strings whose historical float gate
@@ -267,6 +270,28 @@ def _object_first_value(raw: pl.Expr) -> pl.Expr:
         .then(frag.str.json_path_match("$").str.strip_chars())
         .otherwise(None)
     )
+
+
+def _link_url(html_raw: pl.Expr) -> pl.Expr:
+    """``_url_from_links`` over an eligible ``links.html`` object.
+
+    The reference selects the first language whose **raw** value is truthy
+    (before stripping) and then strips it, so a whitespace-only ``ENG``
+    value wins over a later non-empty language and resolves to ``""``
+    (null at the call site). Only when no preferred language is truthy does
+    it fall back to the first published value in document order. Values are
+    restricted to strings by the guard.
+    """
+
+    chosen = _object_first_value(html_raw)
+    for language in reversed(("ENG", "SPA", "DEU", "FRA")):
+        value = html_raw.str.json_path_match(f"$.{language}")
+        chosen = (
+            pl.when(value.is_not_null() & (value != ""))
+            .then(value.str.strip_chars())
+            .otherwise(chosen)
+        )
+    return chosen
 
 
 def _scalar_or_list_text(raw: pl.Expr, is_string: pl.Expr) -> pl.Expr:
@@ -641,11 +666,7 @@ def _ted_branch(ted: pl.LazyFrame) -> pl.LazyFrame:
     )
     url = _or_text(
         _first_text(pl.col("__url"), pl.col("__url_str")),
-        _leaf_text(pl.col("__html").str.json_path_match("$.ENG"), pl.lit(False)),
-        _leaf_text(pl.col("__html").str.json_path_match("$.SPA"), pl.lit(False)),
-        _leaf_text(pl.col("__html").str.json_path_match("$.DEU"), pl.lit(False)),
-        _leaf_text(pl.col("__html").str.json_path_match("$.FRA"), pl.lit(False)),
-        _object_first_value(pl.col("__html")),
+        _link_url(pl.col("__html")),
     )
     return base.select(
         *_BRANCH_PROVENANCE,
