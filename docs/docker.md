@@ -15,7 +15,7 @@ entorno para ejecutar los entrypoints existentes
 - `pyspark==4.0.1` como extra de ejecución, igual que en CI y que la vara de
   `spark_foundation.PYSPARK_VERSION`;
 - `src/` instalado editable (para que `config.project_root()` resuelva
-  `/app`), `config/` y `tests/`;
+  `/app`), `config/`, `sql/duckdb/` y `tests/`;
 - usuario no-root `tfm` (uid/gid 1000);
 - directorios de datos vacíos bajo `/app/data`.
 
@@ -61,7 +61,8 @@ docker run --rm tfm-licitaciones:local python -m unittest discover -s tests -v
 | `/app/data/silver` | Silver canónico `procurement_events.parquet` |
 | `/app/data/gold` | salidas Gold y evidencia |
 | `/app/data/reference` | dimensiones de referencia (DIR3, …) |
-| `/app/data/exports` | reservado para exports futuros (Gold/DuckDB) |
+| `/app/data/analytics` | base DuckDB y manifest analítico |
+| `/app/data/exports` | CSV Tableau y manifest de exportación |
 
 Los paths relativos de `config/pipeline.json` resuelven a `/app/data/...`, de
 modo que un único mount cubre todo:
@@ -71,16 +72,38 @@ docker run --rm -v "$PWD/data:/app/data" tfm-licitaciones:local \
   licitaciones-pipeline run
 ```
 
-El directorio `exports/` no lo consume aún ningún entrypoint: existe para que
-los exports Gold/DuckDB previstos escriban ahí mediante los mismos
-entrypoints, sin volver a tocar la imagen (sus dependencias entrarán por el
-lock del proyecto cuando el código las declare).
-
 ### Ejecución con fixtures (sin tocar `data/`)
 
 ```bash
 docker run --rm tfm-licitaciones:local \
   licitaciones-pipeline run --raw-dir tests/fixtures/raw --output-root /tmp/fixture
+```
+
+### Cadena completa Raw → Tableau
+
+Con Raw y sus sidecars ya disponibles en `data/raw/`:
+
+```bash
+docker run --rm -v "$PWD/data:/app/data" tfm-licitaciones:local \
+  licitaciones-pipeline run
+docker run --rm -v "$PWD/data:/app/data" tfm-licitaciones:local \
+  licitaciones-pipeline build-gold --as-of 2026-01-01
+docker run --rm -v "$PWD/data:/app/data" tfm-licitaciones:local \
+  licitaciones-pipeline build-analytics
+docker run --rm -v "$PWD/data:/app/data" tfm-licitaciones:local \
+  licitaciones-pipeline export-tableau
+```
+
+Fijar `--as-of` a la fecha de evaluación deseada. Las referencias CPV/DIR3
+se preparan según la [guía de referencias](references.md); si faltan, las
+etapas registran esa ausencia. Los CSV se escriben en `data/exports/tableau/`.
+
+También se puede usar Podman sustituyendo `docker` por `podman` en los
+comandos de build y ejecución. La prueba integrada con fixtures locales es:
+
+```bash
+docker run --rm tfm-licitaciones:local \
+  python -m unittest tests.test_e2e_raw_to_tableau -v
 ```
 
 ### Ingesta (requiere red)
@@ -114,5 +137,5 @@ docker compose run --rm pipeline licitaciones-pipeline run
 - Spark `local[*]`/`local[1]` exclusivamente: sin cluster, Airflow,
   Kubernetes ni cloud (decisión del alcance actual).
 - La imagen no sustituye a `uv run`: es el mismo entorno, empaquetado para
-  reproducibilidad y ejecución posterior de Gold/DuckDB por los entrypoints
+  reproducibilidad y ejecución de Gold/DuckDB/Tableau por los entrypoints
   del proyecto.

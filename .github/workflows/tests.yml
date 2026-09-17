@@ -45,3 +45,14 @@ jobs:
 
       - name: Run Silver engine comparison experiment suite (no PySpark; Spark tests skip)
         run: uv run --locked --with-editable . python -m unittest discover -s experiments/silver_engine_comparison/tests -t . -v
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build delivery runtime
+        run: docker build -t tfm-licitaciones:ci .
+
+      - name: Verify Raw-to-Tableau inside the runtime
+        run: docker run --rm tfm-licitaciones:ci python -m unittest tests.test_e2e_raw_to_tableau -v

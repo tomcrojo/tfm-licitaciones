@@ -38,16 +38,16 @@ RUN uv sync --locked --no-dev --no-install-project \
 #    resuelve /app y config/pipeline.json queda en su sitio.
 COPY src/ src/
 COPY config/ config/
+COPY sql/ sql/
 COPY tests/ tests/
 # --inexact conserva pyspark, que no forma parte del lock base.
 RUN uv sync --locked --no-dev --inexact
 
 # 3) Usuario no-root y layout de datos vacio: los mounts externos lo pueblan.
-#    exports/ reserva la salida de exports futuros (Gold/DuckDB) por los mismos
-#    entrypoints, sin cambios de imagen.
+#    analytics/ y exports/ reciben DuckDB y los CSV para Tableau.
 RUN useradd --uid 1000 --user-group --create-home tfm \
     && mkdir -p /app/data/raw /app/data/bronze /app/data/silver \
-    /app/data/gold /app/data/reference /app/data/exports \
+    /app/data/gold /app/data/reference /app/data/analytics /app/data/exports \
     && chown -R tfm:tfm /app
 USER tfm:tfm
 

@@ -26,6 +26,7 @@ required directly.
 from __future__ import annotations
 
 import csv
+from datetime import datetime, timezone
 import json
 import tempfile
 import unittest
@@ -185,6 +186,7 @@ class RawToTableauTests(unittest.TestCase):
                 cpv_dimension=cpv_dimension,
                 dir3_dimension=None,
                 reference_dir=reference_dir,
+                as_of=datetime(2026, 1, 1, tzinfo=timezone.utc),
             )
             self.assertEqual(gold["current_state_rows"], 3)
             self.assertEqual(gold["open_opportunities_rows"], 1)

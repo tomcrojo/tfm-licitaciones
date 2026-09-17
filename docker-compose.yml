@@ -1,5 +1,5 @@
 # Comodidad local (docs/docker.md): build + mounts de datos ya cableados.
-# No hay red, secretos ni servicios extra: es el mismo contenedor que
+# No hay servicios extra: es el mismo contenedor que
 # `docker run`, con ./data montado en /app/data.
 
 services:
