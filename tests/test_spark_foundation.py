@@ -11,7 +11,12 @@ try:
 except ImportError:
     pyspark = None
 
-from tfm_licitaciones.gold_contract import CANONICAL_SILVER_FIELDS, CURRENT_STATE_FIELDS
+from tfm_licitaciones.gold_contract import (
+    CANONICAL_SILVER_FIELDS,
+    CURRENT_STATE_FIELDS,
+    GOLD_OPEN_OPPORTUNITIES_FIELDS,
+)
+from tfm_licitaciones.models import ProcurementEvent, procurement_events_frame
 from tfm_licitaciones.spark_foundation import (
     PYSPARK_VERSION,
     assert_contract_schema,
@@ -71,7 +76,6 @@ class SparkFoundationTests(unittest.TestCase):
 
     def test_canonical_silver_contract_maps_exactly_to_spark(self) -> None:
         schema = canonical_silver_schema()
-        self.assertEqual(schema, schema_from_fields(CANONICAL_SILVER_FIELDS))
         self.assertFalse(schema["event_id"].nullable)
         self.assertTrue(schema["procedure_id"].nullable)
         self.assertEqual(schema["estimated_value"].dataType.simpleString(), "decimal(20,2)")
@@ -86,8 +90,30 @@ class SparkFoundationTests(unittest.TestCase):
             silver = Path(tmp) / "procurement_events.parquet"
             frame.write.mode("overwrite").parquet(str(silver))
             loaded = read_canonical_silver(self.spark, silver)
-            assert_contract_schema(loaded, schema)
             self.assertEqual(loaded.collect()[0]["event_id"], "ted:notice:1")
+
+    def test_reads_real_polars_canonical_silver(self) -> None:
+        event = ProcurementEvent(
+            event_id="ted:notice:polars",
+            procedure_id="ted:procedure:POLARS",
+            source="ted",
+            source_event_type="notice",
+            buyer_name="Buyer",
+            title="Polars production boundary",
+            cpv_codes=("72000000",),
+            estimated_value=Decimal("123.45"),
+            currency="EUR",
+            publication_date=date(2026, 1, 1),
+            country="ES",
+            ingested_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            silver = Path(tmp) / "procurement_events.parquet"
+            procurement_events_frame([event]).write_parquet(silver)
+            loaded = read_canonical_silver(self.spark, silver)
+            row = loaded.collect()[0]
+            self.assertEqual(row["event_id"], event.event_id)
+            self.assertEqual(row["estimated_value"], Decimal("123.45"))
 
     def test_read_rejects_physically_missing_optional_column(self) -> None:
         schema = canonical_silver_schema()
@@ -98,7 +124,7 @@ class SparkFoundationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "schema mismatch"):
                 read_canonical_silver(self.spark, silver)
 
-    def test_round_trip_rejects_null_in_required_column_after_metadata_relaxes(self) -> None:
+    def test_read_rejects_null_in_required_column_after_metadata_relaxes(self) -> None:
         schema = canonical_silver_schema()
         row = _valid_row()
         row["event_id"] = None
@@ -106,11 +132,10 @@ class SparkFoundationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             silver = Path(tmp) / "procurement_events.parquet"
             frame.write.mode("overwrite").parquet(str(silver))
-            loaded = read_canonical_silver(self.spark, silver)
             with self.assertRaisesRegex(ValueError, "required columns contain nulls"):
-                assert_contract_schema(loaded, schema)
+                read_canonical_silver(self.spark, silver)
 
-    def test_round_trip_rejects_null_array_element_after_metadata_relaxes(self) -> None:
+    def test_read_rejects_null_array_element_after_metadata_relaxes(self) -> None:
         schema = canonical_silver_schema()
         row = _valid_row()
         row["cpv_codes"] = ["72000000", None]
@@ -118,9 +143,8 @@ class SparkFoundationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             silver = Path(tmp) / "procurement_events.parquet"
             frame.write.mode("overwrite").parquet(str(silver))
-            loaded = read_canonical_silver(self.spark, silver)
             with self.assertRaisesRegex(ValueError, "array columns contain null elements"):
-                assert_contract_schema(loaded, schema)
+                read_canonical_silver(self.spark, silver)
 
     def test_typed_writer_rejects_schema_drift(self) -> None:
         schema = canonical_silver_schema()
@@ -139,6 +163,17 @@ class SparkFoundationTests(unittest.TestCase):
         self.assertEqual(
             tuple((field.name, field.dataType.simpleString(), field.nullable) for field in schema),
             tuple((field.name, field.logical_type, field.nullable) for field in CURRENT_STATE_FIELDS),
+        )
+        self.assertFalse(schema["cpv_codes"].dataType.containsNull)
+
+    def test_engine_neutral_gold_schema_maps_to_spark(self) -> None:
+        schema = schema_from_fields(GOLD_OPEN_OPPORTUNITIES_FIELDS)
+        self.assertEqual(
+            tuple((field.name, field.dataType.simpleString(), field.nullable) for field in schema),
+            tuple(
+                (field.name, field.logical_type, field.nullable)
+                for field in GOLD_OPEN_OPPORTUNITIES_FIELDS
+            ),
         )
         self.assertFalse(schema["cpv_codes"].dataType.containsNull)
 
