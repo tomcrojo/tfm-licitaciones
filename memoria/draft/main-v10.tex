@@ -500,7 +500,7 @@ permiten reejecutar y auditar cada etapa sin repetir toda la cadena.
 \node[gris] (spark) at (6.9,-5.75) {Spark · estado vigente + enriquecimiento\\ {\scriptsize\color{ink}vigencia · CPV · DIR3}};
 \node[gris] (gold) at (6.9,-7.05) {Gold Parquet\\ {\scriptsize\color{ink}\texttt{open\_opportunities} · una fila por procedimiento}};
 \node[gris] (duck) at (6.9,-8.35) {DuckDB · vistas analíticas\\ {\scriptsize\color{ink}solo lectura sobre Gold · comprador · CPV · mensual}};
-\node[barra] (tab) at (6.9,-9.65) {Tableau · CSV reproducibles + dashboard\\ {\scriptsize\color{muted}cinco conjuntos ordenados de forma determinista}};
+\node[barra] (tab) at (6.9,-9.65) {Tableau · dashboard de oportunidades\\ {\scriptsize\color{muted}\texttt{open\_opportunities.csv}}};
 \foreach \x in {3.0,5.6,8.4,11.0} \draw[flecha] (\x,-0.675) -- (\x,-1.3);
 \draw[flecha] (6.9,-2.42) -- (6.9,-2.6);
 \draw[flecha] (6.9,-3.72) -- (6.9,-3.9);
@@ -574,6 +574,14 @@ Cada fichero Raw viaja con un fichero de procedencia
 la ventana temporal, la fecha de recuperación y el checksum. Bronze comprueba
 esa evidencia antes de procesar el contenido y detiene la ejecución si falta o
 es incoherente.
+
+El corpus histórico era anterior a la introducción de estos ficheros. Para
+reutilizarlo sin modificar los originales se añadió una migración de
+compatibilidad que comprueba el tamaño y el SHA-256 contra el manifiesto
+histórico y crea \emph{hardlinks} en un directorio de trabajo nuevo. El valor
+\texttt{run\_at} del manifiesto se registra como instante de observación del
+payload, no como hora original de descarga, que no estaba disponible. Esta
+limitación queda indicada en \texttt{legacy\_migration\_report.json}.
 
 \Needspace{16\baselineskip}
 \begin{lstlisting}[caption={Fichero de procedencia (ejemplo)}]
@@ -735,69 +743,73 @@ Integridad de identidad & Pruebas de colisión y unicidad & Ninguna colisión re
 
 \subsection{Ejecución E2E final}
 
-La cadena Raw--Tableau está implementada, pero el repositorio no conserva aún
-una ejecución final de producción realizada después de incorporar Gold,
-DuckDB y el export de Tableau. Por esta razón no se reutilizan como resultado
-final los conteos del manifiesto del 2 de septiembre, que corresponde a una
-arquitectura anterior. El cierre de esta subsección requiere ejecutar la
-cadena sobre el corpus de referencia y conservar los manifiestos de Bronze,
-Silver, Gold y Tableau.
+La cadena completa se ejecutó dos veces sobre el corpus de referencia con fecha
+de corte 30 de junio de 2026. Ambas ejecuciones partieron de los mismos siete
+payloads verificados y recorrieron Bronze, Silver, estado vigente, Gold,
+DuckDB y el export para Tableau. Los conteos coincidieron en todas las etapas.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \small
-\begin{tabularx}{\textwidth}{@{}X X@{}}
+\begin{tabularx}{0.72\textwidth}{@{}X r@{}}
 \toprule
-\cabecera{Etapa} & \cabecera{Evidencia pendiente de la ejecución final}\\
+\cabecera{Etapa} & \cabecera{Filas}\\
 \midrule
-Bronze & Aceptados, rechazos, tombstones y causas\\
-Silver & Filas de \texttt{procurement\_events} y checksum\\
-Estado vigente y Gold & Procedimientos, incidencias y oportunidades abiertas\\
-DuckDB & Construcción y conteos de las vistas analíticas\\
-Tableau & Cinco CSV, filas por fichero y manifest del export\\
+Bronze aceptadas & 359.304\\
+Rechazos Bronze & 0\\
+Tombstones Bronze & 1.046\\
+Silver canónico & 359.180\\
+Estado vigente & 130.118\\
+Oportunidades abiertas & 14.763\\
 \bottomrule
 \end{tabularx}
-\caption{Evidencia que debe conservar la ejecución E2E final.}
+\caption{Conteos coincidentes en las dos ejecuciones E2E.}
 \end{table}
 
-Silver conserva el histórico completo de publicaciones y revisiones. A partir
-de él, Gold obtiene una fila por procedimiento para una fecha de corte
-concreta. Una licitación se incluye entre las oportunidades abiertas cuando
-la evidencia indica que sigue activa y su plazo no ha vencido. Un plazo
-terminado o la existencia de una adjudicación, resolución o anulación la
-clasifican como cerrada. Los anuncios previos y los casos sin información
-suficiente no se muestran como oportunidades abiertas. La fecha de evaluación
-se proporciona al comando, por lo que una repetición con los mismos datos y
-la misma fecha aplica la misma regla.
+El plegado produjo 130.118 procedimientos vigentes. Gold excluyó 113.957 por
+estado cerrado, 521 por borrado y 877 por evidencia insuficiente. Las 14.763
+filas restantes cumplen la política de oportunidad abierta para la fecha de
+corte. Los 9.905 eventos TED se conservaron en Silver, pero quedaron registrados
+como incidencias de estado vigente porque no fue posible resolver una identidad
+de procedimiento compatible con el contrato actual.
 
-\subsection{Explotación: DuckDB y Tableau}
+La reproducibilidad del producto final se comprobó comparando los cinco CSV de
+ambas ejecuciones. Cada par tiene el mismo tamaño y el mismo SHA-256, por lo que
+su contenido es idéntico byte a byte. Los manifiestos de export difieren solo
+en la ruta de la base DuckDB de origen, específica de cada directorio de
+ejecución.
+
+\subsection{Productos analíticos y Tableau}
 
 DuckDB expone vistas de solo lectura sobre Gold. El comando
-\texttt{export-tableau} escribe cinco CSV con orden determinista y un
-manifiesto que registra el conteo de cada fichero.
+\texttt{export-tableau} escribió cinco CSV con orden determinista y un
+manifiesto con sus conteos. Para reducir el tiempo de integración, el dashboard
+de demostración usa únicamente \path{open_opportunities.csv}; los demás
+ficheros se conservan como productos analíticos reproducibles, pero no se
+conectan a Tableau.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \small
-\begin{tabularx}{\textwidth}{@{}l X X@{}}
+\begin{tabularx}{\textwidth}{@{}l r X@{}}
 \toprule
-\cabecera{Conjunto de datos} & \cabecera{Uso principal} & \cabecera{Granularidad}\\
+\cabecera{CSV} & \cabecera{Filas} & \cabecera{Granularidad}\\
 \midrule
-\texttt{open\_opportunities} & Detalle de oportunidades vigentes & Una fila por \texttt{procedure\_id}\\
-\texttt{opportunity\_cpv} & Relación entre oportunidades y códigos CPV & Una fila por procedimiento, CPV y posición\\
-\texttt{buyer\_summary} & Resumen por comprador & Una fila por identidad analítica del comprador\\
-\texttt{cpv\_summary} & Resumen por categoría CPV & Una fila por \texttt{cpv\_code}\\
-\texttt{opportunities\_monthly} & Evolución temporal por fuente & Una fila por mes y fuente\\
+\texttt{open\_opportunities.csv} & 14.763 & Una fila por \texttt{procedure\_id}\\
+\texttt{opportunity\_cpv.csv} & 28.730 & Una fila por procedimiento, CPV y posición\\
+\texttt{buyer\_summary.csv} & 4.027 & Una fila por identidad analítica del comprador\\
+\texttt{cpv\_summary.csv} & 3.751 & Una fila por \texttt{cpv\_code}\\
+\texttt{opportunities\_monthly.csv} & 0 & Una fila por mes y fuente\\
 \bottomrule
 \end{tabularx}
-\caption{Conjuntos analíticos exportados para Tableau.}
+\caption{CSV analíticos generados y alcance del dashboard.}
 \end{table}
 
-El dashboard permite explorar la evolución temporal, los compradores y las
-categorías CPV. Tableau consume estos conjuntos analíticos y no vuelve a
-implementar las reglas de estado vigente definidas en Gold. Los conteos de los
-cinco CSV y la captura definitiva se incorporarán cuando se conserve el
-manifest de la ejecución final.
+Las 14.763 oportunidades abiertas carecen de \texttt{publication\_date}. Este
+campo permanece nullable porque la fuente no siempre lo proporciona y su
+ausencia no invalida una oportunidad. Por ello el conjunto mensual, que solo
+agrupa registros con fecha de publicación, está vacío. Los otros cuatro CSV
+quedan disponibles para análisis posteriores sin formar parte del dashboard.
 
 % ============================================================
 %  8. DISCUSIÓN
@@ -810,10 +822,12 @@ revisiones mezcla eventos y procedimientos. La identidad determinista y las
 pruebas de colisión permiten conservar esas revisiones y detectar contenidos
 incompatibles sin escoger una versión de forma arbitraria.
 
-La reproducibilidad se apoya en checksums de procedencia, esquemas versionados,
-manifiestos con conteos y exports ordenados. Las medidas que todavía no tienen
-un artefacto conservado, como el perfil \texttt{backfill} y la ejecución E2E
-final de producción, permanecen identificadas como pendientes.
+La doble ejecución aporta evidencia directa de reproducibilidad. Los conteos
+coincidieron desde Bronze hasta Gold y los cinco CSV finales conservaron el
+mismo SHA-256. Los ficheros de procedencia, los esquemas versionados y los
+manifiestos permiten localizar el origen de esos resultados. El perfil
+experimental \texttt{backfill} sigue definido, pero no se presenta como
+resultado porque no existe una ejecución conservada.
 
 El benchmark local justificó Polars para Silver: en el perfil
 \texttt{small} redujo la transformación de 0,617 s a 0,254 s con el mismo
@@ -826,6 +840,13 @@ La arquitectura final separa dos necesidades. Silver conserva todo el
 histórico publicado y Gold ofrece el estado vigente para análisis. Esta
 separación evita destruir evidencia al actualizar una vista de negocio.
 
+Los resultados también revelan dos límites semánticos. La identidad de los
+9.905 eventos TED no puede trasladarse todavía al grano por procedimiento del
+estado vigente. Además, ninguna de las oportunidades abiertas contiene fecha
+de publicación. Mantener el campo nulo evita inventar información, pero impide
+construir la serie mensual. Ambos problemas están en la normalización anterior
+a Gold y no se resuelven filtrando las oportunidades válidas.
+
 El corpus TED usado como referencia está sesgado hacia tecnología por la
 consulta de adquisición. Esa limitación afecta a los resultados descriptivos
 del corpus, pero no restringe el modelo de datos: la ingesta, las entidades
@@ -834,6 +855,7 @@ canónicas y el enriquecimiento CPV admiten contratación de cualquier sector.
 % ============================================================
 %  9. CONCLUSIONES
 % ============================================================
+\clearpage
 \section{Conclusiones y trabajo futuro}
 
 El proyecto integra fuentes heterogéneas de contratación pública en una cadena
@@ -844,9 +866,14 @@ anulaciones y se puede derivar el estado vigente sin perder el histórico.
 Raw conserva la evidencia original, Bronze normaliza y registra rechazos,
 Silver mantiene el histórico canónico y Gold publica las oportunidades
 vigentes. DuckDB y los CSV de Tableau completan la frontera de consumo sin
-duplicar la lógica de negocio. Falta conservar la ejecución final sobre el
-corpus completo y añadir su captura de Tableau; la memoria no presenta esos
-resultados como terminados hasta disponer de los artefactos.
+duplicar la lógica de negocio. Dos ejecuciones completas produjeron los mismos
+conteos y cinco CSV idénticos byte a byte. El resultado demuestra la
+reproducibilidad de la cadena para el corpus y la configuración evaluados.
+
+El trabajo pendiente se concentra en la semántica de origen: resolver la
+identidad de procedimiento de TED y recuperar la fecha de publicación cuando
+esté disponible en la fuente. La ausencia de fecha se mantiene como nulo y no
+se utiliza para descartar oportunidades abiertas.
 
 \begin{table}[ht]
 \centering
@@ -856,10 +883,10 @@ resultados como terminados hasta disponer de los artefactos.
 \cabecera{Área} & \cabecera{Hoy} & \cabecera{Corrección prevista}\\
 \midrule
 Corpus & Ventana ene--jun 2026; TED sesgado a tecnología & Ampliar histórico y filtros sectoriales\\
-Completitud & Sin refresco automático de meses cacheados & Estado de ventana y reintentos persistentes\\
-Rechazos & El estado global de calidad no integra todavía todos los resultados de ingesta & Unificar la decisión de calidad\\
+Identidad TED & 9.905 eventos sin identidad de procedimiento resoluble & Revisar la extracción y el puente de identidad\\
+Fechas & 14.763 oportunidades sin \texttt{publication\_date} & Recuperar la fecha upstream cuando exista\\
 Ejecución & Batch local reproducible y empaquetado con Docker; sin orquestación & Programación con Airflow\\
-Dashboard & Capa de demostración analítica & Personalización opcional por perfil de empresa\\
+Dashboard & Conectado solo a \texttt{open\_opportunities.csv} & Añadir otros conjuntos solo si el caso de uso lo exige\\
 \bottomrule
 \end{tabularx}
 \caption{Limitaciones vigentes y líneas futuras: ingesta periódica,
