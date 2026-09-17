@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>TFM · Pipeline reproducible de contratación pública</title>
+  <style>
+    :root {
+      --bg:#0d1117; --surface:#161b22; --surface2:#1d2630; --line:#30363d;
+      --text:#f0f4f8; --muted:#a9b4c0; --faint:#74808e;
+      --green:#7ee787; --blue:#79c0ff; --orange:#f2b66d; --red:#ff7b72;
+      --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      --mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+    }
+    *{box-sizing:border-box} html,body{width:100%;height:100%;margin:0;overflow:hidden}
+    body{background:var(--bg);color:var(--text);font-family:var(--sans)}
+    .deck{position:relative;width:100vw;height:100vh}
+    .deck:before{content:"";position:fixed;inset:0;z-index:-1;background:
+      radial-gradient(circle at 90% 5%,rgba(121,192,255,.13),transparent 30%),
+      radial-gradient(circle at 8% 95%,rgba(126,231,135,.08),transparent 28%),var(--bg)}
+    .slide{position:absolute;inset:0;padding:clamp(4.8rem,8vh,7rem) clamp(2rem,7vw,7rem);
+      display:grid;align-content:center;gap:clamp(1rem,2.4vh,1.8rem);opacity:0;visibility:hidden;
+      transform:translateX(1.5rem);transition:.25s ease}
+    .slide.is-active{opacity:1;visibility:visible;transform:none}.slide.is-before{transform:translateX(-1.5rem)}
+    h1,h2,h3,p{margin:0} h1{font-size:clamp(3rem,7vw,6.7rem);line-height:.96;letter-spacing:-.055em;max-width:12ch}
+    h2{font-size:clamp(2.1rem,4.8vw,4.6rem);line-height:1.02;letter-spacing:-.045em;max-width:18ch}
+    h3{font-size:clamp(1rem,1.6vw,1.3rem)}
+    .eyebrow{color:var(--green);font:700 .8rem/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+    .lead{color:var(--muted);font-size:clamp(1.05rem,1.8vw,1.5rem);line-height:1.5;max-width:68ch}
+    .accent{color:var(--green)} .blue{color:var(--blue)} .orange{color:var(--orange)} .mono{font-family:var(--mono)}
+    .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+    .card{padding:1.5rem;border:1px solid var(--line);background:rgba(22,27,34,.9);border-radius:.75rem;min-height:9rem}
+    .card.focus{border-top:3px solid var(--green)} .tag{display:block;margin-bottom:1.6rem;color:var(--faint);font:700 .72rem/1 var(--mono)}
+    .card p{margin-top:.55rem;color:var(--muted);line-height:1.45}
+    .pipeline{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.7rem}
+    .stage{position:relative;padding:1rem;border:1px solid var(--line);border-radius:.6rem;background:var(--surface);min-height:8.5rem}
+    .stage:not(:last-child):after{content:"→";position:absolute;right:-.7rem;top:50%;transform:translate(50%,-50%);color:var(--green);font-weight:700}
+    .stage b{display:block;margin-bottom:.7rem;font:700 .95rem/1.2 var(--mono)} .stage span{color:var(--muted);font-size:.88rem;line-height:1.4}
+    .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem}.metric{padding:1.4rem;border-top:1px solid var(--line)}
+    .metric strong{display:block;color:var(--green);font-size:clamp(2.2rem,4.4vw,4.2rem);line-height:1;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:.7rem;color:var(--muted);line-height:1.35}
+    .repro{padding:1rem 1.2rem;border-left:3px solid var(--blue);background:rgba(121,192,255,.07);color:var(--muted)}
+    .bars{display:grid;gap:1rem;padding:1.5rem;border:1px solid var(--line);border-radius:.75rem;background:rgba(22,27,34,.85)}
+    .bar{display:grid;grid-template-columns:7rem 1fr 5rem;gap:1rem;align-items:center}.bar span,.bar b{font:700 .82rem/1 var(--mono)}.bar span{color:var(--muted)}
+    .track{height:.7rem;background:var(--surface2);border-radius:99rem;overflow:hidden}.fill{display:block;height:100%;background:var(--blue);border-radius:inherit}.best .fill{background:var(--green)}.best b{color:var(--green)}
+    .tableau{display:grid;grid-template-columns:.9fr 1.1fr;gap:4vw;align-items:center}.buyer-warning{padding:1.35rem;border:1px solid rgba(242,182,109,.45);background:rgba(242,182,109,.06);border-radius:.75rem}
+    .buyer-warning strong{display:block;color:var(--orange);margin-bottom:.6rem}.buyer-warning p{color:var(--muted);line-height:1.5}.buyer-warning code{color:var(--text)}
+    .limits{display:grid;gap:.7rem}.limit{padding:.9rem 1rem;border-left:2px solid var(--red);background:rgba(255,123,114,.06);color:var(--muted)}
+    .chrome{position:fixed;z-index:20;color:var(--faint);font:700 .72rem/1 var(--mono);letter-spacing:.06em;text-transform:uppercase}
+    .brand{top:1.8rem;left:clamp(2rem,4vw,4rem)}.counter{top:1.8rem;right:clamp(2rem,4vw,4rem)}.help{bottom:1.8rem;left:clamp(2rem,4vw,4rem)}
+    .controls{position:fixed;right:2rem;bottom:1.3rem;display:flex;gap:.45rem;z-index:25}.controls button{width:2.7rem;height:2.7rem;border:1px solid var(--line);border-radius:.45rem;background:var(--surface);color:var(--text);cursor:pointer}
+    .progress{position:fixed;left:0;bottom:0;width:100%;height:3px;z-index:30}.progress span{display:block;height:100%;background:var(--green);transition:width .2s}
+    .notes{display:none}.notes-panel{position:fixed;z-index:50;left:0;right:0;bottom:0;max-height:44vh;overflow:auto;padding:1.3rem clamp(2rem,7vw,7rem) 2rem;background:rgba(8,12,17,.98);border-top:1px solid var(--line);transform:translateY(105%);transition:.2s}
+    .notes-panel.open{transform:none}.notes-panel .label{color:var(--green);font:700 .75rem/1 var(--mono);text-transform:uppercase;margin-bottom:.7rem}.notes-panel p{max-width:90ch;line-height:1.6}
+    @media(max-width:900px){.slide{padding:4.8rem 1.4rem 5rem;overflow-y:auto}.grid3,.grid2,.metrics,.tableau{grid-template-columns:1fr}.pipeline{grid-template-columns:repeat(2,1fr)}.stage:after{display:none}.help{display:none}}
+    @media(prefers-reduced-motion:reduce){.slide,.notes-panel,.progress span{transition:none}}
+  </style>
+</head>
+<body>
+<main class="deck" aria-label="Presentación del TFM">
+  <div class="chrome brand">TFM · Data Engineering · UCM</div>
+  <div class="chrome counter"><span id="current">01</span> / 08</div>
+
+  <section class="slide is-active" data-duration="0:20">
+    <p class="eyebrow">Pipeline reproducible de contratación pública</p>
+    <h1>De datos abiertos a oportunidades <span class="accent">trazables</span></h1>
+    <p class="lead">TED · OpenPLACSP · CPV · DIR3 · Silver histórico · Gold · DuckDB · Tableau</p>
+    <aside class="notes">La información sobre contratación pública está repartida entre portales y formatos distintos. Mi TFM construye un pipeline reproducible que la transforma en datos preparados para analizar. Voy a explicar el problema, la arquitectura y los resultados obtenidos con el corpus real.</aside>
+  </section>
+
+  <section class="slide" data-duration="0:25">
+    <p class="eyebrow">01 · El problema</p>
+    <h2>Publicar datos no significa que estén listos para analizar</h2>
+    <div class="grid3">
+      <article class="card"><span class="tag">FUENTES</span><h3>TED + OpenPLACSP</h3><p>Ámbitos y semánticas diferentes.</p></article>
+      <article class="card"><span class="tag">FORMATOS</span><h3>JSON · ZIP · Atom · XML</h3><p>Parsing específico con procedencia.</p></article>
+      <article class="card focus"><span class="tag">CICLO DE VIDA</span><h3>Revisiones + anulaciones</h3><p>Una nueva publicación no debe borrar la anterior.</p></article>
+    </div>
+    <aside class="notes">Las fuentes principales son TED y OpenPLACSP. Sus publicaciones incluyen formatos diferentes, revisiones y anulaciones. Una misma licitación puede aparecer varias veces y cambiar de estado. Por eso, descargar y juntar archivos no es suficiente: hay que distinguir cada publicación del procedimiento al que pertenece y conservar su historia.</aside>
+  </section>
+
+  <section class="slide" data-duration="0:25">
+    <p class="eyebrow">02 · Objetivo</p>
+    <h2>Una cadena común, auditable y reutilizable</h2>
+    <p class="lead">Integrar fuentes heterogéneas, conservar procedencia y derivar oportunidades abiertas sin limitar el modelo a un sector concreto.</p>
+    <div class="grid3">
+      <article class="card"><span class="tag">IDENTIDAD</span><h3>Eventos canónicos</h3><p>Histórico antes de estado vigente.</p></article>
+      <article class="card"><span class="tag">TAXONOMÍA</span><h3>CPV oficial</h3><p>Clasificación generalista.</p></article>
+      <article class="card"><span class="tag">EVIDENCIA</span><h3>Resultados verificables</h3><p>Conteos, manifests y checksums.</p></article>
+    </div>
+    <aside class="notes">El objetivo es integrar esas fuentes en una estructura común, conservar su procedencia y obtener una vista de oportunidades abiertas. El proyecto es generalista: utiliza la clasificación CPV para organizar la contratación por categorías, sin limitarse al sector tecnológico. La aportación central es conectar el dato original con un resultado analítico verificable.</aside>
+  </section>
+
+  <section class="slide" data-duration="0:50">
+    <p class="eyebrow">03 · Arquitectura implementada</p>
+    <h2>Cada capa responde una pregunta distinta</h2>
+    <div class="pipeline">
+      <div class="stage"><b>RAW</b><span>Payload oficial + procedencia</span></div>
+      <div class="stage"><b>BRONZE</b><span>Parsing, rechazos y tombstones</span></div>
+      <div class="stage"><b>SILVER</b><span>Histórico canónico de eventos</span></div>
+      <div class="stage"><b>GOLD</b><span>Estado vigente + oportunidades</span></div>
+      <div class="stage"><b>DUCKDB</b><span>Vistas SQL versionadas</span></div>
+      <div class="stage"><b>TABLEAU</b><span>CSV deterministas</span></div>
+    </div>
+    <p class="lead"><span class="blue mono">Polars</span> acelera Silver · <span class="blue mono">PySpark</span> resuelve estado y Gold · <span class="blue mono">DuckDB</span> sirve analítica</p>
+    <aside class="notes">El flujo se organiza por capas. Raw conserva los archivos originales y sus metadatos de procedencia. Bronze interpreta cada formato, separa los registros aceptados y registra rechazos y controles de borrado. Silver mantiene un histórico de eventos, incluidas las revisiones. Polars ofrece una ruta rápida para los lotes compatibles, con una implementación Python de respaldo. Después, PySpark resuelve el estado vigente y genera Gold con las oportunidades abiertas. DuckDB expone vistas SQL sobre Gold y exporta cinco CSV deterministas. La ejecución final es local y por etapas; Airflow, Docker y el despliegue cloud quedan fuera de esta entrega.</aside>
+  </section>
+
+  <section class="slide" data-duration="0:55">
+    <p class="eyebrow">04 · Resultados E2E</p>
+    <h2>Dos ejecuciones, los mismos productos</h2>
+    <div class="metrics">
+      <div class="metric"><strong>359.304</strong><span>registros aceptados en Bronze</span></div>
+      <div class="metric"><strong>359.180</strong><span>eventos canónicos en Silver</span></div>
+      <div class="metric"><strong>130.118</strong><span>estados vigentes resueltos</span></div>
+      <div class="metric"><strong>14.763</strong><span>oportunidades abiertas al 30/06/2026</span></div>
+    </div>
+    <div class="repro"><strong class="blue">Reproducibilidad:</strong> conteos coincidentes y los 5 CSV finales idénticos byte a byte mediante SHA-256.</div>
+    <aside class="notes">La ejecución final partió de siete archivos originales verificados. Produjo 359.304 registros aceptados en Bronze y 359.180 eventos en Silver. Tras resolver las revisiones, quedaron 130.118 estados vigentes y 14.763 oportunidades abiertas según la política del proyecto, con fecha de corte del 30 de junio de 2026. Son cifras del corpus analizado, no oportunidades disponibles hoy. Repetí la cadena completa sobre los mismos datos: los conteos coincidieron y los cinco CSV finales fueron idénticos byte a byte, comprobados mediante SHA-256. Esto demuestra la reconstrucción de esos productos; no demuestra cobertura completa del mercado.</aside>
+  </section>
+
+  <section class="slide" data-duration="0:35">
+    <p class="eyebrow">05 · Evidencia para elegir motor</p>
+    <h2>Medir la frontera concreta, no elegir por catálogo</h2>
+    <p class="lead">Bronze → Silver · 25.363 entradas sintéticas · 22.504 eventos con paridad</p>
+    <div class="bars">
+      <div class="bar best"><span>Polars</span><div class="track"><i class="fill" style="width:2.54%"></i></div><b>0,254 s</b></div>
+      <div class="bar"><span>Python</span><div class="track"><i class="fill" style="width:6.16%"></i></div><b>0,617 s</b></div>
+      <div class="bar"><span>Spark</span><div class="track"><i class="fill" style="width:100%"></i></div><b>10,01 s</b></div>
+    </div>
+    <p class="lead" style="font-size:1rem">Una ejecución conservada · carga sintética acotada · tiempos de transformación, no E2E.</p>
+    <aside class="notes">El experimento de motores es distinto de esa ejecución real. Con 25.363 entradas sintéticas, Polars, Python y Spark produjeron resultados equivalentes dentro del contrato probado. En la ejecución conservada, Polars registró 0,254 segundos de transformación; Python, 0,617; y Spark, 10,01. Son tiempos de esa transformación, no del pipeline completo. Spark se utiliza después para resolver el estado vigente y construir Gold.</aside>
+  </section>
+
+  <section class="slide" data-duration="0:50">
+    <p class="eyebrow">06 · Consumo en Tableau</p>
+    <div class="tableau">
+      <div>
+        <h2>14.763 oportunidades, una fila por procedimiento</h2>
+        <p class="lead" style="margin-top:1rem">Volumen, importes y compradores sin reimplementar la lógica de Gold dentro del dashboard.</p>
+      </div>
+      <div class="buyer-warning">
+        <strong>Limitación de identidad del comprador</strong>
+        <p>Un mismo organismo puede fragmentarse por variantes nominales. Ejemplo observado:</p>
+        <p style="margin-top:.7rem"><code>Comité Central de Compras de Navantia</code><br>↔<br><code>Comité de Compras de Navantia</code></p>
+        <p style="margin-top:.7rem">No se aplica fuzzy matching agresivo sin evidencia suficiente.</p>
+      </div>
+    </div>
+    <aside class="notes">Para la demostración en Tableau se usa open_opportunities.csv, con una fila por procedimiento y 14.763 oportunidades. Permite analizar volumen, importes y compradores sin repetir la lógica de apertura dentro del dashboard. Hay dos limitaciones importantes. Primero, las oportunidades no tienen fecha de publicación, así que no se inventa una serie temporal. Segundo, la identidad de compradores todavía puede fragmentarse por variantes nominales: por ejemplo, «Comité Central de Compras de Navantia» y «Comité de Compras de Navantia» aparecen como nombres distintos aunque representen al mismo comprador. El pipeline evita fusionarlos mediante similitud sin evidencia suficiente.</aside>
+  </section>
+
+  <section class="slide" data-duration="0:40">
+    <p class="eyebrow">07 · Límites y cierre</p>
+    <div class="grid2">
+      <div>
+        <h2>Reproducible no significa completo</h2>
+        <div class="limits" style="margin-top:1.3rem">
+          <div class="limit">9.905 eventos TED sin identidad de procedimiento resoluble para Gold</div>
+          <div class="limit">14.763 oportunidades sin <span class="mono">publication_date</span></div>
+          <div class="limit">Aliases nominales de comprador todavía no consolidados</div>
+          <div class="limit">Sin Airflow, Docker ni despliegue cloud en esta entrega</div>
+        </div>
+      </div>
+      <p class="lead" style="font-size:clamp(1.7rem,3.5vw,3.4rem);line-height:1.18">La aportación es una cadena <span class="accent">funcional</span>, <span class="blue">trazable</span> y honesta sobre lo que todavía no resuelve.</p>
+    </div>
+    <aside class="notes">TED llega a Silver, pero sus 9.905 eventos no se incorporan a Gold porque falta una identidad de procedimiento válida. También queda pendiente recuperar fechas de publicación y consolidar aliases de compradores mediante identificadores oficiales o reglas auditables. La evaluación utiliza un corpus concreto y una fecha de corte; no demuestra operación diaria ni cobertura completa. La aportación es una cadena funcional que conserva el histórico y genera productos analíticos cuya reconstrucción se ha comprobado.</aside>
+  </section>
+
+  <div class="chrome help">← → / espacio · N notas · F pantalla completa</div>
+  <nav class="controls" aria-label="Navegación"><button id="prev">←</button><button id="next">→</button></nav>
+  <div class="progress"><span id="progress"></span></div>
+  <aside id="notes-panel" class="notes-panel"><div class="label">Guion · <span id="duration">0:20</span></div><p id="notes-copy"></p></aside>
+</main>
+<script>
+(() => {
+  const slides=[...document.querySelectorAll('.slide')], current=document.getElementById('current'), progress=document.getElementById('progress'), notesPanel=document.getElementById('notes-panel'), notesCopy=document.getElementById('notes-copy'), duration=document.getElementById('duration');
+  const fromHash=()=>Math.max(0,Math.min(slides.length-1,(Number(location.hash.replace(/^#\/?/,''))||1)-1));
+  let index=fromHash();
+  function render(updateHash=true){slides.forEach((s,i)=>{s.classList.toggle('is-active',i===index);s.classList.toggle('is-before',i<index);s.setAttribute('aria-hidden',i===index?'false':'true')});current.textContent=String(index+1).padStart(2,'0');progress.style.width=`${((index+1)/slides.length)*100}%`;duration.textContent=slides[index].dataset.duration;notesCopy.textContent=slides[index].querySelector('.notes').textContent.trim();if(updateHash)history.replaceState(null,'',`#${index+1}`)}
+  const go=d=>{index=Math.max(0,Math.min(slides.length-1,index+d));render()};
+  document.getElementById('prev').onclick=()=>go(-1);document.getElementById('next').onclick=()=>go(1);
+  document.addEventListener('keydown',async e=>{if(['ArrowRight','PageDown',' '].includes(e.key)){e.preventDefault();go(1)}if(['ArrowLeft','PageUp'].includes(e.key)){e.preventDefault();go(-1)}if(e.key.toLowerCase()==='n')notesPanel.classList.toggle('open');if(e.key.toLowerCase()==='f'){if(!document.fullscreenElement)await document.documentElement.requestFullscreen?.();else await document.exitFullscreen?.()}if(e.key==='Home'){index=0;render()}if(e.key==='End'){index=slides.length-1;render()}if(e.key==='Escape')notesPanel.classList.remove('open')});
+  window.addEventListener('hashchange',()=>{index=fromHash();render(false)});render(false);
+})();
+</script>
+</body>
+</html>
