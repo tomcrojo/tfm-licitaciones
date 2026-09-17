@@ -37,9 +37,14 @@ flowchart LR
 Los adaptadores y parsers están implementados con la biblioteca estándar de
 Python. `run` no accede a la red: descubre los ficheros raw, normaliza los
 registros, construye Silver canónico desde todos los registros y tombstones de
-Bronze, y alimenta una vista legada en memoria (`TenderRecord`) con el
-snapshot más reciente para Gold 0.1, que calcula enlace y clasificación,
-evalúa la calidad y escribe las salidas.
+Bronze con la ruta híbrida (guarda de elegibilidad que decide por batch entre
+el kernel nativo de Polars y la referencia congelada), y alimenta una vista
+legada en memoria
+(`TenderRecord`) con el snapshot más reciente para Gold 0.1, que calcula
+enlace y clasificación, evalúa la calidad y escribe las salidas. La
+semántica exacta de Silver canónico está congelada en una implementación de
+referencia python-row (`silver_reference.py`) que actúa como oráculo de
+paridad en tests y benchmarks.
 
 Esta base tiene limitaciones conocidas: no mantiene estado de ventanas de
 ingesta, no garantiza la completitud de una descarga, la vista legada todavía
@@ -76,7 +81,7 @@ flowchart TB
     CPV --> RAW2
     DIR3 --> RAW2
     RAW2 --> BRONZE2
-    BRONZE2 -->|"motor por benchmark"| SILVER2
+    BRONZE2 -->|"Guarda híbrida:<br/>kernel Polars nativo<br/>o referencia congelada"| SILVER2
     SILVER2 -->|"PySpark"| ENRICH
     ENRICH -->|"PySpark"| GOLD2
 
@@ -96,22 +101,42 @@ ejecutarla sin levantar el orquestador.
 La asignación de motores objetivo es: Python (biblioteca estándar) solo para
 API, sistema de ficheros, ZIP/XML/parsing JSON y metadatos pequeños de
 control; Polars para lotes acotados de parsing, dimensiones locales CPV/DIR3
-y exportaciones acotadas; el motor de Silver canónico se decidirá mediante
-el benchmark reproducible descrito en [benchmarks](benchmarks.md), con
-Polars nativo y PySpark como candidatos; PySpark queda destinado en
-principio a joins grandes/transversales, ventanas, dedup/chequeos de
-colisión, enriquecimiento, generación de candidatos de linkage y Gold de
-alta cardinalidad. Parquet es el formato entre etapas. Unos 200.000 filas son una
-heurística de enrutado, no un umbral rígido: la forma de la carga (joins,
-ventanas, cardinalidad, estado) es decisiva.
+y exportaciones acotadas; PySpark para joins grandes/transversales, ventanas,
+dedup/chequeos de colisión, enriquecimiento, generación de candidatos de
+linkage y Gold de alta cardinalidad. Parquet es el formato entre etapas. Unos
+200.000 filas son una heurística de enrutado, no un umbral rígido: la forma
+de la carga (joins, ventanas, cardinalidad, estado) es decisiva.
 
-Estado actual frente a objetivo: Bronze y Silver canónico están
-implementados hoy como baseline python-row sobre una frontera
-Polars/Parquet (frames Polars de entrada/salida, pero transformación por
-filas en Python: `iter_rows`, `json.loads` por fila, objetos
-`ProcurementEvent`, agrupación en dict y ordenación Python); el motor
-definitivo de Silver está pendiente del benchmark. Bronze acotado, Airflow y
-la migración completa se abordan en cambios separados.
+Decisión medida para Silver canónico (ver
+[benchmarks](benchmarks.md) y la evidencia del experimento de motores
+curada en `experiments/silver_engine_comparison/`):
+la ruta productiva es **híbrida con guarda de elegibilidad**. Antes de
+ejecutar nada, `silver_guard.py` inspecciona el batch completo (records y
+tombstones) con el parser JSON de CPython y admite solo el dominio nativo
+estrecho documentado allí (documento completo dentro del dominio del parser:
+máximo 64 contenedores anidados, enteros de 64 bits, flotantes finitos,
+claves `[A-Za-z0-9_-]+` a cualquier profundidad y sin separadores
+U+001C–U+001F; identidades de texto, texto localizado plano,
+CPV de cadenas, importes de texto decimal simple o enteros —los floats
+monetarios requieren fallback salvo gates PLACSP con texto `*_raw` validado—,
+países ASCII, fechas estrictas,
+instantes RFC 3339 estrictos, tombstones PLACSP completos); si una sola fila
+queda fuera, el batch completo se procesa con la referencia python-row congelada
+sobre los frames originales, conservando valores, orden del primer error y
+mensajes. Ambas rutas emiten el mismo contrato canónico (esquema
+`PROCUREMENT_EVENT_SCHEMA`, identidad, revisiones, tombstones, semántica de
+colisión explícita y selección de procedencia), y la ruta elegida se
+registra una vez por batch; una ejecución con fallback nunca se etiqueta
+como nativa. El contrato es independiente del motor por construcción: la
+referencia congelada (`silver_reference.py`) y el kernel Polars
+(`silver_native.py`) consumen el mismo Bronze Parquet y los tests de
+paridad (`tests/test_silver_native.py`) cubren ambas rutas y la frontera.
+Se conserva además un candidato PySpark evaluado como ruta de scale-out para
+despliegues mayores, sin conectarlo todavía al pipeline productivo; su
+paridad medida se limita al contrato sintético TED/PLACSP del experimento
+(payloads escalares, CPV como listas de cadenas e instantes con segundos
+enteros) y no cubre BOE ni instantes con fracción de segundo. Bronze
+acotado, Airflow y la migración completa se abordan en cambios separados.
 
 ## 4. Componentes y tecnologías
 
@@ -122,7 +147,7 @@ la migración completa se abordan en cambios separados.
 | Contratos menores | Incorporar señales de contratación de menor importe | Python y formato oficial por determinar | Planificado |
 | Raw | Conservar bytes y procedencia sin sobrescrituras silenciosas | Sistema de ficheros local, checksum SHA-256 | Parcial |
 | Bronze | Representar el resultado del parsing y sus rechazos | Python para parsing; Polars para lotes acotados; Parquet | Implementado con métricas por fuente; payload source-specific en JSON string |
-| Silver | Mantener entidades canónicas tipadas | Motor por benchmark (candidatos: Polars nativo, PySpark) + Parquet | `procurement_events` implementado hoy como baseline python-row sobre frontera Polars/Parquet, con historial completo; motor definitivo pendiente de benchmark; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
+| Silver | Mantener entidades canónicas tipadas | Ruta híbrida: guarda de elegibilidad en Python + kernel Polars nativo para el dominio admitido, referencia python-row congelada para el resto (mismos frames); candidato PySpark de scale-out con paridad acreditada solo sobre el contrato sintético TED/PLACSP | `procurement_events` implementado con historial completo; guarda y fallback cubiertos por tests; Gold 0.1 sigue en la frontera `TenderRecord` en memoria |
 | Referencias | Resolver CPV y organismos mediante identificadores oficiales | CPV 2008 y DIR3; construcción local acotada con Polars | CPV disponible; dimensiones planificadas |
 | Linkage | Detectar avisos equivalentes entre fuentes con evidencia | PySpark para generación de candidatos; reglas explicables y similitud textual | Baseline cross-source implementado |
 | Enrichment semántico | Añadir etiquetas de negocio multilabel auditables | PySpark + modelo preentrenado versionado | Planificado |
@@ -218,22 +243,29 @@ estimaciones y los diseños futuros se etiquetarán como tales.
 
 ## 10. Decisiones de alcance
 
-- La asignación de motores es autoritativa salvo el motor de Silver
-  canónico, que se decidirá por benchmark: Airflow como plano de control
+- La asignación de motores es autoritativa: Airflow como plano de control
   sobre funciones de pipeline independientes; Python solo para API, sistema
   de ficheros, ZIP/XML/parsing JSON y metadatos pequeños de control; Polars
-  para lotes acotados de parsing, dimensiones locales CPV/DIR3 y
-  exportaciones acotadas; Polars nativo y PySpark como candidatos a Silver;
-  PySpark destinado en principio a joins grandes/transversales, ventanas,
-  dedup/chequeos de colisión, enriquecimiento, generación de candidatos de
-  linkage y Gold de alta cardinalidad; Parquet como formato entre etapas.
+  para lotes acotados de parsing, dimensiones locales CPV/DIR3, Silver
+  canónico (guarda de elegibilidad que decide por batch entre el kernel
+  nativo y la referencia congelada) y
+  exportaciones acotadas; PySpark para joins grandes/transversales,
+  ventanas, dedup/chequeos de colisión, enriquecimiento, generación de
+  candidatos de linkage, Gold de alta cardinalidad y, si un despliegue mayor
+  lo justifica, un backend Silver de scale-out tras productionizarlo;
+  Parquet como formato entre etapas.
 - Unas 200.000 filas son una heurística de enrutado, no un umbral rígido: la
   forma de la carga (joins, ventanas, cardinalidad, estado) es decisiva.
 - El protocolo de comparación (comandos, perfiles, métricas y paridad) está
-  en [benchmarks](benchmarks.md). No existe ningún resultado de rendimiento
-  hasta que el harness se ejecute y sus métricas JSON se conserven.
-- El motor Silver definitivo, Bronze acotado, Airflow y la migración completa quedan fuera
-  de este cambio y se abordan en cambios separados tras el benchmark.
+  en [benchmarks](benchmarks.md); sus resultados autorizados viven en el
+  experimento de motores curado bajo `experiments/silver_engine_comparison/`.
+  El contrato canónico de Silver es engine-neutral: no se selecciona motor
+  por configuración en el pipeline productivo (sin `--silver-engine`, sin
+  factory ni doble pipeline); una futura ruta Spark de scale-out se
+  productionizaría como cambio separado sobre la misma frontera Bronze
+  Parquet → contrato → Silver Parquet.
+- Bronze acotado, Airflow y la migración completa se abordan en cambios
+  separados.
 - dbt solo tendrá sentido si se incorpora un serving layer SQL con un papel
   claro.
 - No se añaden infraestructura distribuida, Kubernetes, streaming ni un

@@ -51,7 +51,7 @@ from typing import Any
 import polars as pl
 
 from .bronze import BRONZE_SCHEMA, TOMBSTONE_SCHEMA, bronze_frame, tombstone_frame
-from .silver import build_procurement_events
+from .silver_reference import build_procurement_events_reference as build_procurement_events
 
 UTC = timezone.utc
 BASE_RETRIEVED_AT = datetime(2026, 3, 2, 9, 0, 0, tzinfo=UTC)
@@ -592,8 +592,6 @@ def _measured_stage_worker(payload: dict[str, Any], queue: Any) -> None:
         import time
 
         import polars as pl
-
-        from .silver import build_procurement_events
 
         started = time.perf_counter()
         records = pl.read_parquet(payload["records_glob"])

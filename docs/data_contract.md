@@ -201,8 +201,11 @@ Silver canónico se construye desde **todas** las filas aceptadas de
 `bronze/tombstones.parquet`, incluidos snapshots sustituidos. Nunca se pliega
 el historial ni se aplican tombstones como borrados en esta capa.
 
-Cada adaptador (`src/tfm_licitaciones/silver.py`) construye identificadores
-deterministas a partir de la identidad publicada por la fuente:
+Cada adaptador construye identificadores deterministas a partir de la
+identidad publicada por la fuente (la implementación productiva decide la
+ruta por batch con la guarda de elegibilidad: kernel nativo de Polars
+`src/tfm_licitaciones/silver_native.py` o referencia congelada
+`src/tfm_licitaciones/silver_reference.py`; ambas comparten este contrato):
 
 - TED: `event_id = ted:notice:<ND>`. Un número de aviso publicado (`ND`) es un
   evento; observaciones repetidas o corregidas con la misma identidad no
@@ -350,6 +353,29 @@ exacto `PROCUREMENT_EVENT_SCHEMA`, tipado incluso vacío, `event_id` único y
 orden determinista por `event_id`. El JSONL legado
 `<silver_dir>/tenders.jsonl` ya no se escribe; si existe de una ejecución
 anterior exactamente en esa ruta, se elimina para que no parezca vigente.
+
+### Motores y neutralidad del contrato
+
+El contrato de esta sección (grano, identidad, duplicados/colisiones,
+esquema, reglas temporales y de importes, mapeo por fuente y persistencia)
+es independiente del motor de ejecución. La ejecución productiva es
+híbrida y se decide por batch antes de transformar: `silver_guard.py`
+inspecciona todas las filas con el parser JSON de CPython y admite solo el
+dominio nativo estrecho (claves `[A-Za-z0-9_-]+` a cualquier profundidad,
+identidades de texto, texto localizado plano, CPV de cadenas, países ASCII,
+importes de texto decimal simple o enteros; floats monetarios solo como gates
+PLACSP con texto `*_raw` validado). Se admiten fechas estrictas, instantes
+RFC 3339 estrictos y tombstones PLACSP completos; si alguna fila queda
+fuera, el batch completo se procesa con la referencia python-row congelada
+(`silver_reference.py`) sobre los frames originales. Ambas rutas emiten
+exactamente el mismo contrato y la misma semántica de errores, y la ruta
+elegida se registra una vez por batch; una ejecución con fallback nunca se
+etiqueta como nativa. No existe selección de motor por configuración ni
+doble pipeline. Se conserva además un candidato PySpark como ruta de
+scale-out evaluada fuera del pipeline productivo, cuya paridad medida se
+limita al contrato sintético TED/PLACSP del experimento (payloads
+escalares, CPV como listas de cadenas e instantes con segundos enteros) y
+no cubre BOE ni instantes con fracción de segundo.
 
 ### Revisiones y tombstones
 

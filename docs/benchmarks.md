@@ -175,3 +175,129 @@ el writer acotado por partes, la medición aislada, el fallo de colisión
 orden físico irrelevante y los fallos ante contenido o esquema divergente).
 No usan red y solo `tiny` corre en CI; `small`, `medium`, `large` y
 `backfill` son manuales.
+
+## Motor de producción: híbrido con guarda de elegibilidad (2026-09-17)
+
+El motor productivo de Silver canónico es híbrido: `build_procurement_events`
+inspecciona el batch completo (records y tombstones) con
+`src/tfm_licitaciones/silver_guard.py` *antes* de ejecutar nada y decide la
+ruta:
+
+- **nativa** (`src/tfm_licitaciones/silver_native.py`) si todas las filas
+  pertenecen al dominio elegible documentado en la guarda. El chequeo cubre
+  el **documento JSON completo** (campos no usados y claves incluidos)
+  porque el backend resuelve todas las rutas a nulo en silencio fuera de sus
+  límites: máximo 64 contenedores anidados, enteros de 64 bits con signo,
+  flotantes finitos, claves `[A-Za-z0-9_-]+` a cualquier profundidad
+  (incluidos objetos ignorados) y ninguna cadena con los separadores ASCII U+001C–U+001F
+  (CPython los recorta como espacio y el backend no). Además: identidades de
+  texto no vacías, texto localizado plano (cadenas o listas planas de
+  cadenas), CPV escalar/lista de cadenas, importes de texto decimal simple
+  o enteros (los floats monetarios van a fallback salvo gates PLACSP con
+  texto `*_raw` validado; no se usa su representación JSON para el Decimal). Las
+  cadenas sin dígitos son elegibles solo cuando su proyección sin
+  separadores no es un deletreo de infinito positivo: la referencia las
+  normaliza a `inf` y lanza, el kernel devolvería nulo. Países restringidos
+  a cadenas ASCII: `ESP` y pares mayúsculos se conservan/mapean, el resto
+  queda nulo; otros alfabetos usan referencia. Fechas con prefijo `YYYY-MM-DD`
+  estricto, instantes RFC 3339 estrictos con segundos y offset de minutos
+  completos (o formas que la referencia resuelve como "sin fecha"), y
+  tombstones PLACSP con referencia completa sin esos separadores;
+- **referencia python-row congelada** (`src/tfm_licitaciones/silver_reference.py`)
+  con los frames originales para cualquier batch fuera de ese dominio.
+
+Una sola fila no elegible envía el batch completo a la referencia, que
+conserva valores, orden del primer error y mensajes. La guarda usa
+`json.loads` de CPython sobre `payload_json` (sin conversiones ni pérdida de
+precisión) y la ruta elegida se registra una vez por batch en el logger
+`tfm_licitaciones.silver` (`route`, `fallback_reason`, `records`,
+`tombstones`). Una ejecución con fallback no se etiqueta como nativa.
+
+La semántica histórica sigue congelada en `silver_reference.py` como oráculo
+de paridad, y `tests/test_silver_native.py` y `tests/test_silver_guard_r4.py`
+exigen paridad exacta de frames y de mensajes contra ella para ambas rutas,
+además de cubrir la propia frontera
+(una fila inelegible activa fallback, la referencia recibe los frames
+originales, las excepciones nativas no se ocultan). La comparación controlada
+entre motores y su auditoría adversarial viven como evidencia experimental en
+`experiments/silver_engine_comparison/`; concluyen que Polars gana Silver
+canónico en el envelope medido de un solo nodo y que Spark queda reservado a
+scale-out y joins de alta cardinalidad.
+
+Resultados históricos reportados antes de la corrección R4, presentes en
+`5ed1d1c` (la tabla y el comando no identifican el SHA exacto de ejecución).
+No representan el rendimiento del guard posterior a R4 ni se han vuelto a
+medir con él. El comando mostrado mide la transformación sobre frames ya en
+memoria, con la guarda incluida en la API pública y sin lectura/escritura
+Parquet ni generación dentro del cronómetro (`bench_silver`, semilla 7).
+La paridad con `silver_parity` fue reportada en las rutas de aquella medición:
+
+| Perfil | Observaciones Bronze | Eventos Silver | python-row (ref) | híbrido API completa | Aceleración |
+| --- | --- | --- | --- | --- | --- |
+| medium generado (fallback)² | 248.576 + 5.001 tombstones | 225.004 | 10,34 s | 14,78 s (guarda 4,33 s) | ×0,7 |
+| medium control nativo³ | 248.575 + 5.001 tombstones | 225.003 | 10,52 s | 7,40 s (guarda 4,46 s) | ×1,4 |
+| large generado (fallback)² | 1.988.576 + 40.001 tombstones | 1.800.004 | 84,65 s | 116,94 s (guarda 34,60 s) | ×0,7 |
+| large control nativo³ | 1.988.575 + 40.001 tombstones | 1.800.003 | 84,24 s | 59,83 s (guarda 35,29 s) | ×1,4 |
+| medium fallback forzado⁴ | 248.576 + 5.001 tombstones | 225.004 | 10,54 s | 10,12 s (guarda 0,01 s) | ×1,0 |
+
+² El corpus que genera el harness incluye una observación PLACSP edge-max
+(`amount_estimated_overall = 1e18` con texto retenido
+`999999999999999999.99`): su valor legacy no es un decimal simple y la
+guarda conservadora envía el lote completo a la referencia. Esa fila ya era
+inelegible en el head auditado `64024a8` (guarda medida allí sobre el mismo
+corpus: 2,84 s, `amount_out_of_domain`), así que la etiqueta "elegible" de
+la tabla anterior no era reproducible con este generador.
+³ Control nativo: el mismo corpus generado con la única observación edge-max
+filtrada (248.575 / 1.988.575 registros); es la medición comparable del
+camino rápido (guarda + kernel).
+⁴ Fallback forzado: el corpus con una única fila añadida fuera de dominio
+(`unused = 10**400`) en primera posición; la guarda sale en la primera fila
+y el coste es guarda + referencia. Un lote con una sola fila inelegible
+activa el fallback para todo el batch; por eso el perfil "generado" paga
+guarda completa + referencia.
+
+Configuración medida: Python 3.11.16, Polars 1.44.2, 16 CPU, semilla 7.
+
+Comando del protocolo de transformación (por perfil; `n_ted`/`n_placsp`/`rows_per_part` según
+la tabla de perfiles del protocolo; las tres rutas —generada, control nativo
+y fallback forzado— se miden sobre el mismo corpus):
+
+```bash
+uv run --with-editable . python - <<'PY'
+import json, time
+from pathlib import Path
+import polars as pl
+from tfm_licitaciones.bench_silver import write_bronze_parts
+from tfm_licitaciones.silver import build_procurement_events
+from tfm_licitaciones.silver_guard import assess_native_eligibility
+from tfm_licitaciones.silver_reference import build_procurement_events_reference
+from tfm_licitaciones.silver_parity import assert_silver_parity
+root = Path("/tmp/silver-prod-bench-r3")
+manifest = write_bronze_parts(root, seed=7, n_ted=100_000, n_placsp=100_000, rows_per_part=10_000)
+records = pl.read_parquet(str(root / manifest["layout"]["records"]))
+tombstones = pl.read_parquet(str(root / manifest["layout"]["tombstones"]))
+# Observación edge-max fuera de dominio del generador (ver nota 2).
+edge = records["payload_json"].str.contains('"amount_estimated_overall_raw": "999999999999999999.99"')
+first = records.head(1).row(0, named=True)
+payload = json.loads(first["payload_json"]); payload["unused"] = 10**400
+first["payload_json"] = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+forced = pl.concat([pl.DataFrame([first], schema=records.schema), records.slice(1)])
+
+def measure(label, recs):
+    t0 = time.perf_counter(); verdict = assess_native_eligibility(recs, tombstones); guard = time.perf_counter() - t0
+    t0 = time.perf_counter(); reference = build_procurement_events_reference(recs, tombstones); ref = time.perf_counter() - t0
+    t0 = time.perf_counter(); public = build_procurement_events(recs, tombstones); pub = time.perf_counter() - t0
+    assert_silver_parity(public, reference)
+    print(f"{label}: route={'native' if verdict.eligible else 'fallback'} reason={verdict.reason} "
+          f"guard {guard:.2f}s reference {ref:.2f}s public {pub:.2f}s events {public.height} parity ok")
+
+measure("generated", records)
+measure("native-control", records.filter(~edge))
+measure("forced-fallback", forced)
+PY
+```
+
+El coste fijo de plan del kernel nativo (~0,4 s por llamada, reportado antes de R4 en el
+build de una fila) es irrelevante a esta escala y solo penaliza ejecuciones
+con muchos lotes diminutos (documentado como seguimiento para ventanas
+diarias pequeñas).
