@@ -15,6 +15,14 @@ is computed over canonicalized logical row values (payload + provenance),
 never over Parquet writer bytes, so it is stable across writer versions
 but sensitive to any generator change.
 
+One compatibility rule is intentionally narrow: an additive
+``source_deleted_at`` tombstone column is omitted from the historical digest
+*only while every generated value is null*. The retained synthetic workload
+predates source-dated tombstones and therefore has no deletion instant to add;
+including a schema-only null column would make the historical fingerprint
+move despite identical logical inputs. As soon as that column carries any
+non-null value it participates in the digest and the pin fails loudly.
+
 Pinned workloads: ``tiny`` and ``small`` with ``seed=7`` and
 ``with_collision=False`` — the profiles covered by the experiment tests
 and the retained ``results/engines-small-seed7-2026-09-16.json`` evidence
@@ -37,8 +45,10 @@ import polars as pl
 WORKLOAD_GENERATOR_COMMIT = "e69016f62fb985639e17153e24b3a570f2f39c20"
 
 # Pinned historical workloads: (profile, seed, with_collision) -> expectations.
-# Fingerprints cover the full Bronze row content as written by
-# write_bronze_parts (payloads + per-part provenance + partitioning).
+# Fingerprints cover the historical logical Bronze row content as written by
+# write_bronze_parts (payloads + per-part provenance + partitioning). A later
+# production-only nullable tombstone column is ignored only while all-null;
+# see `_historical_fingerprint_frame`.
 HISTORICAL_WORKLOADS: dict[tuple[str, int, bool], dict[str, Any]] = {
     ("tiny", 7, False): {
         "sha256": "f6867d5387f7bf42e946c8a1a927011f4da5ed419b6dee5a2945607d399967c4",
@@ -63,16 +73,37 @@ def _canonical_value(value: Any) -> Any:
     return value
 
 
+def _historical_fingerprint_frame(tag: str, frame: pl.DataFrame) -> pl.DataFrame:
+    """Project schema-only tombstone evolution out of the historical digest.
+
+    ``source_deleted_at`` did not exist in the retained benchmark workload.
+    Current production Bronze adds it so real Atom tombstones can preserve
+    their source-published ``when`` instant. The synthetic historical generator
+    still creates no such instants, so an all-null column is schema evolution,
+    not workload evolution. Any non-null value is a real logical change and is
+    deliberately retained so the pinned digest fails.
+    """
+
+    if tag != "T" or "source_deleted_at" not in frame.columns:
+        return frame
+    if frame["source_deleted_at"].is_not_null().any():
+        return frame
+    return frame.drop("source_deleted_at")
+
+
 def fingerprint_frames(records: pl.DataFrame, tombstones: pl.DataFrame) -> str:
-    """Hash canonicalized logical Bronze row values (writer-byte independent).
+    """Hash canonicalized historical Bronze row values (writer-byte independent).
 
     Rows are sorted deterministically and serialized as canonical JSON, so
     the digest is stable across Parquet writer versions but changes whenever
-    the generator alters payloads, provenance, partitioning or counts.
+    the historical logical workload alters payloads, provenance, partitioning
+    or counts. The one documented all-null tombstone schema extension is
+    projected out before hashing.
     """
 
     lines: list[str] = []
-    for tag, frame in (("R", records), ("T", tombstones)):
+    for tag, raw_frame in (("R", records), ("T", tombstones)):
+        frame = _historical_fingerprint_frame(tag, raw_frame)
         columns = sorted(frame.columns)
         ordered = frame.sort(by=columns, nulls_last=True)
         for row in ordered.to_dicts():
