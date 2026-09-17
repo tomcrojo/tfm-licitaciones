@@ -8,9 +8,10 @@ Gold 0.1 still consumes (see `pipeline.fold_latest_updates`).
 PLACSP tombstones retain the source-published Atom ``when`` instant when it is
 valid and timezone-aware. Dated delete controls therefore receive distinct
 canonical event identities and expose that instant through ``source_updated_at``;
-undated/invalid legacy controls remain explicit unordered evidence instead of
-borrowing retrieval time. This allows downstream current-state logic to order
-source-dated deletes without inventing time from ingestion provenance.
+missing source time remains explicit unordered evidence, while malformed
+published ``when`` values are also surfaced as Bronze control errors. Downstream
+current-state logic can therefore order source-dated deletes without inventing
+time from ingestion provenance.
 
 Production routing is hybrid by construction:
 
@@ -18,22 +19,22 @@ Production routing is hybrid by construction:
         -> native Polars kernel for the whole batch, or
         -> frozen python-row reference for the whole batch.
 
-:mod:`tfm_licitaciones.silver_guard` inspects every row (records and
+:mod:`tfm_licitaciones.silver_guard` inspects every original row (records and
 tombstones) *before* execution and admits only the narrow eligible domain
-documented there; one ineligible row routes the original frames to
-:mod:`tfm_licitaciones.silver_reference`, which is also the historical parity
-oracle. Both routes emit the same canonical contract
+documented there. Both execution routes emit the same canonical contract
 (``PROCUREMENT_EVENT_SCHEMA``, identity, revisions, tombstones, collision
 semantics, provenance selection, ``Decimal(20,2)`` amounts and UTC
 timestamps); a fallback run is never labelled as native. The routing decision
 is logged once per batch (route, fallback reason category and row counts).
 
 The frozen reference predates source-dated tombstones and stays untouched.
-Before routing, the facade decorates only dated tombstone refs with their
-source-time microsecond epoch so the historical builders preserve repeated
-delete cycles as distinct events. After either route, the facade restores the
-published ref as ``procedure_id`` and attaches ``source_updated_at``. Undated
-rows keep the historical identity and semantics.
+After route selection, the facade gives each valid tombstone a temporary,
+injective routing identity. Dated and undated controls use disjoint internal
+namespaces, so an arbitrary published ref cannot collide with the source-time
+encoding. After either route, the facade restores canonical tombstone event
+ids, the published ref as ``procedure_id`` and the authoritative source time.
+Invalid tombstone rows are never decorated, preserving historical failure
+semantics and first-error behavior on the fallback route.
 
 A PySpark candidate is retained as an experimental scale-out path (see
 ``experiments/``) to be productionized separately if larger deployments
@@ -61,14 +62,16 @@ IMPLEMENTATION = "hybrid-native-reference"
 
 IMPLEMENTATION_DETAIL = (
     f"eligibility-guarded hybrid: {_NATIVE_KERNEL_DETAIL} for batches inside "
-    "the documented domain; otherwise the frozen python-row reference over the "
-    "original frames (selection before execution, never a try/except fallback); "
-    "dated PLACSP tombstones are identity-decorated before either route and "
-    "source-time enriched afterwards without changing the frozen reference"
+    "the documented domain; otherwise the frozen python-row reference after "
+    "selection (never a try/except fallback); valid PLACSP tombstones receive "
+    "injective internal routing identities and canonical source-time enrichment "
+    "without changing the frozen reference"
 )
 
 _TOMBSTONE_SOURCE_TIME = "source_deleted_at"
-_TOMBSTONE_EVENT_MARKER = "@deleted-us:"
+_ROUTED_UNDATED_PREFIX = "__tfm_tombstone_undated_v1__:"
+_ROUTED_DATED_PREFIX = "__tfm_tombstone_dated_v1__:"
+_CANONICAL_DATED_PREFIX = "placsp:tombstone-dated:"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -78,35 +81,49 @@ def _select_route(eligibility: NativeEligibility) -> str:
     return "native" if eligibility.eligible else "reference-fallback"
 
 
-def _prepare_dated_tombstones(tombstones: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame | None]:
-    """Give source-dated tombstones distinct identities without moving the oracle.
+def _prepare_tombstone_identities(
+    tombstones: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame | None]:
+    """Route valid tombstones through an injective internal identity namespace.
 
     The frozen builders derive tombstone identity from ``source_record_id``.
-    For dated controls only, route a temporary decorated ref through that
-    historical code. A compact lookup then restores the published ref as the
-    procedure identity and exposes the authoritative Atom ``when`` instant.
+    Every valid PLACSP tombstone is therefore decorated after the eligibility
+    decision: undated and dated controls occupy disjoint internal namespaces,
+    and dated identities put the fixed-width semantic discriminator before the
+    arbitrary source ref. Invalid source/ref rows remain untouched so the
+    historical reference still raises its original errors.
     """
 
-    if _TOMBSTONE_SOURCE_TIME not in tombstones.columns:
-        return tombstones, None
-    timed = tombstones.filter(pl.col(_TOMBSTONE_SOURCE_TIME).is_not_null())
-    if timed.height == 0:
+    if _TOMBSTONE_SOURCE_TIME not in tombstones.columns or tombstones.height == 0:
         return tombstones, None
 
-    source_ref = pl.col("source_record_id")
-    marker = pl.col(_TOMBSTONE_SOURCE_TIME).cast(pl.Int64).cast(pl.String)
-    decorated_ref = source_ref + pl.lit(_TOMBSTONE_EVENT_MARKER) + marker
+    original_ref = pl.col("source_record_id")
+    source_ref = original_ref.fill_null("").str.strip_chars()
+    source_time = pl.col(_TOMBSTONE_SOURCE_TIME)
+    micros = source_time.cast(pl.Int64).cast(pl.String)
+    valid = (pl.col("source") == "placsp") & (source_ref != "")
+
+    routed_ref = (
+        pl.when(source_time.is_not_null())
+        .then(pl.lit(_ROUTED_DATED_PREFIX) + micros + pl.lit(":") + source_ref)
+        .otherwise(pl.lit(_ROUTED_UNDATED_PREFIX) + source_ref)
+    )
     routed = tombstones.with_columns(
-        pl.when(pl.col(_TOMBSTONE_SOURCE_TIME).is_not_null())
-        .then(decorated_ref)
-        .otherwise(source_ref)
-        .alias("source_record_id")
+        pl.when(valid).then(routed_ref).otherwise(original_ref).alias("source_record_id")
+    )
+
+    canonical_event_id = (
+        pl.when(source_time.is_not_null())
+        .then(pl.lit(_CANONICAL_DATED_PREFIX) + micros + pl.lit(":") + source_ref)
+        .otherwise(pl.lit("placsp:tombstone:") + source_ref)
     )
     enrichment = (
-        timed.select(
-            event_id=pl.lit("placsp:tombstone:") + decorated_ref,
+        tombstones.filter(valid)
+        .select(
+            event_id=pl.lit("placsp:tombstone:") + routed_ref,
+            __canonical_event_id=canonical_event_id,
             __procedure_id=pl.lit("placsp:procedure:") + source_ref,
-            __source_updated_at=pl.col(_TOMBSTONE_SOURCE_TIME),
+            __source_updated_at=source_time,
         )
         .unique(subset=["event_id"], maintain_order=True)
     )
@@ -114,17 +131,18 @@ def _prepare_dated_tombstones(tombstones: pl.DataFrame) -> tuple[pl.DataFrame, p
 
 
 def _apply_tombstone_source_time(events: pl.DataFrame, enrichment: pl.DataFrame | None) -> pl.DataFrame:
-    """Attach source time/procedure identity after either historical route."""
+    """Restore canonical tombstone identity and source-time fields after routing."""
 
     if enrichment is None or enrichment.height == 0:
         return events
     return (
         events.join(enrichment, on="event_id", how="left")
         .with_columns(
+            event_id=pl.coalesce(pl.col("__canonical_event_id"), pl.col("event_id")),
             procedure_id=pl.coalesce(pl.col("__procedure_id"), pl.col("procedure_id")),
             source_updated_at=pl.coalesce(pl.col("__source_updated_at"), pl.col("source_updated_at")),
         )
-        .drop("__procedure_id", "__source_updated_at")
+        .drop("__canonical_event_id", "__procedure_id", "__source_updated_at")
         .sort("event_id")
     )
 
@@ -141,18 +159,21 @@ def build_procurement_events(records: pl.DataFrame, tombstones: pl.DataFrame) ->
     Dated PLACSP tombstones are distinct source events keyed by their published
     delete instant. Repeated observations of the same ref/instant still
     collapse by provenance; separate delete instants remain separate history.
+    Undated tombstones retain the historical ``placsp:tombstone:<ref>`` event
+    identity. Dated events use the disjoint
+    ``placsp:tombstone-dated:<epoch-us>:<ref>`` namespace.
 
-    The eligibility guard inspects the complete batch first. Eligible batches
-    run the native Polars kernel (:mod:`tfm_licitaciones.silver_native`);
-    every other batch runs the frozen python-row reference
-    (:mod:`tfm_licitaciones.silver_reference`) over the *original* record frame
-    and the semantically equivalent decorated tombstone frame, so historical
-    values, first-error ordering and messages are preserved while the frozen
-    oracle itself remains unchanged.
+    The eligibility guard inspects the complete *original* batch first.
+    Eligible batches run the native Polars kernel
+    (:mod:`tfm_licitaciones.silver_native`); every other batch runs the frozen
+    python-row reference (:mod:`tfm_licitaciones.silver_reference`). Only after
+    that route decision are valid tombstone refs replaced by injective internal
+    identities required to express source-dated deletion cycles. Invalid rows
+    remain unchanged, preserving reference errors and ordering.
     """
 
-    routed_tombstones, enrichment = _prepare_dated_tombstones(tombstones)
-    eligibility = assess_native_eligibility(records, routed_tombstones)
+    eligibility = assess_native_eligibility(records, tombstones)
+    routed_tombstones, enrichment = _prepare_tombstone_identities(tombstones)
     _LOGGER.info(
         "silver_batch_route",
         extra={
