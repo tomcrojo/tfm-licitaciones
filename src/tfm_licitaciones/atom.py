@@ -94,12 +94,22 @@ def parse_atom_batch(text: str | bytes, source_member: str | None = None) -> Ato
     for index, node in enumerate(root.findall("at:deleted-entry", CODICE_NS), 1):
         ref = node.attrib.get("ref", "").strip()
         if ref:
-            batch.tombstone_rows.append({
+            source_deleted_at, invalid_when = _atom_source_instant(node.attrib.get("when"))
+            control_location = {
                 **location,
                 "record_locator": f"deleted-entry:{index}",
                 "source_record_id": ref,
-                "source_deleted_at": _atom_source_instant(node.attrib.get("when")),
+            }
+            batch.tombstone_rows.append({
+                **control_location,
+                "source_deleted_at": source_deleted_at,
             })
+            if invalid_when:
+                batch.rejections.append({
+                    **control_location,
+                    "rejection_reason": "invalid_tombstone_when",
+                    "rejection_scope": "control",
+                })
         else:
             batch.rejections.append({**location, "record_locator": f"deleted-entry:{index}",
                                      "rejection_reason": "missing_tombstone_ref", "rejection_scope": "control"})
@@ -227,19 +237,28 @@ def _parse_entry(entry: ElementTree.Element) -> dict[str, Any]:
     return payload
 
 
-def _atom_source_instant(value: str | None) -> datetime | None:
-    """Parse an Atom source instant to UTC without inventing missing time."""
+def _atom_source_instant(value: str | None) -> tuple[datetime | None, bool]:
+    """Parse an Atom source instant and report malformed published values.
 
-    text = (value or "").strip()
+    The boolean is ``True`` only when a ``when`` attribute was present but
+    unusable for authoritative ordering. A missing attribute is legitimate
+    undated evidence and is therefore not a control error.
+    """
+
+    if value is None:
+        return None, False
+    text = value.strip()
     if not text:
-        return None
+        return None, True
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+        parsed = datetime.fromisoformat(text)
+    except (ValueError, OverflowError):
+        return None, True
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return None
-    return parsed.astimezone(timezone.utc)
+        return None, True
+    return parsed.astimezone(timezone.utc), False
 
 
 def _text(entry: ElementTree.Element, local_name: str) -> str:
