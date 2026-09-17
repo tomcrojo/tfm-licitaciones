@@ -51,10 +51,12 @@ canónico dentro del envelope medido, y PySpark a joins grandes, generación de
 candidatos de linkage y Gold de alta cardinalidad, con Parquet entre etapas y
 Airflow como plano de control. La migración hacia ingesta incremental idempotente,
 Parquet en Gold, nuevas fuentes y Airflow está descrita en la
-[arquitectura](docs/architecture.md). El [benchmark](docs/benchmarks.md)
-fija el protocolo de comparación y recoge los resultados medidos, incluida
-la decisión del motor de Silver. Las limitaciones conocidas se documentan en
-el [contrato de datos](docs/data_contract.md).
+[arquitectura](docs/architecture.md). La frontera contractual preparada para la
+siguiente etapa Silver→Spark→Gold se documenta en
+[Gold/Spark contract foundation](docs/gold_spark_contract.md). El
+[benchmark](docs/benchmarks.md) fija el protocolo de comparación y recoge los
+resultados medidos, incluida la decisión del motor de Silver. Las limitaciones
+conocidas se documentan en el [contrato de datos](docs/data_contract.md).
 
 ## Ejecución local
 
@@ -105,6 +107,7 @@ docs/                         arquitectura, contrato y operación
 Documentación principal:
 
 - [arquitectura técnica](docs/architecture.md);
+- [contrato Gold/Spark](docs/gold_spark_contract.md);
 - [benchmark Bronze→Silver y paridad](docs/benchmarks.md);
 - [contrato de datos actual](docs/data_contract.md);
 - [guía de ejecución](docs/run.md);
