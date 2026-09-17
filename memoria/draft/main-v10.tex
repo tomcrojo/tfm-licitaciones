@@ -801,17 +801,17 @@ analíticos reproducibles, pero no forman parte de esta demostración.
 \texttt{opportunity\_cpv.csv} & 28.730 & Una fila por procedimiento, CPV y posición\\
 \texttt{buyer\_summary.csv} & 4.027 & Una fila por identidad analítica del comprador\\
 \texttt{cpv\_summary.csv} & 3.751 & Una fila por \texttt{cpv\_code}\\
-\texttt{opportunities\_monthly.csv} & 0 & Una fila por mes y fuente\\
 \bottomrule
 \end{tabularx}
-\caption{CSV analíticos generados y alcance del dashboard.}
+\caption{CSV analíticos con datos; la demostración en Tableau utiliza
+\texttt{open\_opportunities.csv}.}
 \end{table}
 
 Las 14.763 oportunidades abiertas carecen de \texttt{publication\_date}. Este
 campo permanece nullable porque la fuente no siempre lo proporciona y su
-ausencia no invalida una oportunidad. Por ello el conjunto mensual, que solo
-agrupa registros con fecha de publicación, está vacío. Los otros cuatro CSV
-quedan disponibles para análisis posteriores sin formar parte del dashboard.
+ausencia no invalida una oportunidad. La demostración se centra por ello en el
+detalle disponible de cada procedimiento, sus importes, comprador, CPV y
+ámbito territorial, sin inventar una dimensión temporal.
 
 % ============================================================
 %  8. DISCUSIÓN
