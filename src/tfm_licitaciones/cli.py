@@ -68,6 +68,14 @@ def build_parser() -> argparse.ArgumentParser:
     build_analytics.add_argument("--analytics-dir", type=Path, help="directorio analítico alternativo")
     build_analytics.add_argument("--reference-dir", type=Path, help="directorio de referencia alternativo")
     build_analytics.add_argument("--config", type=Path, help="configuración JSON alternativa")
+
+    export_tableau = subparsers.add_parser(
+        "export-tableau",
+        help="exportar CSV deterministas para Tableau desde las views DuckDB",
+    )
+    export_tableau.add_argument("--analytics-dir", type=Path, help="directorio analítico alternativo")
+    export_tableau.add_argument("--exports-dir", type=Path, help="directorio de exportación alternativo")
+    export_tableau.add_argument("--config", type=Path, help="configuración JSON alternativa")
     return parser
 
 
@@ -196,6 +204,33 @@ def main(argv: list[str] | None = None) -> int:
                     "duckdb_version": result["duckdb_version"],
                     "views": result["views"],
                     "cpv_dimension_available": result["cpv_dimension"]["available"],
+                    "counts": result["counts"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+    if args.command == "export-tableau":
+        from .tableau_export import export_tableau_csvs
+
+        def _resolve_dir(explicit: Path | None, key: str) -> Path:
+            resolved = explicit or configured_path(config, key)
+            if not resolved.is_absolute():
+                resolved = Path(config["_project_root"]) / resolved
+            return resolved
+
+        try:
+            result = export_tableau_csvs(
+                _resolve_dir(args.analytics_dir, "analytics_dir"),
+                _resolve_dir(args.exports_dir, "exports_dir"),
+            )
+        except ValueError as exc:
+            raise SystemExit(f"export-tableau falló: {exc}") from exc
+        print(
+            json.dumps(
+                {
+                    "export_dir": result["export_dir"],
+                    "files": result["files"],
                     "counts": result["counts"],
                 },
                 ensure_ascii=False,

@@ -25,3 +25,6 @@ data/reference/dir3/*.parquet
 
 # Capa analitica DuckDB regenerable con licitaciones-pipeline build-analytics
 data/analytics/
+
+# CSV Tableau regenerables con licitaciones-pipeline export-tableau
+data/exports/

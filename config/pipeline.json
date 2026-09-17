@@ -9,7 +9,8 @@
     "silver_dir": "data/silver",
     "gold_dir": "data/gold",
     "reference_dir": "data/reference",
-    "analytics_dir": "data/analytics"
+    "analytics_dir": "data/analytics",
+    "exports_dir": "data/exports"
   },
   "sources": {
     "ted": {
