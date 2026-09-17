@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>TFM · Plataforma DataOps para licitaciones públicas</title>
+  <title>TFM · Pipeline reproducible para licitaciones públicas</title>
   <style>
     :root {
       --bg: #0d1117;
@@ -113,6 +113,9 @@
     .metric { padding: 1.2rem 0; border-top: 1px solid var(--line); }
     .metric strong { display: block; color: var(--green); font-size: clamp(2rem, 4vw, 4rem); line-height: 1; letter-spacing: -.04em; }
     .metric span { display: block; margin-top: .7rem; color: var(--muted); line-height: 1.35; }
+    .results-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.5rem; }
+    .verification { padding: 1rem 1.25rem; border-left: 3px solid var(--green); background: rgba(126,231,135,.06); color: var(--text); font-size: clamp(1rem, 1.7vw, 1.35rem); line-height: 1.45; }
+    .file-label { overflow-wrap: anywhere; }
 
     .limit-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 5vw; align-items: center; }
     .not-list { display: grid; gap: .75rem; }
@@ -139,7 +142,7 @@
     @media (max-width: 850px) {
       .slide { padding: 4.5rem 1.4rem 5rem; overflow-y: auto; }
       .title-grid, .quality-layout, .benchmark, .limit-grid { grid-template-columns: 1fr; }
-      .problem-grid, .evidence-grid { grid-template-columns: 1fr; }
+      .problem-grid, .evidence-grid, .results-grid { grid-template-columns: 1fr; }
       .card { min-height: 0; }
       .pipeline { grid-template-columns: repeat(2, 1fr); }
       .stage::after { display: none; }
@@ -160,114 +163,118 @@
     <div class="chrome counter" aria-live="polite"><span id="current">01</span>&nbsp;/&nbsp;08</div>
 
     <section class="slide is-active" data-duration="0:20" aria-labelledby="s1-title">
-      <p class="eyebrow">Plataforma DataOps reproducible</p>
+      <p class="eyebrow">Pipeline reproducible · Contratación pública</p>
       <div class="title-grid">
         <div>
           <h1 id="s1-title">De datos abiertos a oportunidades <span class="accent">trazables</span></h1>
         </div>
         <div class="title-meta">
-          Integración y explotación de licitaciones públicas<br>
-          Caso de estudio: contratación tecnológica
+          Tomás Campoy Rojo · UCM &amp; NTIC<br>
+          TED + OpenPLACSP · Alcance generalista<br>
+          Septiembre de 2026
           <div class="time-chip">Vídeo · 5 minutos</div>
         </div>
       </div>
-      <aside class="notes">La contratación pública publica una enorme cantidad de información, pero está repartida entre fuentes y formatos distintos. Mi TFM aborda ese problema desde la ingeniería de datos: he construido un prototipo reproducible que transforma datos oficiales de licitaciones en productos analíticos trazables. En cinco minutos explicaré el problema, la arquitectura, las decisiones técnicas y qué he podido demostrar realmente.</aside>
+      <aside class="notes">La información sobre contratación pública está repartida entre portales y formatos distintos. Mi TFM construye un pipeline reproducible que la transforma en datos preparados para analizar. Voy a explicar el problema, la arquitectura y los resultados obtenidos con el corpus real.</aside>
     </section>
 
-    <section class="slide" data-duration="0:35" aria-labelledby="s2-title">
+    <section class="slide" data-duration="0:25" aria-labelledby="s2-title">
       <p class="eyebrow">01 · El problema</p>
-      <h2 id="s2-title">Publicar no significa que los datos estén listos para analizar</h2>
+      <h2 id="s2-title">Publicaciones distintas, un mismo procedimiento</h2>
       <div class="problem-grid">
-        <article class="card"><span class="tag">FUENTES</span><h3>TED + OpenPLACSP</h3><p>Ámbitos, frecuencias y semánticas diferentes.</p></article>
-        <article class="card"><span class="tag">FORMATOS</span><h3>JSON · ZIP · Atom · XML</h3><p>Parsing específico sin perder el origen oficial.</p></article>
-        <article class="card is-focus"><span class="tag">HISTORIA</span><h3>Revisiones + anulaciones</h3><p>Una actualización no puede borrar la evidencia anterior.</p></article>
+        <article class="card"><span class="tag">FUENTES</span><h3>TED + OpenPLACSP</h3><p>Identificadores y reglas de publicación diferentes.</p></article>
+        <article class="card"><span class="tag">FORMATOS</span><h3>JSON · ZIP · Atom · XML</h3><p>Interpretar cada fuente sin perder su procedencia.</p></article>
+        <article class="card is-focus"><span class="tag">HISTORIA</span><h3>Revisiones + anulaciones</h3><p>Distinguir publicaciones, procedimientos y estado vigente.</p></article>
       </div>
-      <aside class="notes">Las dos fuentes principales son TED, para avisos europeos, y OpenPLACSP, para licitaciones españolas. No ofrecen el mismo formato ni la misma semántica: hay JSON, ZIP, Atom y XML CODICE; también revisiones, anulaciones y campos incompletos. Descargar datos no basta. Para analizarlos con rigor hay que conservar el origen, contabilizar rechazos, separar fechas que significan cosas distintas y evitar que una nueva versión destruya la evidencia anterior.</aside>
+      <aside class="notes">Las fuentes principales son TED y OpenPLACSP. Sus publicaciones incluyen formatos diferentes, revisiones y anulaciones. Una misma licitación puede aparecer varias veces y cambiar de estado. Por eso, descargar y juntar archivos no es suficiente: hay que distinguir cada publicación del procedimiento al que pertenece y conservar su historia.</aside>
     </section>
 
-    <section class="slide" data-duration="0:35" aria-labelledby="s3-title">
+    <section class="slide" data-duration="0:25" aria-labelledby="s3-title">
       <p class="eyebrow">02 · Objetivo y aportación</p>
-      <p id="s3-title" class="statement">Una cadena de datos <span class="accent">auditable</span>, no una caja negra de clasificación.</p>
-      <p class="lead">El caso tecnológico guía la demostración; el contrato canónico y CPV mantienen el sistema generalista.</p>
+      <p id="s3-title" class="statement">Integrar, conservar la historia y preparar el <span class="accent">análisis</span>.</p>
+      <p class="lead">Una estructura común para las fuentes, con categorías CPV y sin restricción al sector tecnológico.</p>
       <div class="pill-row" aria-label="Propiedades principales">
-        <span class="pill">reproducible</span><span class="pill">trazable</span><span class="pill">tipado</span><span class="pill">sector-agnostic</span><span class="pill">offline-testable</span>
+        <span class="pill">reproducible</span><span class="pill">trazable</span><span class="pill">histórico</span><span class="pill">generalista</span><span class="pill">verificable</span>
       </div>
-      <aside class="notes">El objetivo ha sido diseñar una plataforma DataOps local, reproducible y generalista. Aunque el caso de estudio de la memoria son las licitaciones tecnológicas, el modelo se apoya en CPV, la taxonomía oficial, y no está limitado a un único sector. La aportación principal no es un clasificador sofisticado: es una cadena de datos auditable, con contratos estables, procedencia y decisiones que pueden volver a ejecutarse y revisarse.</aside>
+      <aside class="notes">El objetivo es integrar esas fuentes en una estructura común, conservar su procedencia y obtener una vista de oportunidades abiertas. El proyecto es generalista: utiliza la clasificación CPV para organizar la contratación por categorías, sin limitarse al sector tecnológico. La aportación central es conectar el dato original con un resultado analítico verificable.</aside>
     </section>
 
     <section class="slide" data-duration="0:50" aria-labelledby="s4-title">
       <p class="eyebrow">03 · Arquitectura implementada</p>
-      <h2 id="s4-title">Cada capa responde una pregunta distinta</h2>
+      <h2 id="s4-title">Del archivo original al análisis</h2>
       <div class="pipeline" aria-label="Flujo de datos implementado">
-        <div class="stage"><b>RAW</b><span>Payload, checksum y recuperación</span></div>
-        <div class="stage"><b>BRONZE</b><span>Parsing, rechazos y tombstones</span></div>
+        <div class="stage"><b>RAW</b><span>Archivos originales y procedencia</span></div>
+        <div class="stage"><b>BRONZE</b><span>Lectura, rechazos y controles de borrado</span></div>
         <div class="stage"><b>SILVER</b><span>Histórico canónico de eventos</span></div>
         <div class="stage"><b>GOLD</b><span>Estado vigente y oportunidades</span></div>
-        <div class="stage"><b>DUCKDB</b><span>Vistas SQL versionadas</span></div>
-        <div class="stage"><b>TABLEAU</b><span>CSV deterministas</span></div>
+        <div class="stage"><b>DUCKDB</b><span>Vistas SQL y exportación CSV</span></div>
+        <div class="stage"><b>TABLEAU</b><span>Consumo de un CSV de oportunidades</span></div>
       </div>
-      <p class="lead"><span class="mono blue">Python</span> ingiere y parsea · <span class="mono blue">Polars</span> transforma · <span class="mono blue">PySpark</span> resuelve estado y Gold · <span class="mono blue">DuckDB</span> sirve analítica</p>
-      <aside class="notes">El flujo comienza en Raw, donde se conserva el payload oficial junto con su checksum y el instante de recuperación. Bronze parsea cada formato y separa registros aceptados, rechazados y tombstones. Silver construye un histórico canónico de eventos de contratación, sin reducirlo prematuramente a una única fila vigente. Después, PySpark resuelve el estado actual y genera Gold con las oportunidades abiertas. DuckDB publica vistas SQL y finalmente se exportan CSV deterministas para Tableau. Esta separación permite repetir una etapa sin reinterpretar las anteriores y mantiene la lógica fuera de la herramienta de visualización.</aside>
+      <p class="lead"><span class="mono blue">Python</span> interpreta las fuentes · <span class="mono blue">Polars + respaldo Python</span> construyen Silver · <span class="mono blue">PySpark</span> resuelve estado y Gold</p>
+      <p class="bench-note">Ejecución local por etapas · transformación sobre archivos persistidos, sin nueva descarga.</p>
+      <aside class="notes">El flujo se organiza por capas. Raw conserva los archivos originales y sus metadatos de procedencia. Bronze interpreta cada formato, separa los registros aceptados y registra los rechazos y controles de borrado. Silver mantiene un histórico de eventos, incluidas las revisiones. Polars ofrece una ruta rápida para los lotes compatibles, con una implementación Python de respaldo. Después, PySpark resuelve el estado vigente de cada procedimiento y genera Gold con las oportunidades abiertas. DuckDB expone vistas SQL sobre Gold y exporta cinco CSV deterministas. La ejecución es local y por etapas: una vez disponibles los datos originales, la transformación no necesita descargar de nuevo las fuentes.</aside>
     </section>
 
-    <section class="slide" data-duration="0:40" aria-labelledby="s5-title">
-      <p class="eyebrow">04 · Trazabilidad y calidad</p>
-      <div class="quality-layout">
-        <div>
-          <h2 id="s5-title">La calidad debe <span class="accent">revelar</span> problemas</h2>
-          <p class="lead">No fabricar un informe verde eliminando silenciosamente lo que no encaja.</p>
-        </div>
-        <div class="rule-list">
-          <div class="rule"><code>01</code><p><strong>Raw inmutable:</strong> bytes y checksum conservan la evidencia.</p></div>
-          <div class="rule"><code>02</code><p><strong>Rechazos observables:</strong> cada error mantiene motivo y localización.</p></div>
-          <div class="rule"><code>03</code><p><strong>Historia explícita:</strong> revisiones y tombstones siguen en Silver.</p></div>
-          <div class="rule"><code>04</code><p><strong>Gold conservador:</strong> sin evidencia de apertura, no se publica.</p></div>
-        </div>
+    <section class="slide" data-duration="0:55" aria-labelledby="s5-title">
+      <p class="eyebrow">04 · Corpus real · Corte: 30 de junio de 2026</p>
+      <h2 id="s5-title">Dos ejecuciones, el mismo resultado</h2>
+      <div class="results-grid" aria-label="Conteos documentados de las dos ejecuciones">
+        <div class="metric"><strong>359.304</strong><span>registros aceptados<br>Bronze</span></div>
+        <div class="metric"><strong>359.180</strong><span>eventos históricos<br>Silver</span></div>
+        <div class="metric"><strong>130.118</strong><span>estados vigentes<br>por procedimiento</span></div>
+        <div class="metric"><strong>14.763</strong><span>oportunidades abiertas<br>según la política de Gold</span></div>
       </div>
-      <aside class="notes">Una decisión clave es no ocultar los datos problemáticos. Cada rechazo queda contabilizado con su motivo y localización. Los identificadores se derivan de claves oficiales; las revisiones y tombstones permanecen en Silver; y Gold solo publica una oportunidad como abierta cuando existe evidencia suficiente. Por eso, obtener cero oportunidades con los fixtures de prueba no es un fallo: es el comportamiento esperado de una política conservadora. Un informe verde no debe fabricarse filtrando silenciosamente lo que no encaja.</aside>
+      <p class="verification"><strong>5 de 5 CSV idénticos byte a byte</strong> · SHA-256 coincidente entre ambas ejecuciones.</p>
+      <p class="bench-note">7 archivos Raw verificados · 0 rechazos Bronze · 1.046 controles de borrado aparte.<br>Granos distintos entre etapas. Evidencia: memoria v10, PR #30, resultados finales; no es un recuento de oportunidades abiertas hoy.</p>
+      <aside class="notes">La ejecución final partió de siete archivos originales verificados. Produjo más de 359.000 registros aceptados en Bronze y unos 359.000 eventos en Silver. Tras resolver las revisiones, quedaron 130.118 estados vigentes y 14.763 oportunidades abiertas según la política del proyecto, con fecha de corte del 30 de junio de 2026. Son cifras del corpus analizado, no oportunidades disponibles hoy. Repetí la cadena completa sobre los mismos datos: los conteos coincidieron y los cinco CSV finales fueron idénticos byte a byte, comprobados mediante SHA-256. Esta comparación demuestra la reconstrucción de esos productos; no demuestra que se haya descargado toda la contratación publicada.</aside>
     </section>
 
-    <section class="slide" data-duration="0:45" aria-labelledby="s6-title">
-      <p class="eyebrow">05 · Decisiones técnicas con evidencia</p>
+    <section class="slide" data-duration="0:35" aria-labelledby="s6-title">
+      <p class="eyebrow">05 · Experimento sintético · Separado del E2E real</p>
       <div class="benchmark">
         <div>
-          <h2 id="s6-title">Elegir el motor según la carga, no por catálogo</h2>
-          <p class="lead">Transformación Bronze → Silver · 25.363 entradas sintéticas · paridad en 22.504 eventos</p>
+          <h2 id="s6-title">Decisiones medidas, en su contexto</h2>
+          <p class="lead">25.363 entradas sintéticas → 22.504 eventos con resultados equivalentes dentro del contrato probado.</p>
         </div>
-        <div class="bars" aria-label="Duración medida por motor">
+        <div class="bars" aria-label="Tiempos de transformación del experimento sintético">
           <div class="bar-row best"><span>Polars</span><div class="track"><i class="fill" style="width:2.54%"></i></div><b>0,254 s</b></div>
           <div class="bar-row"><span>Python</span><div class="track"><i class="fill" style="width:6.16%"></i></div><b>0,617 s</b></div>
           <div class="bar-row"><span>Spark</span><div class="track"><i class="fill" style="width:100%"></i></div><b>10,01 s</b></div>
-          <p class="bench-note">Una ejecución · seed 7 · carga sintética acotada. No es un umbral universal ni mide el pipeline completo.</p>
+          <p class="bench-note">transform_s · small · seed 7 · ejecución conservada del 16/09/2026.<br>No mide el pipeline completo ni el guard actual.</p>
         </div>
       </div>
-      <aside class="notes">También comparé motores para la transformación Silver. En el experimento versionado, con una carga sintética de 25.363 entradas Bronze y 22.504 eventos Silver, las tres implementaciones produjeron resultados equivalentes dentro del contrato medido. Polars nativo tardó 0,254 segundos; la referencia Python, 0,617; y el candidato Spark, 10,01 segundos. Esto no demuestra que Polars sea siempre mejor ni que Spark no sea útil. Demuestra algo más defendible: para esta transformación local y este volumen, Polars fue la opción medida más rápida; Spark se reserva para ventanas, joins y Gold, donde su modelo sí aporta.</aside>
+      <aside class="notes">El experimento de motores es distinto de esa ejecución real. Con unas 25.000 entradas sintéticas, Polars, Python y Spark produjeron resultados equivalentes dentro del contrato probado. Polars registró 0,254 segundos de transformación; Python, 0,617; y Spark, 10,01. Son tiempos de esa transformación, no del pipeline completo. La implementación conserva una ruta Python de respaldo; Spark se emplea después para resolver el estado vigente y construir Gold.</aside>
     </section>
 
-    <section class="slide" data-duration="0:45" aria-labelledby="s7-title">
-      <p class="eyebrow">06 · Resultado demostrable</p>
-      <h2 id="s7-title">Una cadena reproducible, desde el fichero oficial hasta el análisis</h2>
+    <section class="slide" data-duration="0:50" aria-labelledby="s7-title">
+      <p class="eyebrow">06 · Consumo en Tableau · Corte: 30/06/2026</p>
+      <h2 id="s7-title">Un CSV para la demostración</h2>
+      <p class="lead mono blue file-label">open_opportunities.csv</p>
       <div class="evidence-grid">
-        <div class="metric"><strong>6</strong><span>fronteras persistentes o publicadas: Raw, Bronze, Silver, Gold, DuckDB y CSV</span></div>
-        <div class="metric"><strong>9.454</strong><span>códigos del vocabulario oficial CPV medidos</span></div>
-        <div class="metric"><strong>5</strong><span>exportaciones CSV preparadas para el montaje en Tableau</span></div>
+        <div class="metric"><strong>14.763</strong><span>filas: una oportunidad<br>por procedimiento</span></div>
+        <div class="metric"><strong>1</strong><span>CSV seleccionado<br>para Tableau</span></div>
+        <div class="metric"><strong>4</strong><span>CSV adicionales<br>fuera de esta demostración</span></div>
       </div>
-      <p class="lead">CLI + Parquet + contratos + manifests + fixtures locales sin dependencia de red.</p>
-      <aside class="notes">El resultado es una cadena ejecutable desde CLI y probada con fixtures locales, sin red: Raw, Bronze y Silver; estado vigente y Gold en Parquet; vistas DuckDB; y cinco exportaciones CSV preparadas para Tableau. Además, el proyecto incluye la referencia CPV completa, con 9.454 códigos medidos, y una dimensión DIR3 construida desde seis ámbitos oficiales. Los manifests registran versiones, conteos y métricas para poder relacionar cada producto con la ejecución que lo generó.</aside>
+      <p class="lead">Volumen · importes estimados · principales compradores.</p>
+      <p class="verification">Sin fecha de publicación: el CSV mensual solo contiene la cabecera. <strong>Sin serie temporal inventada.</strong></p>
+      <aside class="notes">Para la demostración en Tableau se ha seleccionado un único fichero: el CSV de oportunidades abiertas, con una fila por procedimiento. Sus 14.763 filas permiten analizar el volumen, los importes estimados y los principales compradores, sin repetir la lógica de apertura dentro del dashboard. Los otros cuatro CSV quedan disponibles como productos analíticos, pero no forman parte de esta demostración. Hay una limitación importante: estas oportunidades no tienen fecha de publicación, por lo que el CSV mensual solo contiene la cabecera. No se representa una evolución temporal ni se sustituyen las fechas ausentes por fechas de actualización.</aside>
     </section>
 
-    <section class="slide" data-duration="0:30" aria-labelledby="s8-title">
+    <section class="slide" data-duration="0:40" aria-labelledby="s8-title">
       <p class="eyebrow">07 · Límites y conclusión</p>
       <div class="limit-grid">
         <div>
-          <h2 id="s8-title">Un prototipo defendible, no una plataforma en producción</h2>
+          <h2 id="s8-title">Un resultado acotado y verificable</h2>
           <div class="not-list" style="margin-top:1.5rem">
-            <div>Incremental completo + Airflow</div><div>Contratos menores + semántica</div><div>Cloud + operación multi-host</div>
+            <div>9.905 eventos TED en Silver, sin identidad resoluble para Gold</div>
+            <div>Fechas de publicación ausentes en las 14.763 oportunidades</div>
+            <div>Corpus y corte concretos; sin cobertura completa ni operación diaria demostradas</div>
+            <div>Docker, Airflow y cloud fuera de esta entrega</div>
           </div>
         </div>
-        <p class="closing">La utilidad analítica empieza por una base <span class="accent">reproducible</span>, <span class="blue">trazable</span> y honesta sobre sus límites.</p>
+        <p class="closing">Datos oficiales, histórico conservado y productos analíticos con <span class="accent">reconstrucción comprobada</span>.</p>
       </div>
-      <aside class="notes">El prototipo no es una plataforma en producción. La completitud incremental de ventanas, Airflow, los contratos menores, el enriquecimiento semántico y el despliegue cloud quedan como trabajo futuro. La conclusión es que la utilidad analítica depende primero de una base reproducible y trazable. Este TFM aporta esa base: integra fuentes heterogéneas, conserva la historia y convierte datos oficiales en productos analíticos sin perder la evidencia necesaria para defender cada resultado.</aside>
+      <aside class="notes">TED llega a Silver, pero sus eventos no se incorporan a Gold porque falta una identidad de procedimiento válida. Tampoco se han recuperado las fechas de publicación de estas oportunidades. La evaluación utiliza un corpus concreto y una fecha de corte; no demuestra cobertura completa ni operación diaria. Docker, Airflow y el despliegue cloud quedan fuera de esta entrega. La aportación es una cadena funcional que conserva el histórico y genera productos analíticos cuya reconstrucción se ha comprobado.</aside>
     </section>
 
     <div class="chrome help">← → / espacio · N notas · F pantalla completa</div>
@@ -334,6 +341,10 @@
       render(false);
     })();
   </script>
+  <!-- Sources: guion.md links the pinned PR #30 memoria v10 (63bb5b3), the
+       retained small/seed7 benchmark JSON and the Tableau export contract.
+       This deck updates the presentation; it does not rerun the E2E, validate
+       a Tableau extract, or assert that a Tableau Public workbook is published. -->
   <!-- Visual structure adapted from the MIT-licensed html-ppt tech-sharing template. -->
 </body>
 </html>
