@@ -779,14 +779,16 @@ su contenido es idéntico byte a byte. Los manifiestos de export difieren solo
 en la ruta de la base DuckDB de origen, específica de cada directorio de
 ejecución.
 
-\subsection{Productos analíticos y Tableau}
+\subsection{Productos analíticos y demostración en Tableau}
 
-DuckDB expone vistas de solo lectura sobre Gold. El comando
-\texttt{export-tableau} escribió cinco CSV con orden determinista y un
-manifiesto con sus conteos. Para reducir el tiempo de integración, el dashboard
-de demostración usa únicamente \path{open_opportunities.csv}; los demás
-ficheros se conservan como productos analíticos reproducibles, pero no se
-conectan a Tableau.
+DuckDB expone vistas de solo lectura sobre Gold y el comando
+\texttt{export-tableau} genera cinco CSV con orden determinista. Para demostrar
+que estos productos pueden consumirse en una herramienta de BI se seleccionó
+uno de ellos, \path{open_opportunities.csv}, y se conectó a una visualización
+en Tableau. Este fichero contiene las 14.763 oportunidades, casi 15.000, que
+Gold considera abiertas en la fecha de corte del 30 de junio de 2026, con una
+fila por procedimiento. Los otros cuatro CSV se conservan como productos
+analíticos reproducibles, pero no forman parte de esta demostración.
 
 \begin{table}[H]
 \centering
