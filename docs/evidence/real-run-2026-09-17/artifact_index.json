@@ -1,0 +1,213 @@
+{
+  "inventory_version": 1,
+  "purpose": "Post-run byte and row-count inventory of retained artifacts; not source-completeness certification. Raw hashes also match the original manifest and sidecars; CSV hashes also match fresh_tableau_sha256.txt. Parquet hashes were first recorded during this evidence audit.",
+  "artifacts": [
+    {
+      "path": "e2e.log",
+      "bytes": 4524,
+      "sha256": "b045a20154a3ec6c73aac79c238f61b18eeae58927697b98e128b792b84cbea4"
+    },
+    {
+      "path": "e2e.log.placsp",
+      "bytes": 427,
+      "sha256": "5b6834b810e64f7cbaa839eff05dbce3db95ae4f513efddad92ce44f46f3a7cf"
+    },
+    {
+      "path": "e2e.log.ted",
+      "bytes": 98,
+      "sha256": "035984d408dde47353ea1a99ed9b371fe00d897d9ec4b0838ec9d26df98e9063"
+    },
+    {
+      "path": "fresh_tableau_sha256.txt",
+      "bytes": 703,
+      "sha256": "8638ddabdc0c56b8355433ff8387a90d1bd5730e758ee9a42a7da15e48033c7d"
+    },
+    {
+      "path": "out/bronze/ingestion_report.json",
+      "bytes": 721,
+      "sha256": "1698c12d7d09f3c8321b8d0df39b35076b1c5bec6e08b26590f3c4a9028d8a7a"
+    },
+    {
+      "path": "out/bronze/records.parquet",
+      "bytes": 78662343,
+      "sha256": "42bd1e99be0589a14655e48b09bd034a977ce8f73763c2ce6e7424b92f4bf330",
+      "rows": 359304
+    },
+    {
+      "path": "out/bronze/rejections.parquet",
+      "bytes": 1206,
+      "sha256": "b2e51ddbb0c0dab03a8866743d328b42f0f03419996d2183693f79859e05120a",
+      "rows": 0
+    },
+    {
+      "path": "out/bronze/tombstones.parquet",
+      "bytes": 20671,
+      "sha256": "8265195d4d07c7bfaa8a8067f1ddab970986c9aa8e768857c07147f17476b444",
+      "rows": 1046
+    },
+    {
+      "path": "out/exports/tableau/buyer_summary.csv",
+      "bytes": 403670,
+      "sha256": "4324dfb3d483627ae9b45e621087e5fba803d7f2f2df8a126ac29671c95d0870",
+      "rows": 4027
+    },
+    {
+      "path": "out/exports/tableau/cpv_summary.csv",
+      "bytes": 149829,
+      "sha256": "8ccd75ebf941dfc03dbe144ac92ddde0ac12f5f58f09840880c36d6d68f8f351",
+      "rows": 3751
+    },
+    {
+      "path": "out/exports/tableau/open_opportunities.csv",
+      "bytes": 11958860,
+      "sha256": "50ada3cc154b87050d577a0dbae75d464a1b7b2b1c1d02f74d00e08fbd87eead",
+      "rows": 14763
+    },
+    {
+      "path": "out/exports/tableau/opportunities_monthly.csv",
+      "bytes": 91,
+      "sha256": "3a09af6ca11a689c22ae8ebd75b836ca9d72002e4def16552799a10f7dd36f83",
+      "rows": 0
+    },
+    {
+      "path": "out/exports/tableau/opportunity_cpv.csv",
+      "bytes": 4394026,
+      "sha256": "ff9a806934cbd05c4da425107297a5e8a12b5218a3d760cad155c28cbfefe812",
+      "rows": 28730
+    },
+    {
+      "path": "out/exports/tableau/tableau_export_manifest.json",
+      "bytes": 603,
+      "sha256": "8dcb16b81bf733dcd9aa5703cbde4f4caf35b99cb5f95a918fb336beb7efdc46"
+    },
+    {
+      "path": "out/gold/quality_report.json",
+      "bytes": 1314,
+      "sha256": "ade69fd234566b9f45a58b28ea0f7565dde3ca16ce57e7c6120763b1a95b391d"
+    },
+    {
+      "path": "out/gold/run_manifest.json",
+      "bytes": 2705,
+      "sha256": "627a6310cc1d0af32597212d931972b769d8487ab0fae8e19af729d9d003ccd1"
+    },
+    {
+      "path": "out/gold2/gold_manifest.json",
+      "bytes": 1244,
+      "sha256": "275d98c7a34ded102789adaefbc7300abea7bbc6cc026005e57e70ff231b76cf"
+    },
+    {
+      "path": "out/gold2/open_opportunities/part-00000-8b26fa5f-7432-4936-af8f-50db8553981e-c000.zstd.parquet",
+      "bytes": 480175,
+      "sha256": "4d76abcb127d595bfadf6b46ec75f789aab8585798664380223d2a5409064dba",
+      "rows": 3791
+    },
+    {
+      "path": "out/gold2/open_opportunities/part-00001-8b26fa5f-7432-4936-af8f-50db8553981e-c000.zstd.parquet",
+      "bytes": 466033,
+      "sha256": "aebfa3ea5ce84c3a6294d1ea02e653bc5c2e73bfce70e3d3d2265afc3fa09069",
+      "rows": 3718
+    },
+    {
+      "path": "out/gold2/open_opportunities/part-00002-8b26fa5f-7432-4936-af8f-50db8553981e-c000.zstd.parquet",
+      "bytes": 458783,
+      "sha256": "75b0b7f6455523366bdf997c6707196fefcfabc5203668925080782d569cd093",
+      "rows": 3623
+    },
+    {
+      "path": "out/gold2/open_opportunities/part-00003-8b26fa5f-7432-4936-af8f-50db8553981e-c000.zstd.parquet",
+      "bytes": 454746,
+      "sha256": "ea5be420328aae4926384c9473f43b7274b6adec646449eda3b2425575ed0bf9",
+      "rows": 3631
+    },
+    {
+      "path": "out/silver/procurement_events.parquet",
+      "bytes": 21918236,
+      "sha256": "3643e3ce02cb90cf2acc18a238cc213b84b82df23ef88dc3d105de6d2c94e8dc",
+      "rows": 359180
+    },
+    {
+      "path": "raw/placsp/placsp-202601.zip",
+      "bytes": 158979652,
+      "sha256": "7ce450e8acaeda88bd2c0f0f79193c7ae68d2fbf842dc9634f82bd84a357c796"
+    },
+    {
+      "path": "raw/placsp/placsp-202601.zip.provenance.json",
+      "bytes": 304,
+      "sha256": "25f5f42efa7590724369c7dbca877c51342bbde8809c5f7d09e23a0dafcce756"
+    },
+    {
+      "path": "raw/placsp/placsp-202602.zip",
+      "bytes": 167977295,
+      "sha256": "b3414e3c08dae6fd230d980be937aac61d474cda531e2a23c6555e47914bd05e"
+    },
+    {
+      "path": "raw/placsp/placsp-202602.zip.provenance.json",
+      "bytes": 304,
+      "sha256": "948d2cb350293296f16d1102be3f65a007f0ac5f97375034fa450c4c60fea8ac"
+    },
+    {
+      "path": "raw/placsp/placsp-202603.zip",
+      "bytes": 194593012,
+      "sha256": "82146676d60a58bbd3041883ddcf35ba09ec2361a7e3085a7af49c959a32e77d"
+    },
+    {
+      "path": "raw/placsp/placsp-202603.zip.provenance.json",
+      "bytes": 304,
+      "sha256": "79984dc723bc00f7a7621348ccefb4ada4fe3e356fc3aa7a7fecc03daa729664"
+    },
+    {
+      "path": "raw/placsp/placsp-202604.zip",
+      "bytes": 183076141,
+      "sha256": "0ee7d079f41ac0c130d1fefc6cc01a72b3e1acbfc7ec37d47233bac18ed63ccd"
+    },
+    {
+      "path": "raw/placsp/placsp-202604.zip.provenance.json",
+      "bytes": 304,
+      "sha256": "8bbbcc01233f206b53c48ea7c8d940d92153a4fdb69a8e4cecc231dc17cdb8ef"
+    },
+    {
+      "path": "raw/placsp/placsp-202605.zip",
+      "bytes": 198346558,
+      "sha256": "318179b51f525a3d70d067c25b7cbe285a618d125599b9a6aa1caa6b9ebe5d79"
+    },
+    {
+      "path": "raw/placsp/placsp-202605.zip.provenance.json",
+      "bytes": 304,
+      "sha256": "d9d8e8aae274820a5b84f4cbc2b939cd45f1ab72d0d9929c49f551ac2af0deab"
+    },
+    {
+      "path": "raw/placsp/placsp-202606.zip",
+      "bytes": 215948197,
+      "sha256": "bedeeaa85527fa111b29ad6fb9391523820624b2dac2884599c3c710b700024a"
+    },
+    {
+      "path": "raw/placsp/placsp-202606.zip.provenance.json",
+      "bytes": 304,
+      "sha256": "130db1be4db1f40da89234359ff4c762a6c00d236f2e0da3b62a6ccba846ad4a"
+    },
+    {
+      "path": "raw/ted/ted-20260101-20260630.jsonl",
+      "bytes": 105503327,
+      "sha256": "05312e157a9e97b0ea6b532f66bc1256314073064390c0fb3b1ce6b1f0b40cc7"
+    },
+    {
+      "path": "raw/ted/ted-20260101-20260630.jsonl.provenance.json",
+      "bytes": 319,
+      "sha256": "a12bd5a6ac241f90b2d8ff084925893e48afbc3215c01936bc950da8184905b4"
+    },
+    {
+      "path": "run_e2e.sh",
+      "bytes": 2745,
+      "sha256": "45d61a0107191392574bdc06a1b4d00191f5f173e8ebf1c2ca19f108166f61ec"
+    }
+  ],
+  "observed_gold": {
+    "rows": 14763,
+    "distinct_procedure_ids": 14763,
+    "missing_publication_date": 14763
+  },
+  "observed_silver_source_counts": {
+    "placsp": 349275,
+    "ted": 9905
+  }
+}

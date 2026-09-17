@@ -1,0 +1,25 @@
+[2026-09-17T21:55:54+02:00] E2E from-source run (ventana jun). repo=/home/tomcrojo/.t3/worktrees/tfm-licitaciones/t3code-bd2f0a7a rev=9fa7950
+[2026-09-17T21:55:54+02:00] START ingest (placsp || ted)
+[2026-09-17T21:58:53+02:00] {"placsp_files": 6, "files": ["/mnt/pop-work/tfm-e2e-from-source/raw/placsp/placsp-202601.zip", "/mnt/pop-work/tfm-e2e-from-source/raw/placsp/placsp-202602.zip", "/mnt/pop-work/tfm-e2e-from-source/raw/placsp/placsp-202603.zip", "/mnt/pop-work/tfm-e2e-from-source/raw/placsp/placsp-202604.zip", "/mnt/pop-work/tfm-e2e-from-source/raw/placsp/placsp-202605.zip", "/mnt/pop-work/tfm-e2e-from-source/raw/placsp/placsp-202606.zip"]}
+{"ted": 9905, "files": ["/mnt/pop-work/tfm-e2e-from-source/raw/ted/ted-20260101-20260630.jsonl"]}
+[2026-09-17T21:58:53+02:00] OK    ingest (179s)
+[2026-09-17T21:58:53+02:00] START run-bronze-silver-gold
+{"counts": {"bronze_records": 359304, "silver_procurement_events": 359180, "legacy_current_state_records": 138995, "gold_opportunities": 138995, "gold_canonical_opportunities": 136608}, "quality_passed": true}
+[2026-09-17T22:14:49+02:00] OK    run-bronze-silver-gold (956s)
+[2026-09-17T22:14:49+02:00] START build-gold
+Installed 7 packages in 19ms
+WARNING: Using incubator modules: jdk.incubator.vector
+Using Spark's default log4j profile: org/apache/spark/log4j2-defaults.properties
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/09/17 22:14:51 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[Stage 51:>                                                         (0 + 8) / 8]                                                                                [Stage 180:>                                                        (0 + 8) / 8]                                                                                [Stage 288:>                                                      (0 + 16) / 16][Stage 288:================================================>      (14 + 2) / 16]                                                                                [Stage 408:============================>                            (3 + 3) / 6][Stage 408:======================================>                  (4 + 2) / 6][Stage 410:>                                                        (0 + 8) / 8][Stage 410:============================>                            (4 + 4) / 8]                                                                                {"open_opportunities": "/mnt/pop-work/tfm-e2e-from-source/out/gold2/open_opportunities", "manifest": "/mnt/pop-work/tfm-e2e-from-source/out/gold2/gold_manifest.json", "current_state_rows": 130118, "current_state_issues_rows": 9905, "open_opportunities_rows": 14763}
+[2026-09-17T22:15:45+02:00] OK    build-gold (56s)
+[2026-09-17T22:15:45+02:00] START build-analytics
+{"analytics_duckdb": "/mnt/pop-work/tfm-e2e-from-source/out/analytics/licitaciones.duckdb", "duckdb_version": "1.5.5", "views": ["dim_cpv", "open_opportunities", "opportunity_cpv", "buyer_summary", "cpv_summary", "opportunities_monthly", "opportunities_without_publication_date"], "cpv_dimension_available": false, "counts": {"open_opportunities": 14763, "opportunity_cpv": 28730, "cpv_matched": 0, "cpv_unmatched": 28730, "buyer_summary_rows": 4027, "cpv_summary_rows": 3751, "opportunities_monthly_rows": 0, "opportunities_without_publication_date": 14763}}
+[2026-09-17T22:15:46+02:00] OK    build-analytics (1s)
+[2026-09-17T22:15:46+02:00] START export-tableau
+{"export_dir": "/mnt/pop-work/tfm-e2e-from-source/out/exports/tableau", "files": {"open_opportunities": "/mnt/pop-work/tfm-e2e-from-source/out/exports/tableau/open_opportunities.csv", "opportunity_cpv": "/mnt/pop-work/tfm-e2e-from-source/out/exports/tableau/opportunity_cpv.csv", "buyer_summary": "/mnt/pop-work/tfm-e2e-from-source/out/exports/tableau/buyer_summary.csv", "cpv_summary": "/mnt/pop-work/tfm-e2e-from-source/out/exports/tableau/cpv_summary.csv", "opportunities_monthly": "/mnt/pop-work/tfm-e2e-from-source/out/exports/tableau/opportunities_monthly.csv"}, "counts": {"open_opportunities": 14763, "opportunity_cpv": 28730, "buyer_summary": 4027, "cpv_summary": 3751, "opportunities_monthly": 0}}
+[2026-09-17T22:15:46+02:00] OK    export-tableau (0s)
+[2026-09-17T22:15:46+02:00] DONE
+[2026-09-17T22:15:46+02:00] checksums en /mnt/pop-work/tfm-e2e-from-source/fresh_tableau_sha256.txt

@@ -1,0 +1,46 @@
+{
+  "as_of": "2026-06-30",
+  "buyer_dir3_enriched_schema_version": 1,
+  "counts": {
+    "current_state": 130118,
+    "current_state_issues": 9905,
+    "excluded_deleted": 521,
+    "excluded_insufficient_evidence": 877,
+    "excluded_not_actionable": 113957,
+    "open_opportunities": 14763
+  },
+  "cpv": {
+    "available": true,
+    "cpv_occurrences": 28730,
+    "dataset": "cpv_enriched",
+    "dimension_duplicate_keys": 0,
+    "dimension_rows": 9454,
+    "dimension_source": "csv-rebuild",
+    "distinct_cpv_codes": 3751,
+    "distinct_unresolved_cpv_codes": 0,
+    "events_with_cpv_codes": 14445,
+    "events_without_cpv_codes": 318,
+    "input_events": 14763,
+    "resolved_occurrences": 28730,
+    "schema_version": 1,
+    "unresolved_occurrences": 0
+  },
+  "cpv_enriched_schema_version": 1,
+  "current_state_issues_schema_version": 1,
+  "current_state_schema_version": 1,
+  "dir3": {
+    "available": false,
+    "dimension_source": null,
+    "input_events": 14763,
+    "resolved_events": null,
+    "unresolved_events_with_buyer_id": null
+  },
+  "gold_open_opportunities_schema_version": 1,
+  "reasons": {
+    "deadline_passed": 0,
+    "deleted": 521,
+    "insufficient_evidence": 877,
+    "open": 14763,
+    "status_closed": 113957
+  }
+}

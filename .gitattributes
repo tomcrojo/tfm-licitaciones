@@ -1,1 +1,6 @@
-
+# Preserve the exact bytes of captured run evidence on every checkout platform.
+/docs/evidence/real-run-2026-09-17/** -text
+# The original Spark log includes terminal progress control characters.
+/docs/evidence/real-run-2026-09-17/e2e.log -diff
+# Demo provenance hashes refer to exact payload bytes, including line endings.
+/examples/demo/raw/** -text

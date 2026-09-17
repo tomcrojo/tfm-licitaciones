@@ -3,13 +3,12 @@
 Chain under test (production builders only, no reimplemented semantics)::
 
     placsp .atom fixture (1 PUB notice + 1 EV notice + 1 dated tombstone)
-        -> load_raw_records / bronze_frame / tombstone_frame
-        -> build_procurement_events (canonical Silver Parquet)
+        -> run_pipeline (Bronze + canonical Silver Parquet)
         -> build_gold_from_silver (Spark current-state + open policy)
         -> build_analytics_duckdb (versioned DuckDB views)
         -> export_tableau_csvs (deterministic Tableau CSVs + manifest)
 
-The fixture derives from ``tests/fixtures/placsp/mini-placsp.atom`` with the
+The public fixture in ``examples/demo/raw`` derives from the mini Atom with the
 first entry promoted ``EV -> PUB`` ("EN PLAZO", the only actionable PLACSP
 status). Expected policy outcome: 1 open (PUB), 1 status_closed (EV),
 1 deleted (dated tombstone over an unknown ref, resolved as its own
@@ -28,6 +27,7 @@ from __future__ import annotations
 import csv
 from datetime import datetime, timezone
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,86 +39,18 @@ try:
 except ImportError:
     pyspark = None
 
-try:
-    from raw_fixtures import evidence_for_fixture
-except ImportError:  # package-style run: python -m unittest tests.<module>
-    from tests.raw_fixtures import evidence_for_fixture
 from tfm_licitaciones.analytics_duckdb import build_analytics_duckdb
-from tfm_licitaciones.bronze import bronze_frame, load_raw_records, tombstone_frame
-from tfm_licitaciones.gold_enrichment import CPV_DIMENSION_FIELDS
+from tfm_licitaciones.cpv import DEFAULT_CPV_SOURCE, build_cpv_dimension
+from tfm_licitaciones.pipeline import run_pipeline
 from tfm_licitaciones.gold_open_opportunities import build_gold_from_silver
 from tfm_licitaciones.io import write_parquet
-from tfm_licitaciones.silver import PROCUREMENT_EVENTS_FILENAME, build_procurement_events
-from tfm_licitaciones.spark_foundation import PYSPARK_VERSION, create_spark_session, schema_from_fields
+from tfm_licitaciones.silver import PROCUREMENT_EVENTS_FILENAME
+from tfm_licitaciones.spark_foundation import PYSPARK_VERSION, create_spark_session
 from tfm_licitaciones.tableau_export import TABLEAU_EXPORT_MANIFEST_FILENAME, export_tableau_csvs
 
-MINI_ATOM = Path(__file__).parent / "fixtures" / "placsp" / "mini-placsp.atom"
-
+DEMO_RAW = Path(__file__).resolve().parents[1] / "examples" / "demo" / "raw"
 OPEN_REF = "https://contrataciondelestado.es/sindicacion/licitacionesPerfilContratante/10000101"
 OPEN_PROCEDURE = f"placsp:procedure:{OPEN_REF}"
-
-CPV_ROWS = [
-    {
-        "cpv_code": "72415000",
-        "label_es": "Servicios TI",
-        "label_en": "IT services",
-        "level": 3,
-        "parent_code": "72400000",
-        "is_leaf": True,
-    },
-    {
-        "cpv_code": "45212200",
-        "label_es": "Deporte",
-        "label_en": "Sports",
-        "level": 3,
-        "parent_code": "45200000",
-        "is_leaf": True,
-    },
-]
-
-
-def _open_atom_bytes() -> bytes:
-    """Return the mini fixture with the first entry promoted EV -> PUB."""
-
-    text = MINI_ATOM.read_text(encoding="utf-8")
-    promoted = text.replace(
-        '<cbc-place-ext:ContractFolderStatusCode languageID="es">EV</cbc-place-ext:ContractFolderStatusCode>',
-        '<cbc-place-ext:ContractFolderStatusCode languageID="es">PUB</cbc-place-ext:ContractFolderStatusCode>',
-        1,
-    ).replace("Estado: EV", "Estado: PUB", 1)
-    assert promoted != text, "promotion must change the first entry status"
-    # Only the first entry is actionable; the second stays EV (closed).
-    assert promoted.count(">PUB<") == 1, "exactly one PUB entry expected"
-    assert promoted.count(">EV<") == 1, "exactly one EV entry expected"
-    return promoted.encode("utf-8")
-
-
-def _write_cpv_reference(reference_dir: Path) -> Path:
-    """Write the DuckDB CPV dimension parquet consumed by build-analytics."""
-
-    reference_dir.mkdir(parents=True, exist_ok=True)
-    target = reference_dir / "cpv_codes.parquet"
-    connection = duckdb.connect()
-    try:
-        connection.execute(
-            """
-            CREATE TABLE cpv (
-                cpv_code VARCHAR NOT NULL,
-                label_es VARCHAR,
-                label_en VARCHAR,
-                level TINYINT NOT NULL,
-                parent_code VARCHAR,
-                is_leaf BOOLEAN NOT NULL
-            );
-            INSERT INTO cpv VALUES
-                ('72415000', 'Servicios TI', 'IT services', 3, '72400000', TRUE),
-                ('45212200', 'Deporte', 'Sports', 3, '45200000', TRUE);
-            """
-        )
-        connection.execute(f"COPY cpv TO '{target}' (FORMAT PARQUET)")
-    finally:
-        connection.close()
-    return target
 
 
 def _read_csv_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -146,44 +78,29 @@ class RawToTableauTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             raw = root / "raw"
-            atom_path = raw / "placsp" / "placsp-open.atom"
-            atom_path.parent.mkdir(parents=True)
-            atom_path.write_bytes(_open_atom_bytes())
-            evidence_for_fixture(raw, atom_path, "placsp")
+            shutil.copytree(DEMO_RAW, raw)
             reference_dir = root / "reference"
-            _write_cpv_reference(reference_dir)
+            write_parquet(reference_dir / "cpv_codes.parquet", build_cpv_dimension(DEFAULT_CPV_SOURCE))
 
-            # -- Raw -> Bronze -> Silver ----------------------------------
-            loaded = load_raw_records(raw)
-            ingestion = loaded["ingestion"]
+            # Use the same Raw fixture and production pipeline as the public demo.
+            medallion = run_pipeline(raw_dir=raw, output_root=root)
+            ingestion = medallion["manifest"]["ingestion"]
             self.assertTrue(ingestion["passed"])
+            self.assertTrue(medallion["quality"]["passed"])
             self.assertEqual(ingestion["parsed"], 2)
             self.assertEqual(ingestion["accepted"], 2)
             self.assertEqual(ingestion["rejected"], 0)
             self.assertEqual(ingestion["tombstones"], 1)
-
-            records_frame = bronze_frame(loaded["bronze"])
-            tombstones_frame = tombstone_frame(loaded["tombstones"])
-            self.assertEqual(records_frame.height, 2)
-            self.assertEqual(tombstones_frame.height, 1)
-            events_frame = build_procurement_events(records_frame, tombstones_frame)
-            # 2 notices + 1 dated tombstone, all preserved as history.
-            self.assertEqual(events_frame.height, 3)
-
+            self.assertEqual(medallion["manifest"]["counts"]["bronze_records"], 2)
+            self.assertEqual(medallion["manifest"]["counts"]["silver_procurement_events"], 3)
             silver_dir = root / "silver"
-            silver_dir.mkdir(parents=True)
-            write_parquet(silver_dir / PROCUREMENT_EVENTS_FILENAME, events_frame)
 
             # -- Silver -> Gold (Spark) -----------------------------------
-            cpv_dimension = self.spark.createDataFrame(
-                CPV_ROWS, schema=schema_from_fields(CPV_DIMENSION_FIELDS)
-            )
             gold_dir = root / "gold"
             gold = build_gold_from_silver(
                 self.spark,
                 silver_dir / PROCUREMENT_EVENTS_FILENAME,
                 gold_dir,
-                cpv_dimension=cpv_dimension,
                 dir3_dimension=None,
                 reference_dir=reference_dir,
                 as_of=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -263,7 +180,10 @@ class RawToTableauTests(unittest.TestCase):
             self.assertEqual(cpv_rows_out[0]["cpv_code"], "72415000")
             self.assertEqual(cpv_rows_out[0]["cpv_position"], "0")
             self.assertEqual(cpv_rows_out[0]["cpv_matched"], "true")
-            self.assertEqual(cpv_rows_out[0]["label_es"], "Servicios TI")
+            self.assertEqual(
+                cpv_rows_out[0]["label_es"],
+                "Servicios de hospedaje de operación de sitios web WWW.",
+            )
 
             _, buyer_rows = _read_csv_rows(tableau_dir / "buyer_summary.csv")
             self.assertEqual(len(buyer_rows), 1)

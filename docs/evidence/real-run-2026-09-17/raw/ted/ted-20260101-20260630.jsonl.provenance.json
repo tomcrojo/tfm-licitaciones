@@ -1,0 +1,10 @@
+{
+  "partition": "20260101-20260630",
+  "raw_path": "ted/ted-20260101-20260630.jsonl",
+  "retrieved_at": "2026-09-17T19:57:54.715003+00:00",
+  "sha256": "05312e157a9e97b0ea6b532f66bc1256314073064390c0fb3b1ce6b1f0b40cc7",
+  "source": "ted",
+  "version": 1,
+  "window_end": "2026-06-30",
+  "window_start": "2026-01-01"
+}

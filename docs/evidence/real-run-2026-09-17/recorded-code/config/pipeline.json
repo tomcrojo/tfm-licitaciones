@@ -1,0 +1,133 @@
+{
+  "project": {
+    "name": "tfm-licitaciones",
+    "version": "0.1.0"
+  },
+  "storage": {
+    "raw_dir": "data/raw",
+    "bronze_dir": "data/bronze",
+    "silver_dir": "data/silver",
+    "gold_dir": "data/gold",
+    "reference_dir": "data/reference",
+    "analytics_dir": "data/analytics",
+    "exports_dir": "data/exports"
+  },
+  "sources": {
+    "ted": {
+      "enabled": true,
+      "base_url": "https://api.ted.europa.eu/v3/notices/search",
+      "country": "ESP",
+      "page_size": 100,
+      "max_pages": 100,
+      "max_days_per_request": 31,
+      "timeout_seconds": 30,
+      "retry_attempts": 4,
+      "sleep_seconds": 0.6,
+      "fields": [
+        "ND",
+        "PD",
+        "TI",
+        "CY",
+        "buyer-name",
+        "buyer-country",
+        "place-of-performance-city-proc",
+        "deadline-receipt-tender-date-lot",
+        "estimated-value-lot",
+        "framework-maximum-value-lot",
+        "PC",
+        "AC",
+        "PR",
+        "NC",
+        "notice-type",
+        "description-glo",
+        "links"
+      ],
+      "technology_terms": [
+        "cloud",
+        "big data",
+        "inteligencia artificial",
+        "datos",
+        "software",
+        "ciberseguridad",
+        "business intelligence",
+        "automatizacion",
+        "infraestructura",
+        "plataforma",
+        "servicios TI"
+      ]
+    },
+    "boe": {
+      "enabled": false,
+      "base_url": "https://www.boe.es/datosabiertos/api/boe/sumario",
+      "timeout_seconds": 20,
+      "retry_attempts": 2,
+      "sections": [],
+      "note": "Verificado junio 2026: el sumario del BOE no publica anuncios de licitacion (sect. I-III solo). Las licitaciones espanolas se publican en PLACSP; BOE queda como fuente de contexto normativo opcional."
+    },
+    "placsp": {
+      "enabled": true,
+      "base_url": "https://contrataciondelestado.es/sindicacion/sindicacion_643",
+      "zip_pattern": "licitacionesPerfilesContratanteCompleto3_{run_id}.zip",
+      "ca_bundle": "config/certs/fnmt-root-servidores-seguros.pem",
+      "timeout_seconds": 300,
+      "retry_attempts": 3,
+      "note": "Sindicacion 643: licitaciones publicadas en PLACSP excluyendo contratos menores. El TLS usa la cadena FNMT-RCM, anclada mediante ca_bundle."
+    },
+    "dir3": {
+      "enabled": true,
+      "base_url": "https://administracionelectronica.gob.es",
+      "timeout_seconds": 120,
+      "retry_attempts": 3,
+      "note": "Listados oficiales de unidades organicas por ambito (PAe/CTT DIR3). El host usa proteccion F5/TSPD: si la descarga programatica devuelve HTML, se descarga manualmente en data/raw/dir3/ con el nombre determinista de cada ambito. Ver docs/references.md#dir3."
+    }
+  },
+  "linkage": {
+    "window_days": 7,
+    "threshold": 0.75
+  },
+  "quality": {
+    "max_title_null_share": 0.05,
+    "max_publication_date_null_share": 0.05,
+    "max_invalid_amount_share": 0.10,
+    "min_technology_match_share": 0.05,
+    "max_duplicate_share": 0.35,
+    "note": "min_technology_match_share baja de 0.20 a 0.05 en v2: PLACSP aporta la contratacion completa espanola (todos los sectores), no solo tecnologia; la relevancia pasa a ser metrica de composicion del corpus, no de salud de ingesta."
+  },
+  "classifier": {
+    "categories": [
+      {
+        "name": "Cloud",
+        "keywords": ["cloud", "nube", "iaas", "paas", "saas"]
+      },
+      {
+        "name": "AI & Machine Learning",
+        "keywords": ["inteligencia artificial", "machine learning", "deep learning", "modelo de lenguaje", "nlp"]
+      },
+      {
+        "name": "Data & Analytics",
+        "keywords": ["big data", "data lake", "analitica", "business intelligence", "inteligencia de datos", "cuadro de mando"]
+      },
+      {
+        "name": "Cybersecurity",
+        "keywords": ["ciberseguridad", "seguridad de la informacion", "siem", "soc"]
+      },
+      {
+        "name": "Software & Development",
+        "keywords": ["software", "aplicacion", "desarrollo", "mantenimiento de sistemas", "mantenimiento de aplicaciones"]
+      },
+      {
+        "name": "Infrastructure & Hardware",
+        "keywords": ["servidor", "almacenamiento", "red", "hardware", "equipamiento informatico", "virtualizacion"]
+      }
+    ],
+    "cpv_map": {
+      "Cloud": ["72415", "72514"],
+      "Data & Analytics": ["723"],
+      "Software & Development": ["48", "7221", "7223", "7226", "7242", "72413"],
+      "Infrastructure & Hardware": ["302", "324", "325", "5031", "72411"],
+      "AI & Machine Learning": [],
+      "Cybersecurity": []
+    },
+    "cpv_map_note": "Prefijos CPV 2008 inequivocos verificados contra config/reference/cpv2008_es.csv. CPV 2008 no tiene codigos propios de IA ni ciberseguridad: quedan evaluadas solo por keywords."
+  }
+}
