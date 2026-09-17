@@ -4,6 +4,12 @@ This document freezes the **boundary and interfaces** for the next stage of the
 pipeline. It does not migrate Gold 0.1 and it does not claim that current-state
 or the Gold marts are implemented.
 
+> **Merge dependency:** PR #19 must not merge before PR #20 (`fix: preserve
+> PLACSP tombstone source time`) is merged and this branch is rebased onto that
+> result. The temporal semantics below describe the intended post-#20 upstream
+> contract; keeping the dependency explicit prevents the pre-#20 undated
+> tombstone limitation from surviving by accident.
+
 ## Boundary
 
 The production-facing boundary is:
@@ -15,7 +21,9 @@ canonical Silver Parquet
 ```
 
 `silver/procurement_events.parquet` remains the only input contract for this
-stage. Bronze and Silver semantics are unchanged. No production code under this
+stage. This PR does not redefine Bronze or Silver business semantics; it consumes
+the canonical Silver contract, including the source-dated PLACSP tombstone
+semantics introduced by PR #20 after rebase. No production code under this
 foundation imports the experimental Silver Spark candidate.
 
 Parquet remains the persisted boundary between stages. Processing timestamps,
@@ -39,8 +47,8 @@ uv run --with 'pyspark==4.0.1' --with-editable . \
 - `canonical_silver_schema()`: Spark representation generated from the guarded
   engine-neutral canonical Silver contract;
 - `read_canonical_silver(...)`: validates the inferred physical Parquet schema
-  before applying the explicit canonical schema, so missing columns cannot be
-  silently synthesized as all-null values;
+  before applying the explicit canonical schema, then enforces required values
+  and non-null array elements;
 - `schema_from_fields(...)`: mapping from engine-neutral contracts to Spark;
 - `assert_contract_schema(...)`: field/type/order validation plus value-level
   non-null checks for required columns and array elements;
@@ -54,11 +62,13 @@ ordered sequence across output part-files. Determinism here means stable schema
 and stable data semantics; consumers must not use part-file order or names as
 identity.
 
-The canonical Silver Spark schema is not an unguarded copy: field order and
-logical contract live in `gold_contract.CANONICAL_SILVER_FIELDS`, the offline
-suite checks its names/order against `models.PROCUREMENT_EVENT_SCHEMA`, and the
-Spark suite checks the resulting types/nullability. Parquet nullability metadata
-is deliberately not treated as authoritative because Spark relaxes it on
+The canonical Silver Spark schema is not an unguarded copy. Field order and
+logical contract live in `gold_contract.CANONICAL_SILVER_FIELDS`; the offline
+suite pins the full contract and maps the actual Polars dtypes from
+`models.PROCUREMENT_EVENT_SCHEMA` to the engine-neutral logical types. The Spark
+suite checks the resulting types/nullability and includes a real production-like
+Polars -> Parquet -> Spark boundary test. Parquet nullability metadata is
+deliberately not treated as authoritative because Spark relaxes it on
 round-trip; required values are validated against actual rows.
 
 ## Current-state intermediate contract
@@ -107,6 +117,29 @@ to persist them. The implementation PR must persist the schema version in the
 Gold/current-state build manifest before these datasets become production
 artifacts.
 
+### Temporal semantics inherited from canonical Silver after PR #20
+
+PR #20 preserves the authoritative OpenPLACSP Atom tombstone `when` value in
+Bronze as `source_deleted_at` and maps it into the existing canonical Silver
+`source_updated_at` field for dated tombstone events. Therefore Gold/current-
+state must use the following rules:
+
+- A PLACSP tombstone with a valid source `when` is a source-dated deletion event.
+  Its `source_updated_at` is authoritative for source event ordering at the
+  canonical microsecond precision.
+- Separate delete instants for the same published tombstone ref remain distinct
+  historical events. Repeated observations of the same `(ref, source time)` may
+  collapse only under the existing canonical provenance semantics.
+- A tombstone with no published `when` remains valid **undated** deletion
+  evidence. Its order relative to notices/revisions must not be invented from
+  `ingested_at` or retrieval provenance.
+- A published but unusable `when` remains undated deletion evidence **and** is
+  observable upstream through the Bronze `invalid_tombstone_when` control
+  rejection. Downstream logic must not silently treat malformed published time
+  as equivalent to a trustworthy timestamp.
+- `ingested_at` remains retrieval provenance only. It must never decide business
+  recency or whether a tombstone wins.
+
 ### Resolution semantics that are already fixed
 
 - Silver is the historical source of truth. A current-state builder must not
@@ -114,8 +147,6 @@ artifacts.
 - Canonical duplicate/collision semantics are inherited from Silver:
   `event_id` must already be unique. Current-state must fail on a malformed
   input boundary instead of inventing another deduplication policy.
-- `ingested_at` is retrieval provenance only. It must never decide business
-  recency or whether a tombstone wins.
 - Cross-source linkage is downstream enrichment. It must not change
   `procedure_id` grouping in this intermediate.
 - Rows without `procedure_id` are **not eligible for `current_state`**. They
@@ -124,30 +155,28 @@ artifacts.
 
 ### Decisions intentionally left unresolved
 
-The current Silver/Bronze contract does not contain enough information to
+Even after PR #20, the contract does not contain enough verified semantics to
 implement a correct general resolver yet:
 
-1. **Tombstone ordering.** Bronze does not retain Atom `when`; repeated
-   delete/publish/delete cycles cannot be ordered. A procedure whose state
-   depends on ordering a tombstone against another event must not be resolved
-   from `ingested_at`.
-2. **Tombstone identity compatibility.** Current Silver constructs PLACSP notice
-   procedures from the full Atom `id` and tombstone procedures from the full
-   tombstone `ref`. This foundation does **not** assume those strings always
-   identify the same procedure. Before `is_deleted` can be computed, a follow-up
-   must establish that relationship from real source evidence/fixtures or define
-   an explicit normalization rule. A resolver must fail/surface an issue rather
-   than silently joining on an unverified equality assumption.
-3. **Source event ordering.** OpenPLACSP revisions with valid
-   `source_updated_at` have an authoritative source timestamp, but the policy
-   for undated OpenPLACSP events and multi-event TED procedures is not yet
-   fixed. `publication_date` is a date, not a universal revision clock.
-4. **Incomplete histories.** A corpus may begin after a procedure already
+1. **Notice/tombstone procedure identity compatibility.** PR #20 retains the
+   published tombstone ref as the source procedure identity, while PLACSP notice
+   procedure identity originates from the notice Atom identity. This foundation
+   does **not** assume those published strings identify the same procedure in all
+   real feeds. Before `is_deleted` can be computed, a follow-up must establish
+   that relationship from real source evidence/fixtures or define an explicit
+   normalization rule. A resolver must surface an issue rather than silently
+   join on an unverified equality assumption.
+2. **Undated event ordering.** Source-dated PLACSP revisions and source-dated
+   tombstones have an authoritative timestamp after PR #20. The policy for
+   genuinely undated PLACSP events and multi-event TED procedures remains
+   unresolved. `publication_date` is a date, not a universal revision clock.
+3. **Incomplete histories.** A corpus may begin after a procedure already
    existed. The resolver must define whether a lone revision/tombstone is
    sufficient evidence for state.
-5. **Unresolved output contract.** A follow-up must freeze
+4. **Unresolved output contract.** A follow-up must freeze
    `current_state_issues` (at minimum reason + `event_id`/`procedure_id`
-   provenance) before the resolver is enabled.
+   provenance) before the resolver is enabled. It must include reasons capable
+   of distinguishing genuinely undated ordering from other resolution failures.
 
 Because these decisions are not fixed, this PR does **not** expose a
 `build_current_state` implementation that guesses them.
@@ -189,7 +218,8 @@ ported into these contracts.
 
 ## Stable next-PR interfaces
 
-The following interfaces are now safe dependencies for later PRs:
+The following interfaces are intended to be stable after the required #20
+rebase:
 
 ```text
 tfm_licitaciones.gold_contract
@@ -224,12 +254,16 @@ closed.
 
 ## Follow-ups unlocked
 
-1. Retain authoritative tombstone ordering metadata (`when`) at Bronze/Silver
-   without changing existing historical identities.
+1. Merge PR #20, rebase #19 onto it and rerun the full offline/Spark/experiment
+   suites before #19 can merge.
 2. Establish PLACSP notice/tombstone procedure identity compatibility from real
-   source evidence and freeze `current_state_issues` plus ordering policy.
+   source evidence; freeze `current_state_issues` and remaining undated ordering
+   policy.
 3. Persist current-state/Gold schema versions in the build manifest and
    implement Spark current-state resolution against the contracts above.
 4. Add CPV/DIR3/NUTS enrichments as explicit joins.
 5. Implement `open_opportunities` and then the remaining Gold marts.
-6. Register `build-gold` only when steps 2-5 have executable semantics.
+6. Consolidate the `pyspark==4.0.1` runtime pin into one packaging/CI source of
+   truth when the executable Gold path (`build-gold`) is introduced.
+7. Register `build-gold` only when the resolver and Gold semantics are
+   executable rather than placeholder behavior.
