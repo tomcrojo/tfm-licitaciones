@@ -25,6 +25,7 @@ CURRENT_STATE_ISSUES_DATASET = "current_state_issues"
 GOLD_OPEN_OPPORTUNITIES_DATASET = "open_opportunities"
 
 CURRENT_STATE_SCHEMA_VERSION = 1
+CURRENT_STATE_ISSUES_SCHEMA_VERSION = 1
 GOLD_OPEN_OPPORTUNITIES_SCHEMA_VERSION = 1
 
 # Canonical Silver contract as consumed at the Spark boundary. Field order and
@@ -78,6 +79,20 @@ CURRENT_STATE_FIELDS = (
     FieldSpec("source_url", "string"),
     FieldSpec("ingested_at", "timestamp", False),
     FieldSpec("is_deleted", "boolean", False),
+)
+
+# Grain: one row per canonical Silver event that cannot be resolved to a
+# deterministic current state. `procedure_id` is nullable only to preserve
+# provenance for events without a procedure key; every other field is the
+# canonical Silver provenance of that event plus a deterministic `reason`.
+# Reasons distinguish genuinely undated ordering (`undated_competing_events`)
+# from identity and missing-key failures.
+CURRENT_STATE_ISSUES_FIELDS = (
+    FieldSpec("procedure_id", "string", True),
+    FieldSpec("event_id", "string", False),
+    FieldSpec("source", "string", False),
+    FieldSpec("source_event_type", "string", False),
+    FieldSpec("reason", "string", False),
 )
 
 # Grain: one row per current-state procedure that a future Gold builder has
