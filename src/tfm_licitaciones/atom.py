@@ -14,6 +14,7 @@ import re
 import zipfile
 import zlib
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -93,8 +94,12 @@ def parse_atom_batch(text: str | bytes, source_member: str | None = None) -> Ato
     for index, node in enumerate(root.findall("at:deleted-entry", CODICE_NS), 1):
         ref = node.attrib.get("ref", "").strip()
         if ref:
-            batch.tombstone_rows.append({**location, "record_locator": f"deleted-entry:{index}",
-                                         "source_record_id": ref})
+            batch.tombstone_rows.append({
+                **location,
+                "record_locator": f"deleted-entry:{index}",
+                "source_record_id": ref,
+                "source_deleted_at": _atom_source_instant(node.attrib.get("when")),
+            })
         else:
             batch.rejections.append({**location, "record_locator": f"deleted-entry:{index}",
                                      "rejection_reason": "missing_tombstone_ref", "rejection_scope": "control"})
@@ -220,6 +225,21 @@ def _parse_entry(entry: ElementTree.Element) -> dict[str, Any]:
             # Decimal instead of reusing the legacy float conversion.
             payload[f"{key}_raw"] = text
     return payload
+
+
+def _atom_source_instant(value: str | None) -> datetime | None:
+    """Parse an Atom source instant to UTC without inventing missing time."""
+
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _text(entry: ElementTree.Element, local_name: str) -> str:
