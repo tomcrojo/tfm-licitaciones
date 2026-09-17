@@ -18,10 +18,18 @@ jobs:
         with:
           python-version: "3.11"
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - uses: astral-sh/setup-uv@v6
 
       - name: Run offline test suite
         run: uv run --locked --with-editable . python -m unittest discover -s tests -v
+
+      - name: Run Gold/Spark foundation tests
+        run: uv run --with 'pyspark==4.0.1' --with-editable . python -m unittest tests.test_spark_foundation -v
 
       - name: Run Silver engine comparison experiment suite (no PySpark; Spark tests skip)
         run: uv run --locked --with-editable . python -m unittest discover -s experiments/silver_engine_comparison/tests -t . -v
