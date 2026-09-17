@@ -199,10 +199,58 @@ identity plus the canonical business fields required by downstream consumers.
 It intentionally contains no ranking score, ML label, keyword category or
 legacy linkage columns: those semantics are not implemented by this PR.
 
-The remaining Gold decision before this dataset can be built is the explicit
-definition of **open/actionable** across sources (status normalization, deadline
-handling and treatment of missing values). Until then, no row should be
-published merely because it is the latest resolvable event.
+### Open/actionable policy (frozen)
+
+Implemented by `tfm_licitaciones.gold_open_opportunities` (no current-state
+or enrichment logic is reimplemented; both merged interfaces are composed).
+Evidence inspected before freezing: canonical Silver always carries
+`status=NULL` and `deadline=NULL` for TED and BOE (no mapping populates
+them; `silver_native`/`silver_reference` set literal nulls); PLACSP carries
+the free-text `ContractFolderStatusCode` with the only real-fixture value
+`EV` on live published procedures (`tests/fixtures/placsp/mini-placsp.atom`,
+`tests/fixtures/raw/placsp/placsp-202601.zip`); `ADJ` is the only other
+status string in the repository (synthetic lifecycle progression in
+`bench_silver.py`); `is_deleted` is true exactly for tombstone-selected
+current-state rows; `ingested_at` is retrieval provenance only. Legacy Gold
+0.1 publishes every non-tombstoned record with no status filter and is
+historical reference only, never a source for this policy.
+
+Decision per current-state row, in precedence order:
+
+1. `is_deleted=true` → `deleted`: never an open opportunity, no exceptions.
+2. `deadline` non-null, `as_of` provided, `deadline < as_of` (strict, UTC;
+   `as_of` is the start of the evaluation day) → `deadline_passed`
+   (not actionable; wins over any status text).
+3. `source == "placsp"`: `status == "EV"` → `open` (only status with real
+   fixture evidence; null deadlines do not block it); `status == "ADJ"` →
+   `status_closed` (not actionable; wins over a stale future deadline);
+   null or any other string → `insufficient_evidence` (exact,
+   case-sensitive match; never silently opened).
+4. Any other source (TED/BOE/…): non-null `status` →
+   `insufficient_evidence` (unexpected taxonomy: the contract says TED/BOE
+   status is always null); null `status` with non-null `deadline` and a
+   provided `as_of` with `deadline >= as_of` → `open` (an explicit future
+   deadline is direct actionability evidence needing no taxonomy);
+   otherwise → `insufficient_evidence` (null deadline with null status can
+   never prove actionability).
+
+Consequences: a null `deadline` never excludes; without `as_of` no
+deadline is evaluated (production runs must pass `--as-of`); no
+`datetime.now()` hides inside the logic; `source_event_type`,
+`awarded_value`, `publication_date`, `source_updated_at` and `ingested_at`
+are not openness signals. `EV`/`ADJ` are provisional minimal sets: the
+follow-up is to freeze the full official CODICE `ContractFolderStatusCode`
+codelist instead of widening them by intuition.
+
+### Enrichment composition (frozen)
+
+CPV keeps the canonical `cpv_codes` array untouched in
+`open_opportunities` (one row per `procedure_id`, never duplicated);
+`enrich_cpv` runs on the open set for measured resolved/unresolved metrics
+only, so no `opportunity_cpv` secondary dataset is persisted. DIR3 runs via
+`enrich_buyers_dir3` for metrics only: canonical `buyer_id`/`buyer_name`
+are never rewritten and a missing DIR3 dimension never blocks Gold
+(`dir3.available=false` in the manifest).
 
 ## Planned dimensions and marts
 
@@ -242,6 +290,15 @@ tfm_licitaciones.current_state (PR #24)
   build_current_state
   build_current_state_from_silver
 
+tfm_licitaciones.gold_open_opportunities
+  GOLD_OPEN_OPPORTUNITIES_DATASET
+  GOLD_MANIFEST_FILENAME
+  PLACSP_OPEN_STATUSES / PLACSP_CLOSED_STATUSES
+  parse_as_of
+  open_opportunities_schema
+  build_open_opportunities
+  build_gold_from_silver
+
 tfm_licitaciones.spark_foundation
   PYSPARK_VERSION
   create_spark_session
@@ -252,18 +309,39 @@ tfm_licitaciones.spark_foundation
   write_typed_parquet
 ```
 
-The intended future CLI surface is:
+The executable CLI surface is:
 
 ```text
 licitaciones-pipeline build-gold
-  --silver-dir <path>
-  --gold-dir <path>
+  --silver-dir <path>       (default: storage.silver_dir)
+  --gold-dir <path>         (default: storage.gold_dir)
+  --reference-dir <path>    (default: storage.reference_dir)
+  --as-of YYYY-MM-DD        (optional; UTC evaluation day for the deadline gate)
 ```
 
-It is deliberately **not registered yet**: PR #24 provides the resolver as a
-library (`tfm_licitaciones.current_state`) without a production CLI. A future
-Gold PR should register the command once Gold semantics are executable rather
-than placeholder behavior.
+It reads `<silver-dir>/procurement_events.parquet` (validated canonical
+boundary), resolves current-state with PR #24, applies the frozen
+open/actionable policy, composes CPV/DIR3 enrichment metrics, and writes
+`<gold-dir>/open_opportunities` (typed Parquet, `order_by procedure_id`)
+plus the minimal `<gold-dir>/gold_manifest.json`:
+
+```text
+gold_open_opportunities_schema_version
+current_state_schema_version / current_state_issues_schema_version
+cpv_enriched_schema_version / buyer_dir3_enriched_schema_version
+as_of (YYYY-MM-DD or null; null disables the deadline gate)
+counts: current_state, current_state_issues, open_opportunities,
+  excluded_deleted, excluded_not_actionable, excluded_insufficient_evidence
+reasons: deleted, deadline_passed, status_closed, insufficient_evidence
+cpv: measured enrich_cpv metrics on the open set (+ dimension_source)
+dir3: measured enrich_buyers_dir3 metrics, or available=false
+```
+
+All counts and CPV/DIR3 metrics are measured from real data. Guards fail
+loudly instead of publishing silently: exact Gold schema, unique and
+non-null `procedure_id`, no `is_deleted=true` published, full
+open+excluded accounting, and unchanged cardinality across the enrichment
+joins (enforced inside `gold_enrichment`).
 
 ## Follow-ups unlocked
 
@@ -272,12 +350,17 @@ than placeholder behavior.
 2. Closed by #21/#24: PLACSP notice/tombstone identity established from real
    source evidence; `current_state_issues` frozen and remaining undated
    ordering policy frozen.
-3. Closed for current-state by #24: current-state schema versions persisted in
-   `current_state_manifest.json` and Spark current-state resolution
-   implemented; Gold manifest and Gold resolution remain open.
-4. Add CPV/DIR3/NUTS enrichments as explicit joins.
-5. Implement `open_opportunities` and then the remaining Gold marts.
+3. Closed by this PR: `open_opportunities` Gold resolution implemented with
+   the frozen open/actionable policy, CPV/DIR3 enrichment metrics composed
+   and `gold_manifest.json` persisted; `build-gold` registered.
+4. Closed for CPV/DIR3 by #22 plus this PR's metrics-only composition.
+   NUTS enrichment remains a future explicit join.
+5. Remaining Gold marts (`minor_contract_signals`, `daily_candidate_feed`)
+   are still open and belong to later PRs (aggregations served from
+   DuckDB unless a structural need is proven).
 6. Consolidate the `pyspark==4.0.1` runtime pin into one packaging/CI source of
-   truth when the executable Gold path (`build-gold`) is introduced.
-7. Register `build-gold` only when the resolver and Gold semantics are
-   executable rather than placeholder behavior.
+   truth now that the executable Gold path (`build-gold`) exists.
+7. Freeze the full official CODICE `ContractFolderStatusCode` codelist to
+   replace the provisional `EV`/`ADJ` minimal sets, and map the real
+   deadline sources (TED `deadline-receipt-tender-date-lot` is requested
+   but unused; PLACSP publishes no deadline field today).

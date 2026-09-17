@@ -45,6 +45,20 @@ def build_parser() -> argparse.ArgumentParser:
     report = subparsers.add_parser("report", help="mostrar el último informe de calidad")
     report.add_argument("--gold-dir", type=Path)
     report.add_argument("--config", type=Path)
+
+    build_gold = subparsers.add_parser(
+        "build-gold",
+        help="construir el Gold principal open_opportunities desde Silver canónico",
+    )
+    build_gold.add_argument("--silver-dir", type=Path, help="directorio Silver alternativo")
+    build_gold.add_argument("--gold-dir", type=Path, help="directorio Gold alternativo")
+    build_gold.add_argument("--reference-dir", type=Path, help="directorio de referencia alternativo")
+    build_gold.add_argument("--config", type=Path, help="configuración JSON alternativa")
+    build_gold.add_argument(
+        "--as-of",
+        default=None,
+        help="fecha de evaluación YYYY-MM-DD para la política deadline (UTC)",
+    )
     return parser
 
 
@@ -102,6 +116,48 @@ def main(argv: list[str] | None = None) -> int:
                     "parents_unresolved": build["manifest"]["parents_unresolved"],
                     "units": str(outputs["units"]),
                     "manifest": str(outputs["manifest"]),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+    if args.command == "build-gold":
+        from .gold_open_opportunities import build_gold_from_silver, parse_as_of
+        from .silver import PROCUREMENT_EVENTS_FILENAME
+        from .spark_foundation import create_spark_session
+
+        try:
+            moment = parse_as_of(args.as_of)
+        except ValueError as exc:
+            raise SystemExit(f"--as-of inválido: {exc}") from exc
+        silver_dir = args.silver_dir or configured_path(config, "silver_dir")
+        if not silver_dir.is_absolute():
+            silver_dir = Path(config["_project_root"]) / silver_dir
+        gold_dir = args.gold_dir or configured_path(config, "gold_dir")
+        if not gold_dir.is_absolute():
+            gold_dir = Path(config["_project_root"]) / gold_dir
+        reference_dir = args.reference_dir or configured_path(config, "reference_dir")
+        if not reference_dir.is_absolute():
+            reference_dir = Path(config["_project_root"]) / reference_dir
+        spark = create_spark_session(app_name="tfm-licitaciones-build-gold")
+        try:
+            result = build_gold_from_silver(
+                spark,
+                silver_dir / PROCUREMENT_EVENTS_FILENAME,
+                gold_dir,
+                reference_dir=reference_dir,
+                as_of=moment,
+            )
+        finally:
+            spark.stop()
+        print(
+            json.dumps(
+                {
+                    "open_opportunities": result["open_opportunities"],
+                    "manifest": result["manifest"],
+                    "current_state_rows": result["current_state_rows"],
+                    "current_state_issues_rows": result["current_state_issues_rows"],
+                    "open_opportunities_rows": result["open_opportunities_rows"],
                 },
                 ensure_ascii=False,
             )
