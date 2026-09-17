@@ -1,8 +1,10 @@
 # Gold/Spark contract foundation
 
 This document freezes the **boundary and interfaces** for the next stage of the
-pipeline. It does not migrate Gold 0.1 and it does not claim that current-state
-or the Gold marts are implemented.
+pipeline. It does not migrate Gold 0.1 and it does not claim that the Gold
+marts are implemented. Current-state resolution is implemented by PR #24 on
+top of this foundation, closing the identity and ordering decisions that PR
+#21 and PR #24 froze.
 
 > **Merge dependency:** PR #19 must not merge before PR #20 (`fix: preserve
 > PLACSP tombstone source time`) is merged and this branch is rebased onto that
@@ -110,12 +112,14 @@ All canonical fields describe the selected canonical event. `event_id` and
 `ingested_at` therefore preserve the provenance of that selected Silver row.
 `is_deleted` is a current-state attribute and is not added back to Silver.
 
-`CURRENT_STATE_SCHEMA_VERSION` and `GOLD_OPEN_OPPORTUNITIES_SCHEMA_VERSION` are
-code-level contract versions in this foundation. No current-state/Gold Parquet
-writer exists yet, so this PR does not invent an on-disk manifest format merely
-to persist them. The implementation PR must persist the schema version in the
-Gold/current-state build manifest before these datasets become production
-artifacts.
+`CURRENT_STATE_SCHEMA_VERSION`, `CURRENT_STATE_ISSUES_SCHEMA_VERSION` and
+`GOLD_OPEN_OPPORTUNITIES_SCHEMA_VERSION` are code-level contract versions.
+`tfm_licitaciones.current_state.build_current_state_from_silver` persists the
+two current-state versions plus row counts in the minimal
+`current_state_manifest.json` written alongside `current_state` and
+`current_state_issues` (PR #24, closing the PR #19 manifest requirement for
+this stage). No Gold Parquet writer exists yet, so this foundation still does
+not invent an on-disk Gold manifest format.
 
 ### Temporal semantics inherited from canonical Silver after PR #20
 
@@ -153,33 +157,34 @@ state must use the following rules:
   remain valid canonical Silver history and must be surfaced by a future
   unresolved/issues output rather than assigned a synthetic procedure key.
 
-### Decisions intentionally left unresolved
+### Decisions closed by #21/#24
 
-Even after PR #20, the contract does not contain enough verified semantics to
-implement a correct general resolver yet:
+PR #21 and PR #24 close the four gaps above without changing Silver or
+inventing heuristics:
 
-1. **Notice/tombstone procedure identity compatibility.** PR #20 retains the
-   published tombstone ref as the source procedure identity, while PLACSP notice
-   procedure identity originates from the notice Atom identity. This foundation
-   does **not** assume those published strings identify the same procedure in all
-   real feeds. Before `is_deleted` can be computed, a follow-up must establish
-   that relationship from real source evidence/fixtures or define an explicit
-   normalization rule. A resolver must surface an issue rather than silently
-   join on an unverified equality assumption.
-2. **Undated event ordering.** Source-dated PLACSP revisions and source-dated
-   tombstones have an authoritative timestamp after PR #20. The policy for
-   genuinely undated PLACSP events and multi-event TED procedures remains
-   unresolved. `publication_date` is a date, not a universal revision clock.
-3. **Incomplete histories.** A corpus may begin after a procedure already
-   existed. The resolver must define whether a lone revision/tombstone is
-   sufficient evidence for state.
-4. **Unresolved output contract.** A follow-up must freeze
-   `current_state_issues` (at minimum reason + `event_id`/`procedure_id`
-   provenance) before the resolver is enabled. It must include reasons capable
-   of distinguishing genuinely undated ordering from other resolution failures.
+1. **Notice/tombstone procedure identity compatibility.** Closed by PR #21
+   (see `docs/placsp_identity.md`): exact published-URI equality
+   (`deleted-entry/@ref == atom:id`) is the procedure-identity bridge, so
+   current-state groups notices and tombstones directly by canonical
+   `procedure_id` and surfaces mismatches as `current_state_issues`
+   instead of normalizing keys.
+2. **Undated event ordering.** Closed by PR #24
+   (`tfm_licitaciones.current_state`): business history orders by
+   `source_updated_at` only when present; a procedure with more than one
+   identity-valid event and at least one null `source_updated_at` is
+   unresolved (`undated_competing_events`). `publication_date` is never a
+   revision clock and `ingested_at`/retrieval provenance never decides
+   recency.
+3. **Incomplete histories.** Closed by PR #24: a lone observed event is
+   sufficient evidence for state even when `source_updated_at` is null;
+   there is no competition to order.
+4. **Unresolved output contract.** Closed by PR #24:
+   `gold_contract.CURRENT_STATE_ISSUES_FIELDS` freezes `current_state_issues`
+   (procedure/event provenance plus deterministic `reason`, distinguishing
+   `undated_competing_events` from identity and missing-key failures).
 
-Because these decisions are not fixed, this PR does **not** expose a
-`build_current_state` implementation that guesses them.
+`tfm_licitaciones.current_state.build_current_state` implements exactly
+these semantics.
 
 ## Gold principal contract
 
@@ -225,9 +230,17 @@ rebase:
 tfm_licitaciones.gold_contract
   CANONICAL_SILVER_FIELDS
   CURRENT_STATE_FIELDS
+  CURRENT_STATE_ISSUES_FIELDS
   GOLD_OPEN_OPPORTUNITIES_FIELDS
   CURRENT_STATE_SCHEMA_VERSION
+  CURRENT_STATE_ISSUES_SCHEMA_VERSION
   GOLD_OPEN_OPPORTUNITIES_SCHEMA_VERSION
+
+tfm_licitaciones.current_state (PR #24)
+  current_state_schema
+  current_state_issues_schema
+  build_current_state
+  build_current_state_from_silver
 
 tfm_licitaciones.spark_foundation
   PYSPARK_VERSION
@@ -247,20 +260,21 @@ licitaciones-pipeline build-gold
   --gold-dir <path>
 ```
 
-It is deliberately **not registered yet**: a command that cannot resolve
-current-state safely would be a fictitious production interface. The PR that
-implements the resolver should add it once the unresolved decisions above are
-closed.
+It is deliberately **not registered yet**: PR #24 provides the resolver as a
+library (`tfm_licitaciones.current_state`) without a production CLI. A future
+Gold PR should register the command once Gold semantics are executable rather
+than placeholder behavior.
 
 ## Follow-ups unlocked
 
 1. Merge PR #20, rebase #19 onto it and rerun the full offline/Spark/experiment
    suites before #19 can merge.
-2. Establish PLACSP notice/tombstone procedure identity compatibility from real
-   source evidence; freeze `current_state_issues` and remaining undated ordering
-   policy.
-3. Persist current-state/Gold schema versions in the build manifest and
-   implement Spark current-state resolution against the contracts above.
+2. Closed by #21/#24: PLACSP notice/tombstone identity established from real
+   source evidence; `current_state_issues` frozen and remaining undated
+   ordering policy frozen.
+3. Closed for current-state by #24: current-state schema versions persisted in
+   `current_state_manifest.json` and Spark current-state resolution
+   implemented; Gold manifest and Gold resolution remain open.
 4. Add CPV/DIR3/NUTS enrichments as explicit joins.
 5. Implement `open_opportunities` and then the remaining Gold marts.
 6. Consolidate the `pyspark==4.0.1` runtime pin into one packaging/CI source of
