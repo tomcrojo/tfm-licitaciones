@@ -27,7 +27,10 @@ PROVENANCE_SCHEMA = {
     "raw_retrieved_at": pl.Datetime("us", "UTC"),
 }
 BRONZE_SCHEMA = {**PROVENANCE_SCHEMA, "payload_json": pl.String}
-TOMBSTONE_SCHEMA = dict(PROVENANCE_SCHEMA)
+TOMBSTONE_SCHEMA = {
+    **PROVENANCE_SCHEMA,
+    "source_deleted_at": pl.Datetime("us", "UTC"),
+}
 REJECTION_SCHEMA = {
     **PROVENANCE_SCHEMA,
     "rejection_reason": pl.String,
@@ -51,9 +54,12 @@ def rejection_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
 
 
 def tombstone_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
-    """Persist deletion controls; source_record_id is the full Atom ref."""
+    """Persist deletion controls and the authoritative Atom ``when`` instant."""
 
-    return pl.DataFrame(rows, schema=TOMBSTONE_SCHEMA)
+    return pl.DataFrame(
+        [{key: row.get(key) for key in TOMBSTONE_SCHEMA} for row in rows],
+        schema=TOMBSTONE_SCHEMA,
+    )
 
 
 def discover_raw_files(raw_dir: Path) -> list[Path]:
