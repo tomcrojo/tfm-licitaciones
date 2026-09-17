@@ -519,6 +519,7 @@ queda fuera de esta versión.}
 % ============================================================
 %  5. IMPLEMENTACIÓN
 % ============================================================
+\clearpage
 \section{Implementación}
 
 \Needspace{12\baselineskip}
@@ -538,7 +539,6 @@ PySpark 4.0.1 & Estado vigente, enriquecimiento y Gold (extra de ejecución)\\
 DuckDB & Vistas analíticas solo-lectura sobre Gold\\
 Tableau & Export CSV determinista + dashboard de oportunidades\\
 uv & Gestión reproducible del entorno y de las ejecuciones\\
-\texttt{unittest} & Verificación automática de parsing, identidad, contratos, Gold, DuckDB y export Tableau\\
 CLI (\texttt{licitaciones-pipeline}) & Interfaz única: ingesta, transformación, Gold, analítica y export\\
 \bottomrule
 \end{tabularx}
@@ -567,7 +567,7 @@ licitaciones-pipeline build-analytics
 licitaciones-pipeline export-tableau
 \end{lstlisting}
 
-\subsection{Procedencia desde el primer byte}
+\subsection{Registro y verificación de procedencia}
 
 Cada fichero Raw viaja con un fichero de procedencia
 \texttt{<fichero>.provenance.json}. Este fichero registra la fuente, la ruta,
@@ -575,6 +575,7 @@ la ventana temporal, la fecha de recuperación y el checksum. Bronze comprueba
 esa evidencia antes de procesar el contenido y detiene la ejecución si falta o
 es incoherente.
 
+\Needspace{16\baselineskip}
 \begin{lstlisting}[caption={Fichero de procedencia (ejemplo)}]
 {
   "version": 1,
@@ -675,11 +676,25 @@ absolutos en la tabla anterior.}
 % ============================================================
 \section{Evaluación}
 
-La evaluación se apoya en un marco de pruebas reproducible con perfiles de
-carga de distinto tamaño y métricas conservadas en JSON. Ninguna
-cifra de rendimiento se publica en la memoria sin su ejecución registrada.
+La evaluación se apoya en un marco reproducible con perfiles de carga de
+distinto tamaño y métricas conservadas en JSON. Ninguna cifra de rendimiento
+se publica en la memoria sin su ejecución registrada.
 
-\begin{table}[ht]
+\Needspace{8\baselineskip}
+\subsection{Criterio de aceptación de resultados}
+
+Una implementación más rápida solo se acepta si produce exactamente los mismos
+resultados que la de referencia, de forma consistente en los perfiles medidos.
+La medición aceptó combinar Polars con la implementación inicial como respaldo;
+Spark no se incorporó a esta etapa del pipeline. Si los resultados difieren,
+la divergencia no se descarta: se documenta y se convierte en hallazgo de la
+memoria.
+
+Las pruebas de integridad incluyen una colisión deliberada: si dos contenidos
+distintos comparten identificador, la transformación debe fallar en lugar de
+elegir una versión.
+
+\begin{table}[H]
 \centering
 \small
 \begin{tabularx}{\textwidth}{@{}l r r r X@{}}
@@ -696,7 +711,7 @@ cifra de rendimiento se publica en la memoria sin su ejecución registrada.
 \caption{Perfiles de prueba: conjuntos sintéticos de distinto tamaño.}
 \end{table}
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \small
 \begin{tabularx}{\textwidth}{@{}X l l@{}}
@@ -712,31 +727,10 @@ Integridad de identidad & Pruebas de colisión y unicidad & Ninguna colisión re
 \caption{Criterios de evaluación del pipeline.}
 \end{table}
 
-\subsection{Criterio de aceptación de resultados}
-
-Una implementación más rápida solo se acepta si produce exactamente los mismos
-resultados que la de referencia, de forma consistente en los perfiles medidos.
-La medición aceptó combinar Polars con la implementación inicial como respaldo;
-Spark no se incorporó a esta etapa del pipeline. Si los resultados difieren,
-la divergencia no se descarta: se documenta y se convierte en hallazgo de la
-memoria.
-
-La batería de pruebas se ejecuta con \texttt{unittest}. Cubre el parsing, la
-procedencia, la identidad, los contratos entre capas, el estado vigente, el
-enriquecimiento, las vistas DuckDB y el export a Tableau. Las suites de Spark
-se ejecutan cuando está instalado el extra correspondiente; la validación
-offline no necesita acceso a las fuentes oficiales.
-
-Las pruebas incluyen una comprobación de colisiones: ante dos contenidos
-distintos bajo el mismo identificador la
-transformación debe fallar, nunca elegir. La clasificación tecnológica se
-conserva como baseline histórico, pero no forma parte de la cadena E2E final
-ni se presenta como evaluación principal porque no existe una muestra humana
-anotada que permita validarla adecuadamente.
-
 % ============================================================
 %  7. RESULTADOS
 % ============================================================
+\clearpage
 \section{Resultados finales}
 
 \subsection{Ejecución E2E final}
