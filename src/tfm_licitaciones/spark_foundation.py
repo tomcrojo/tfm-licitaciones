@@ -102,21 +102,6 @@ def _assert_logical_schema(actual: "StructType", expected: "StructType") -> None
         )
 
 
-def read_canonical_silver(spark: "SparkSession", path: str | Path) -> "DataFrame":
-    """Read canonical Silver only after validating the physical Parquet contract.
-
-    Spark can synthesize missing columns as null when an explicit schema is
-    supplied. The inferred Parquet schema is therefore checked first so missing,
-    reordered or mistyped columns fail at the layer boundary instead of being
-    silently projected into a canonical-looking frame.
-    """
-
-    expected = canonical_silver_schema()
-    inferred = spark.read.parquet(str(path))
-    _assert_logical_schema(inferred.schema, expected)
-    return spark.read.schema(expected).parquet(str(path))
-
-
 def assert_contract_schema(frame: "DataFrame", expected: "StructType") -> None:
     """Reject logical type/order drift and nulls forbidden by the contract.
 
@@ -150,6 +135,24 @@ def assert_contract_schema(frame: "DataFrame", expected: "StructType") -> None:
         raise ValueError(
             f"array columns contain null elements: {arrays_with_null_elements}"
         )
+
+
+def read_canonical_silver(spark: "SparkSession", path: str | Path) -> "DataFrame":
+    """Read and fully validate canonical Silver at the Parquet boundary.
+
+    Spark can synthesize missing columns as null when an explicit schema is
+    supplied. The inferred Parquet schema is therefore checked first so missing,
+    reordered or mistyped columns fail at the layer boundary. The projected
+    frame is then value-validated so required fields and array elements cannot
+    violate the canonical contract unnoticed.
+    """
+
+    expected = canonical_silver_schema()
+    inferred = spark.read.parquet(str(path))
+    _assert_logical_schema(inferred.schema, expected)
+    frame = spark.read.schema(expected).parquet(str(path))
+    assert_contract_schema(frame, expected)
+    return frame
 
 
 def write_typed_parquet(
