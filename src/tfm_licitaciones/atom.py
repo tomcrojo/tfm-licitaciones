@@ -260,11 +260,12 @@ def _atom_source_instant(value: str | None) -> tuple[datetime | None, bool]:
         text = text[:-1] + "+00:00"
     try:
         parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None, True
+        normalized = parsed.astimezone(timezone.utc)
     except (ValueError, OverflowError):
         return None, True
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return None, True
-    return parsed.astimezone(timezone.utc), False
+    return normalized, False
 
 
 def _text(entry: ElementTree.Element, local_name: str) -> str:
