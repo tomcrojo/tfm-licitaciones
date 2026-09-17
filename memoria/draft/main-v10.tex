@@ -41,6 +41,7 @@
 % ---------- Cabecera / pie ----------
 \usepackage{fancyhdr}
 \pagestyle{fancy}
+\setlength{\headheight}{13pt}
 \fancyhf{}
 \renewcommand{\headrulewidth}{0.4pt}
 \renewcommand{\headrule}{\color{line}\hrule width\headwidth height 0.4pt}
@@ -318,19 +319,19 @@ nunca como entero.
 El corpus de referencia reúne datos de TED y OpenPLACSP entre enero y junio de
 2026. Los seis ZIP mensuales de OpenPLACSP ocupan 1.118.920.855 bytes y el
 fichero JSONL de TED, 105.503.327 bytes. Los tamaños y checksums individuales
-se conservan en \texttt{data/gold/run\_manifest.json}.
+se conservan en \path{data/gold/run_manifest.json}.
 
 \begin{table}[ht]
 \centering
 \small
 \begin{tabularx}{\textwidth}{@{}l X r r@{}}
 \toprule
-\cabecera{Fuente} & \cabecera{Periodo o ficheros} & \cabecera{Tamaño} & \cabecera{Entradas}\
+\cabecera{Fuente} & \cabecera{Periodo o ficheros} & \cabecera{Tamaño} & \cabecera{Entradas}\\
 \midrule
-OpenPLACSP & Enero--junio de 2026, seis ZIP & 1.118.920.855 bytes & 349.399\
-TED & Enero--junio de 2026, un JSONL & 105.503.327 bytes & 9.905\
-DIR3 & Foto de septiembre de 2026, seis ámbitos & n/d & 108.261\
-CPV 2008 & Dimensión oficial versionada & n/d & 9.454\
+OpenPLACSP & Enero--junio de 2026, seis ZIP & 1.118.920.855 bytes & 349.399\\
+TED & Enero--junio de 2026, un JSONL & 105.503.327 bytes & 9.905\\
+DIR3 & Foto de septiembre de 2026, seis ámbitos & n/d & 108.261\\
+CPV 2008 & Dimensión oficial versionada & n/d & 9.454\\
 \bottomrule
 \end{tabularx}
 \caption{Volumen de las fuentes y dimensiones del corpus de referencia.}
