@@ -244,7 +244,7 @@ que el resultado principal sea entregable dentro del plazo del máster.
 
 \begin{itemize}
   \item Orquestación programada con Airflow sobre las funciones actuales del
-        pipeline. El empaquetado reproducible con Docker ya está implementado.
+        pipeline.
   \item Feed diario de oportunidades con filtros por perfil de proveedor.
 \end{itemize}
 
@@ -901,7 +901,7 @@ se utiliza para descartar oportunidades abiertas.
 Corpus & Ventana ene--jun 2026; TED sesgado a tecnología & Ampliar histórico y filtros sectoriales\\
 Identidad TED & 9.905 eventos sin identidad de procedimiento resoluble & Revisar la extracción y el puente de identidad\\
 Fechas & 14.763 oportunidades sin \texttt{publication\_date} & Recuperar la fecha upstream cuando exista\\
-Ejecución & Batch local reproducible y empaquetado con Docker; sin orquestación & Programación con Airflow\\
+Ejecución & Batch local reproducible; sin orquestación & Programación con Airflow\\
 Dashboard & Conectado solo a \texttt{open\_opportunities.csv} & Añadir otros conjuntos solo si el caso de uso lo exige\\
 \bottomrule
 \end{tabularx}
