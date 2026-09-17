@@ -108,6 +108,7 @@ Documentación principal:
 
 - [arquitectura técnica](docs/architecture.md);
 - [contrato Gold/Spark](docs/gold_spark_contract.md);
+- [enriquecimiento Gold CPV/DIR3](docs/gold_enrichment.md);
 - [benchmark Bronze→Silver y paridad](docs/benchmarks.md);
 - [contrato de datos actual](docs/data_contract.md);
 - [guía de ejecución](docs/run.md);

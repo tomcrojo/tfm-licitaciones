@@ -72,6 +72,9 @@ def schema_from_fields(fields: Iterable[FieldSpec]) -> "StructType":
         "decimal(20,2)": T.DecimalType(20, 2),
         "boolean": T.BooleanType(),
         "array<string>": T.ArrayType(T.StringType(), containsNull=False),
+        "tinyint": T.ByteType(),
+        "smallint": T.ShortType(),
+        "int": T.IntegerType(),
     }
     result = []
     for field in fields:
@@ -152,6 +155,27 @@ def read_canonical_silver(spark: "SparkSession", path: str | Path) -> "DataFrame
     _assert_logical_schema(inferred.schema, expected)
     frame = spark.read.schema(expected).parquet(str(path))
     assert_contract_schema(frame, expected)
+    return frame
+
+
+def read_validated_parquet(
+    spark: "SparkSession",
+    path: str | Path,
+    expected_schema: "StructType",
+) -> "DataFrame":
+    """Read any typed Parquet dataset at a validated layer boundary.
+
+    Generic counterpart of ``read_canonical_silver``: the inferred physical
+    Parquet schema is checked first so missing, reordered or mistyped columns
+    fail at the boundary, then the explicit schema is projected and
+    value-validated against the contract (required non-null columns and
+    non-null array elements).
+    """
+
+    inferred = spark.read.parquet(str(path))
+    _assert_logical_schema(inferred.schema, expected_schema)
+    frame = spark.read.schema(expected_schema).parquet(str(path))
+    assert_contract_schema(frame, expected_schema)
     return frame
 
 

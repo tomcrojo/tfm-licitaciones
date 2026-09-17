@@ -31,5 +31,8 @@ jobs:
       - name: Run Gold/Spark foundation tests
         run: uv run --with 'pyspark==4.0.1' --with-editable . python -m unittest tests.test_spark_foundation -v
 
+      - name: Run Gold enrichment tests
+        run: uv run --with 'pyspark==4.0.1' --with-editable . python -m unittest tests.test_gold_enrichment -v
+
       - name: Run Silver engine comparison experiment suite (no PySpark; Spark tests skip)
         run: uv run --locked --with-editable . python -m unittest discover -s experiments/silver_engine_comparison/tests -t . -v
