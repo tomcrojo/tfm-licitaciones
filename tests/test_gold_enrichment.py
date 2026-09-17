@@ -230,6 +230,20 @@ class GoldEnrichmentSparkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate cpv_code"):
             enrich_cpv(events, dimension)
 
+    def test_cpv_enrichment_rejects_null_dimension_key(self) -> None:
+        # Relaxed schema so a null key can reach the guard the same way a
+        # direct (non read_*_dimension) DataFrame input would.
+        dimension = self.spark.createDataFrame(
+            [
+                ("72000000", "Servicios de TI", "IT services", 2, None, True),
+                (None, "Sin código", "No code", 1, None, True),
+            ],
+            schema=schema_from_fields(CPV_DIMENSION_FIELDS).toNullable(),
+        )
+        events = self._events([self._silver_event("e1", cpv_codes=["72000000"])])
+        with self.assertRaisesRegex(ValueError, "null cpv_code"):
+            enrich_cpv(events, dimension)
+
     def test_cpv_enrichment_rejects_duplicate_codes_inside_one_event(self) -> None:
         dimension = self._cpv_dimension(
             [("72000000", "Servicios de TI", "IT services", 2, None, True)]
@@ -339,6 +353,15 @@ class GoldEnrichmentSparkTests(unittest.TestCase):
         dimension = self._dir3_dimension([self._dir3_unit(), self._dir3_unit()])
         events = self._events([self._silver_event("e1", buyer_id="EA0000101")])
         with self.assertRaisesRegex(ValueError, "duplicate dir3_code"):
+            enrich_buyers_dir3(events, dimension)
+
+    def test_dir3_enrichment_rejects_null_dimension_key(self) -> None:
+        dimension = self.spark.createDataFrame(
+            [self._dir3_unit(), self._dir3_unit(dir3_code=None)],
+            schema=schema_from_fields(DIR3_DIMENSION_FIELDS).toNullable(),
+        )
+        events = self._events([self._silver_event("e1", buyer_id="EA0000101")])
+        with self.assertRaisesRegex(ValueError, "null dir3_code"):
             enrich_buyers_dir3(events, dimension)
 
     def test_dir3_enrichment_rejects_already_enriched_input(self) -> None:

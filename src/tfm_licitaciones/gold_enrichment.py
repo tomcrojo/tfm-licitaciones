@@ -14,9 +14,10 @@ Two independent, composable datasets are produced at the Gold boundary:
 
 Determinism and cardinality invariants enforced here:
 
-- dimension primary keys are validated for uniqueness before any join, so a
-  broken dimension fails loudly instead of silently multiplying facts. There
-  is no fuzzy matching: with a validated key the join is 1:1 at most and
+- dimension primary keys are validated for null-freeness and uniqueness
+  before any join, so a broken dimension fails loudly instead of silently
+  multiplying facts. There is no fuzzy matching: with a validated key the
+  join is 1:1 at most and
   "ambiguous" fact rows cannot exist (the duplicate-key count is reported as
   a metric after the guard proves it is zero);
 - fact row counts are asserted unchanged before/after each join;
@@ -369,12 +370,18 @@ def _assert_dimension_key_unique(
 ) -> None:
     """Reject a dimension whose join key is not a primary key.
 
-    This is the guard that makes the enrichment joins deterministic: a
-    validated key can match at most one dimension row, so a dimension defect
-    fails loudly here instead of multiplying facts silently downstream.
+    This is the guard that makes the enrichment joins deterministic: the key
+    must be non-null and unique so it can match at most one dimension row,
+    and a dimension defect fails loudly here instead of multiplying facts
+    silently downstream. ``read_*_dimension`` already enforces this through
+    the contract schema, but ``enrich_*`` can receive DataFrames directly and
+    must not trust that path.
     """
 
     from pyspark.sql import functions as F
+
+    if dimension.where(F.col(key).isNull()).limit(1).count():
+        raise ValueError(f"{label} dimension contains null {key} values")
 
     duplicates = (
         dimension.groupBy(key)
