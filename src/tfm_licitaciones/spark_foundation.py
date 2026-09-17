@@ -121,31 +121,49 @@ def read_canonical_silver(spark: "SparkSession", path: str | Path) -> "DataFrame
 
 
 def assert_contract_schema(frame: "DataFrame", expected: "StructType") -> None:
-    """Reject type/order drift and nulls in contract-required columns.
+    """Reject logical type/order drift and nulls forbidden by the contract.
 
-    Parquet readers may relax StructField nullability metadata, so nullability is
-    enforced on values instead of comparing that optimizer hint byte-for-byte.
+    Parquet readers relax field and array-element nullability metadata even
+    when an explicit schema is supplied.  Those flags are therefore not used
+    as type identity.  The logical data types are compared via ``simpleString``
+    and the stronger nullability guarantees are checked against actual values.
     """
 
-    actual_signature = tuple((field.name, field.dataType) for field in frame.schema)
-    expected_signature = tuple((field.name, field.dataType) for field in expected)
+    actual_signature = tuple(
+        (field.name, field.dataType.simpleString()) for field in frame.schema
+    )
+    expected_signature = tuple(
+        (field.name, field.dataType.simpleString()) for field in expected
+    )
     if actual_signature != expected_signature:
         raise ValueError(
             "schema mismatch at Parquet boundary:\n"
             f"expected={expected.simpleString()}\n"
             f"actual={frame.schema.simpleString()}"
         )
-    required = [field.name for field in expected if not field.nullable]
-    if required:
-        from pyspark.sql import functions as F
 
-        missing_required = [
-            column
-            for column in required
-            if frame.where(F.col(column).isNull()).limit(1).count()
-        ]
-        if missing_required:
-            raise ValueError(f"required columns contain nulls: {missing_required}")
+    from pyspark.sql import functions as F
+    from pyspark.sql.types import ArrayType
+
+    missing_required = [
+        field.name
+        for field in expected
+        if not field.nullable and frame.where(F.col(field.name).isNull()).limit(1).count()
+    ]
+    if missing_required:
+        raise ValueError(f"required columns contain nulls: {missing_required}")
+
+    arrays_with_null_elements = [
+        field.name
+        for field in expected
+        if isinstance(field.dataType, ArrayType)
+        and not field.dataType.containsNull
+        and frame.where(F.exists(F.col(field.name), lambda item: item.isNull())).limit(1).count()
+    ]
+    if arrays_with_null_elements:
+        raise ValueError(
+            f"array columns contain null elements: {arrays_with_null_elements}"
+        )
 
 
 def write_typed_parquet(
