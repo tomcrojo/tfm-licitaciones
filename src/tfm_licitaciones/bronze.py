@@ -54,7 +54,14 @@ def rejection_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
 
 
 def tombstone_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
-    """Persist deletion controls and the authoritative Atom ``when`` instant."""
+    """Persist deletion controls and the authoritative Atom ``when`` instant.
+
+    Missing ``when`` stays null without error. A published but unusable value
+    is retained as an undated tombstone and is also emitted separately as an
+    ``invalid_tombstone_when`` control rejection, so ingestion metrics expose
+    the loss of source ordering information instead of silently conflating it
+    with a genuinely absent timestamp.
+    """
 
     return pl.DataFrame(
         [{key: row.get(key) for key in TOMBSTONE_SCHEMA} for row in rows],
