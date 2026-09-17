@@ -1,9 +1,6 @@
-"""Engine-neutral contracts for the canonical Silver -> Spark -> Gold boundary.
+"""Engine-neutral schema metadata for canonical Silver, current-state and Gold.
 
-This module contains schema metadata only. It deliberately does not implement
-current-state selection or Gold business logic: those semantics are documented
-and must be implemented in later PRs once the remaining ordering decisions are
-resolved.
+Resolution and business policies live in current_state and gold_open_opportunities.
 """
 
 from __future__ import annotations
@@ -56,7 +53,7 @@ CANONICAL_SILVER_FIELDS = (
 
 # Grain: one row per source procedure_id only after the procedure can be
 # resolved deterministically. Rows that cannot be resolved safely never receive
-# an invented state; future builders must surface them in current_state_issues.
+# an invented state; builders surface them in current_state_issues.
 CURRENT_STATE_FIELDS = (
     FieldSpec("procedure_id", "string", False),
     FieldSpec("event_id", "string", False),
@@ -95,7 +92,7 @@ CURRENT_STATE_ISSUES_FIELDS = (
     FieldSpec("reason", "string", False),
 )
 
-# Grain: one row per current-state procedure that a future Gold builder has
+# Grain: one row per current-state procedure that the Gold builder has
 # classified as an open/actionable opportunity. No ranking/model fields are
 # frozen here because their semantics are not implemented yet.
 GOLD_OPEN_OPPORTUNITIES_FIELDS = (

@@ -102,7 +102,7 @@ numérico. `dim_cpv` tiene dos variantes (ver política CPV).
 | Vista | Grano | Significado |
 | --- | --- | --- |
 | `open_opportunities` | una fila por `procedure_id` | Proyección 1:1 del Gold principal: todos los campos Gold con su significado y tipos intactos. Nunca filtra ni deriva columnas de negocio. |
-| `dim_cpv` | una fila por `cpv_code` | Vista sobre `data/reference/cpv_codes.parquet` ([CPV](cpv-reference.md)) o stub vacío tipado si la dimensión no existe. |
+| `dim_cpv` | una fila por `cpv_code` | Vista sobre `data/reference/cpv_codes.parquet` ([CPV](references.md#cpv-2008)) o stub vacío tipado si la dimensión no existe. |
 | `opportunity_cpv` | una fila por `(procedure_id, cpv_code, cpv_position)` | Explosión del array canónico `cpv_codes` con la posición original (0-based) preservada y atributos oficiales CPV por LEFT JOIN. |
 | `buyer_summary` | una fila por identidad analítica de comprador | Agregados por comprador desde Gold: `opportunities_count`, `total_estimated_value`, `avg_estimated_value`, `first/last_publication_date`, `earliest_deadline`, `distinct_cpv_count`. |
 | `cpv_summary` | una fila por `cpv_code` | Agregados por categoría CPV desde `opportunity_cpv` (ver política de atribución). |
@@ -124,7 +124,7 @@ numérico. `dim_cpv` tiene dos variantes (ver política CPV).
   `cpv_matched = false` con atributos null. Reconstruir tras crear la
   dimensión restaura los atributos oficiales. La dimensión Parquet se
   materializa con el comando documentado en
-  [cpv-reference](cpv-reference.md) desde el CSV oficial versionado.
+  [referencia CPV](references.md#cpv-2008) desde el CSV oficial versionado.
 
 ### Atribución de importes por categoría
 
@@ -133,10 +133,14 @@ que lleva la oportunidad: una oportunidad con N códigos contribuye N veces
 al total global de categorías. Ese es el significado documentado de
 `total_estimated_value`/`avg_estimated_value` en `cpv_summary` y no debe
 usarse para reconciliar totales globales; la vista base
-`open_opportunities` es el único grano global. Los importes se mantienen
-DECIMAL en toda la cadena (`DECIMAL(20,2)` en origen,
-`DECIMAL(38,2)`/`DECIMAL(38,6)` en agregados); las medias se redondean
-explícitamente a 6 dígitos fraccionarios, nunca a float silencioso.
+`open_opportunities` es el único grano global. Los importes de origen son `DECIMAL(20,2)` y las sumas se publican como
+`DECIMAL(38,2)`. Las medias se publican como `DECIMAL(38,6)`, pero DuckDB
+calcula `avg(DECIMAL)` en `DOUBLE` antes del cast: la representación final
+no garantiza aritmética decimal exacta en ese paso.
+
+Los agregados de importes no agrupan por moneda ni realizan conversión de
+divisas. Antes de interpretar sus totales debe comprobarse la coherencia de
+`currency` en el Gold consumido.
 
 ## Identidad de comprador
 

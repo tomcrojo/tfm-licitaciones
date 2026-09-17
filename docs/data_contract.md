@@ -1,11 +1,10 @@
 # Contratos de datos
 
-Este documento separa el contrato canónico de Silver de la persistencia
-histórica 0.1. Silver canónico (`procurement_events.parquet`) es ahora la
-salida primaria y se construye desde todos los registros y tombstones tipados
-de Bronze. Gold 0.1 continúa consumiendo temporalmente la vista
-`TenderRecord` en memoria (selección de snapshot más reciente, tombstones de
-ZIP y plegado de revisiones); esa vista ya no se persiste como JSONL.
+Este documento define Raw, Bronze, Silver canónico y Gold Parquet. Silver
+conserva el histórico; Gold resuelve estado vigente y oportunidades abiertas.
+El comando `run` mantiene además una salida de compatibilidad basada en
+`TenderRecord`, descrita por separado. Los contratos no restringen el sector
+al que pertenece una licitación.
 
 ## Raw: evidencia de recuperación por artefacto
 
@@ -101,20 +100,24 @@ en cada fila. `ProcurementEvent.ingested_at` recibe `raw_retrieved_at`.
 `bronze/tombstones.parquet` conserva **cada** control de borrado válido de
 Atom/XML plano y ZIP, incluidos controles repetidos y snapshots anteriores.
 `TOMBSTONE_SCHEMA` contiene exactamente las columnas de procedencia anteriores,
-sin `payload_json`: `source_record_id` es el `ref` completo, y
+sin `payload_json`, más `source_deleted_at` (timestamp[us, UTC], nullable):
+`source_record_id` es el `ref` completo, y
 `record_locator=deleted-entry:N` localiza el control desde 1, contando también
 controles inválidos. Miembro, índice central ZIP, checksum y timestamp tienen
 la misma semántica que en registros/rechazos; en ficheros planos el miembro y
 su índice son nulos. El esquema se mantiene incluso cuando no hay controles.
-Silver canónico consume todas estas filas como eventos `tombstone`; el atributo
-Atom `when` no se retiene hoy (véase más abajo).
+Silver consume estas filas como eventos `tombstone`. Atom `when` se conserva
+en `source_deleted_at` si es un instante válido con zona; valores ausentes,
+inválidos o fuera del rango representable quedan nulos. Si `when` está publicado
+pero es inválido se añade un rechazo `invalid_tombstone_when` de scope `control`,
+sin perder el tombstone.
 
 `bronze/rejections.parquet` utiliza las mismas columnas de procedencia,
 más `rejection_reason` y `rejection_scope`, ambas string; no contiene
 `payload_json`. Los motivos incluyen `invalid_json`, `invalid_unicode_payload`, `expected_json_object`,
 `unsupported_source`, `source_mismatch`, `missing_tender_id`, `missing_title`, `invalid_atom_id`,
 `invalid_xml`, `expected_atom_feed`, `invalid_zip`, `unreadable_zip_member`,
-`no_atom_members`, `non_finite_amount` y `missing_tombstone_ref`. El contenido original se consulta
+`no_atom_members`, `non_finite_amount` y `missing_tombstone_ref`, `invalid_tombstone_when`. El contenido original se consulta
 en Raw mediante su procedencia. Sin ID se conserva la posición; para un
 documento ilegible la posición y el ID son nulos.
 Si una etiqueta de fuente soportada del payload contradice la fuente del
@@ -136,7 +139,7 @@ conteos agregados y `by_source`:
 - `rejected`: candidatos descartados con motivo y scope `record`;
 - `document_errors`: documentos/contenedores ilegibles o incompatibles,
   scope `document`; no se inventa cuántas entradas contenían;
-- `control_errors`: controles de borrado sin `ref`, scope `control`;
+- `control_errors`: controles sin `ref` o con `when` inválido, scope `control`;
 - `tombstones`: controles válidos escritos en `tombstones.parquet`, sin
   deduplicarlos ni incluirlos en `parsed`, `accepted` o `rejected`;
 - `passed`: ausencia de rechazos y errores de documento/control.
@@ -220,9 +223,10 @@ ruta por batch con la guarda de elegibilidad: kernel nativo de Polars
   mismo expediente; `source_event_type = notice_snapshot`, sin etiquetar
   primera/revisión porque el corpus puede estar incompleto. Si `updated` falta
   o es inválido o sin zona, el marcador de identidad es `@undated`.
-- OpenPLACSP tombstone: `event_id = placsp:tombstone:<ref completo>`,
-  `procedure_id = placsp:procedure:<ref completo>` y
-  `source_event_type = tombstone`.
+- OpenPLACSP tombstone fechado: `event_id = placsp:tombstone-dated:<micros>:<ref completo>`,
+  donde `micros` representa el instante UTC en microsegundos desde epoch. Sin
+  fecha válida conserva `placsp:tombstone:<ref completo>`. Ambos usan
+  `procedure_id = placsp:procedure:<ref completo>` y `source_event_type = tombstone`.
 - BOE (compatibilidad): `event_id = boe:notice:<item_id>`, sin
   `procedure_id` inferido y `source_event_type = notice`.
 
@@ -385,13 +389,11 @@ tener vacíos los atributos descriptivos, pero conserva identidad, fuente y
 `ingested_at`. No borra físicamente los eventos anteriores; una vista posterior
 podrá calcular el estado vigente sin perder el historial.
 
-Los tombstones son evidencia de borrado sin orden: el contrato Bronze actual
-no retiene el atributo Atom `when`, por lo que ciclos repetidos de
-borrado/publicación/borrado sobre el mismo `ref` no se pueden distinguir hoy y
-nunca se inventa orden a partir del tiempo de recuperación. Conservar `when`
-es un prerrequisito futuro para derivar estado vigente. Una corrección Raw
-posterior que omita un evento o tombstone no elimina la fila histórica
-canónica anterior.
+Los tombstones fechados trasladan `source_deleted_at` a `source_updated_at`.
+Borrados del mismo `ref` en instantes diferentes son eventos distintos; los
+controles sin fecha siguen siendo evidencia válida sin orden temporal.
+`ingested_at` nunca sustituye al tiempo de negocio. Una corrección Raw que
+omita un evento no elimina su fila histórica canónica.
 
 ### Frontera de compatibilidad con Gold 0.1
 
@@ -443,7 +445,7 @@ se excluyen. Ya no se persiste como JSONL.
 | `status` | string/null | Estado publicado por OpenPLACSP |
 | `raw` | object | Payload source-specific conservado para trazabilidad |
 
-## Gold: oportunidad 0.1
+## Gold de compatibilidad: oportunidad 0.1
 
 Gold aplana `TenderRecord` y añade la clasificación y el resultado del enlace:
 
@@ -467,21 +469,118 @@ inequívocos configurados. CPV actúa como proxy, no como anotación humana. La
 cobertura y el soporte por clase forman parte del resultado y deben citarse al
 interpretar las métricas.
 
-La implementación actual incluye en el macro-F1 clases con soporte cero. Esa
-agregación se corregirá antes de utilizarla como resultado académico; el
-artefacto versionado se conserva para representar fielmente el baseline.
+La implementación actual incluye en el macro-F1 clases con soporte cero.
+Debe tenerse en cuenta antes de utilizar esa agregación como resultado académico.
 
-## Limitaciones conocidas
+## Gold Parquet
 
-| Área | Situación actual | Corrección prevista |
-| --- | --- | --- |
-| Fechas PLACSP | Silver canónico separa `source_updated_at` de `publication_date` (nulo); la vista legada para Gold aún deriva `published_date` de `updated` | Migrar Gold al contrato canónico y eliminar la vista legada |
-| Tombstones | Silver conserva el control histórico, pero Bronze no retiene Atom `when`, así que el orden de borrados no es derivable | Retener `when` y derivar estado vigente |
-| Rechazos | Bronze los contabiliza; `quality_passed` solo evalúa Silver/Gold | Integrar el estado de ingesta en la decisión global de calidad |
-| Completitud | Una partición que falla puede no impedir el run | Registrar esperadas/descargadas y estado incompleto |
-| Persistencia | Bronze y Silver canónico usan Parquet; Gold sigue en JSONL/CSV | Migrar Gold por límites a Parquet |
-| TED | La configuración aplica una query tecnológica | Hacer el filtro sectorial opcional y downstream |
+La frontera implementada es Silver canónico → PySpark → Gold Parquet.
+`gold_contract.py` define orden, tipos y nulabilidad; `spark_foundation.py`
+valida el esquema físico al leer y los valores obligatorios antes de escribir.
+Spark usa UTC, AQE y Parquet zstd. El orden y nombre de los part-files no son
+identidad ni garantizan un orden global de lectura.
 
-Estas limitaciones son trabajo pendiente conocido. No invalidan las pruebas del
-comportamiento actual, pero impiden presentar todavía la versión 0.1 como la
-plataforma P0 terminada.
+### Estado vigente
+
+`current_state` tiene una fila por `procedure_id` resoluble, sin fusión entre
+fuentes. Conserva los campos del evento seleccionado y añade `is_deleted`.
+Las constantes `CURRENT_STATE_FIELDS` y `CURRENT_STATE_SCHEMA_VERSION`
+definen su esquema versionado.
+
+Para PLACSP, `deleted-entry/@ref == atom:id` establece el vínculo exacto
+entre aviso y tombstone ([RFC 6721, sección 3](https://www.rfc-editor.org/rfc/rfc6721#section-3)).
+Se conserva el URI publicado completo; no se normaliza ni se compara por nombre.
+El comprobador `placsp_identity.py` y la implementación Spark validan esta
+correspondencia entre `event_id` y `procedure_id`.
+
+La selección usa estas reglas:
+
+1. Un evento sin `procedure_id` o con identidad PLACSP incompatible genera una
+   incidencia; no recibe una clave sintética.
+2. Un evento único con identidad válida determina estado, incluso sin fecha.
+3. Varios eventos válidos con alguna fecha `source_updated_at` nula generan
+   `undated_competing_events`.
+4. Si todos tienen fecha, gana el máximo `source_updated_at`; en empate gana
+   el máximo lexicográfico `event_id`.
+5. `is_deleted` es verdadero exactamente cuando el evento seleccionado es
+   `tombstone`. Ni `publication_date` ni `ingested_at` deciden la revisión.
+
+`current_state_issues` conserva `procedure_id` nullable, `event_id`, `source`,
+`source_event_type` y `reason`. Los motivos son `missing_procedure_id`,
+`missing_or_invalid_procedure_id`, `unsupported_placsp_event_type`,
+`event_procedure_identity_mismatch` y `undated_competing_events`.
+
+`build_current_state_from_silver` permite persistir ambos datasets y
+`current_state_manifest.json`. **La CLI `build-gold` usa estos frames en
+memoria y solo persiste sus conteos**, además del producto abierto y su
+manifest; no escribe los datasets intermedios ni las filas de incidencias.
+
+### Oportunidades abiertas
+
+`open_opportunities` tiene una fila por procedimiento resoluble y abierto.
+`GOLD_OPEN_OPPORTUNITIES_FIELDS` conserva, en orden: `procedure_id`, `event_id`,
+`source`, `buyer_id`, `buyer_name`, `title`, `description`, `cpv_codes`,
+`estimated_value`, `awarded_value`, `currency`, `publication_date`,
+`source_updated_at`, `deadline`, `status`, `nuts_code`, `country`, `source_url`,
+`ingested_at`. Hereda los tipos de Silver; `procedure_id` es obligatorio.
+No incorpora clasificación, ranking ni linkage del baseline.
+
+La política de `gold_open_opportunities.py` aplica, por precedencia:
+
+| Condición | Decisión |
+| --- | --- |
+| `is_deleted=true` | `deleted` |
+| Hay `deadline` y `as_of`, y `deadline < as_of` | `deadline_passed` |
+| PLACSP con `status=PUB` | `open` |
+| PLACSP con `EV`, `ADJ`, `ADJ_PAR`, `RES`, `RES_PAR` o `ANUL` | `status_closed` |
+| PLACSP con `PRE`, estado nulo u otro código | `insufficient_evidence` |
+| Otra fuente, estado nulo, deadline presente y `deadline >= as_of` | `open` |
+| Cualquier otro caso | `insufficient_evidence` |
+
+Los códigos PLACSP se comparan exactamente, sin normalización; `PUB` significa
+«EN PLAZO» y `EV`, «PENDIENTE DE ADJUDICACION», según la
+[lista CODICE 2.04](https://contrataciondelestado.es/codice/cl/2.04/SyndicationContractFolderStatusCode-2.04.gc).
+Una fecha futura no reabre un estado cerrado. `as_of` es el inicio UTC del día
+indicado con `--as-of`; si se omite, no se evalúan deadlines ni se consulta un
+reloj implícito. Actualmente Silver no mapea deadlines y TED/BOE tienen status
+nulo, por lo que no aportan oportunidades abiertas bajo esta política.
+
+`gold_manifest.json` conserva versiones de esquema, `as_of`, conteos de estado
+vigente/incidencias/oportunidades, motivos de exclusión y métricas CPV/DIR3.
+Las oportunidades y las tres categorías de exclusión reconcilian con el
+conteo de estado vigente. El manifest de `run` (`run_manifest.json`) pertenece
+al baseline y es un artefacto distinto.
+
+### Enriquecimiento CPV y DIR3
+
+`gold_enrichment.py` proporciona dos transformaciones tipadas:
+
+- `cpv_enriched`: una fila por ocurrencia de código, con `event_id`,
+  `procedure_id`, `source`, `cpv_position` (desde cero), `cpv_code`,
+  `cpv_matched`, `label_es`, `label_en`, `level`, `parent_code`, `is_leaf`.
+  Los eventos sin CPV se contabilizan sin producir filas; duplicados en el
+  array canónico incumplen el contrato y hacen fallar la transformación.
+- `buyer_dir3_enriched`: conserva el evento y añade `buyer_dir3_matched` y
+  atributos DIR3 (`name`, `scope`, `entity_type`, `hierarchy_level`,
+  `parent_code`, `principal_code`, `status`, `nif`, con prefijo `buyer_dir3_`).
+  El join usa `buyer_id = dir3_code`; no reemplaza nombre ni identidad canónica.
+
+Ambos usan left joins, validan claves únicas/no nulas en las dimensiones y
+comprueban cardinalidad. Los códigos no encontrados conservan sus valores y
+se contabilizan como no resueltos. Los esquemas concretos y sus versiones
+están en las constantes `*_FIELDS` y `*_SCHEMA_VERSION` del módulo.
+
+`build-gold` utiliza estos enriquecimientos **solo para métricas**. Mantiene
+`cpv_codes` sin explotar y no persiste atributos DIR3. CPV se lee del Parquet
+de referencia o se reconstruye en memoria desde el CSV versionado. Si DIR3 no
+está disponible, registra `dir3.available=false` y continúa. Las vistas
+analíticas y sus atributos CPV se describen en [analítica](analytics.md).
+
+## Límites de los contratos actuales
+
+- El baseline conserva su fecha publicada PLACSP derivada de `updated`;
+  Silver canónico y Gold Parquet mantienen `publication_date` nula.
+- Bronze informa rechazos por separado de los gates de calidad del baseline.
+- El estado operativo de ventanas aún no está integrado en la CLI.
+- La ausencia de filas en Gold no prueba ausencia de contratación: puede
+  reflejar falta de identidad, orden temporal o evidencia de apertura.

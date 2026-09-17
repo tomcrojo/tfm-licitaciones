@@ -1,187 +1,91 @@
-# Silver engine comparison (experiment, non-production)
+# Comparación de motores Silver
 
-> This directory contains reproducible experimental evidence and candidate
-> implementations. It is not part of the production pipeline and nothing
-> under `src/` depends on it.
+Experimento offline de Bronze Parquet → transformación canónica → Silver
+Parquet. Compara una referencia Python por filas congelada y candidatos
+nativos Polars/PySpark sobre datos sintéticos TED/PLACSP. Ningún módulo
+productivo importa los candidatos de este directorio.
 
-## What this is
+## Alcance y método
 
-A controlled offline comparison of three Bronze-Parquet → Silver-Parquet
-engine candidates (frozen python-row baseline, native Polars, native Spark)
-on the same retained synthetic TED/PLACSP datasets, plus an adversarial
-audit of the Spark benchmark and a same-host standalone-cluster run. It
-produced the measured evidence behind the production engine decision:
+Los candidatos admiten payloads escalares, CPV como listas de cadenas e
+instantes con segundos enteros. La paridad medida no cubre BOE ni fracciones
+de segundo y no acredita el contrato completo de producción.
 
-- **Polars wins canonical Silver in the measured single-node envelope**
-  (large profile: ~13 s Polars vs ~33 s Spark `local[16]` vs ~43 s
-  standalone 3×(4 cores/4 GiB), exact parity in every measured
-  run/profile within the synthetic contract).
-- Spark local and same-host standalone are slower **at this scale**; the
-  comparison was adversarially audited (no Python UDFs, no large collect,
-  one typed JSON decode per branch, AQE on, common zstd codec, recorded
-  heap, inspected shuffles).
-- **Spark remains relevant** for scale-out and high-cardinality workloads:
-  large cross-source joins, linkage candidate generation,
-  company×opportunity candidate generation/ranking, window-heavy Gold.
+Cada motor ejecuta en un proceso hijo `spawn` nuevo sobre el mismo dataset.
+`transform_s` incluye lectura, transformación y escritura; excluye generación,
+inicialización del motor y validación del padre. `wall_s` y `engine_init_s`
+se registran aparte. Todos escriben Parquet zstd. Spark usa funciones nativas,
+sin UDF ni `coalesce(1)`, y persistencia `MEMORY_AND_DISK` durante la medición.
 
-Nothing here is rewritten to make any engine look better or worse: reports
-are dated evidence of the runs as executed.
+El RSS se muestrea cada 20 ms sobre el árbol de procesos, incluida la JVM.
+Puede perder picos breves y contar páginas compartidas varias veces. En un
+cluster externo, los ejecutores ajenos al árbol no quedan incluidos.
 
-## Layout
+## Evidencia conservada
 
-```text
-experiments/silver_engine_comparison/
-├── README.md                  # this file
-├── bench_engines.py           # 3-engine runner (fresh spawn child per engine)
-├── workload.py                # historical workload pin + fingerprint (e69016f generator)
-├── engines/
-│   ├── python_row_reference.py  # FROZEN python-row baseline (e69016f semantics, no prod imports)
-│   ├── polars_candidate.py    # native Polars candidate (synthetic contract only)
-│   └── spark_candidate.py     # native Spark candidate (synthetic contract only)
-├── reports/                   # dated evidence, kept byte-identical
-│   ├── silver-engine-comparison-2026-09-16.md
-│   ├── silver-engine-audit-2026-09-16.md
-│   └── silver-distributed-2026-09-16.md
-├── results/
-│   └── engines-small-seed7-2026-09-16.json   # small-profile metrics JSON
-└── tests/
-    ├── test_engine_parity.py       # parity/collision/guard tests (Spark parts skip without PySpark)
-    ├── test_workload_fingerprint.py  # historical workload pin tests
-    └── test_no_production_imports.py  # src/ never imports experiments/; experiment never uses prod Silver facade
-```
+El [resultado small, seed 7, del 16 de septiembre de 2026](results/engines-small-seed7-2026-09-16.json)
+registra 25.363 entradas Bronze y 22.504 eventos Silver, con paridad en los
+tres motores. Es una ejecución, no una mediana ni una estimación del pipeline:
 
-The directory uses underscores (`silver_engine_comparison`) instead of
-hyphens so the experiment stays plainly importable without `sys.path`
-hacks. The reports keep their original `src/...`/`tests/...` paths
-verbatim because they describe the runs as executed; the code has since
-moved here with semantics unchanged:
+| Motor | `transform_s` | Inicialización | Pico RSS del árbol |
+| --- | --- | --- | --- |
+| Python por filas | 0,617 s | <0,001 s | 360.960.000 B |
+| Polars nativo | 0,254 s | <0,001 s | 302.309.376 B |
+| Spark nativo | 10,010 s | 3,473 s | 1.335.799.808 B |
 
-- `src/tfm_licitaciones/bench_engines.py` → `bench_engines.py`
-- `src/tfm_licitaciones/silver_polars.py` → `engines/polars_candidate.py`
-- `src/tfm_licitaciones/silver_spark.py` → `engines/spark_candidate.py`
-- `tests/test_silver_engines.py` → `tests/test_engine_parity.py`
+Entorno registrado: Linux x86_64, 16 CPU, unos 32 GiB de RAM, Python 3.11.16,
+Polars 1.44.2, Spark 4.0.1 y Java 17.0.19; Spark `local[16]`, heap 1 GiB.
+El JSON conserva sus rutas temporales originales como metadatos históricos,
+no como requisitos para reproducirlo. No contiene el SHA exacto del runner de
+esa ejecución: es una limitación de su procedencia.
 
-## Scope (loud limitation)
+Polars fue más rápido en esta carga. El resultado no mide la guarda híbrida
+productiva, Gold, joins entre fuentes ni escalabilidad multi-host. Los antiguos
+informes medium/large y las auditorías dependían de artefactos externos no
+incluidos; se pueden consultar en Git, pero sus cifras no se presentan como
+evidencia reproducible de esta entrega.
 
-The native candidates support **only** the TED/PLACSP synthetic Bronze
-contract emitted by `tfm_licitaciones.bench_silver` (scalar string/number
-JSON payloads, CPV as JSON arrays of strings, whole-second `updated`
-instants). They fail explicitly outside that contract and are not
-production replacements. Nothing under `src/` depends on this directory.
+## Referencia y carga congeladas
 
-## Frozen python-row baseline (reproducibility)
+`engines/python_row_reference.py` conserva las transformaciones y contenedores
+de datos del commit `e69016f62fb985639e17153e24b3a570f2f39c20`, sin importar
+la fachada Silver productiva. Así, la etiqueta `python-row` sigue midiendo el
+mismo algoritmo aunque cambie el motor del pipeline. Es distinta de la
+referencia que producción usa como fallback.
 
-The `python-row` engine is **frozen**, not current. It executes
-`engines/python_row_reference.py`, a self-contained copy of the exact
-python-row semantics shipped at:
+El harness comparte los constructores Bronze y el comparador de paridad.
+`workload.py` fija una huella de los valores lógicos Bronze para `tiny` y
+`small`, seed 7, frente al generador histórico. Comprueba payload y procedencia,
+no los bytes físicos Parquet. Otros perfiles y semillas son exploratorios:
+se registran como `workload_pinned=false`, sin atribuirles el commit histórico.
+Las pruebas comprueban aislamiento, huella, esquema, paridad y colisiones.
 
-    e69016f62fb985639e17153e24b3a570f2f39c20
+## Reproducción
 
-Why: `bench_engines.py` used to import the live production facade
-`tfm_licitaciones.silver.build_procurement_events` as the `python-row`
-baseline. PR #17 turns that facade into native Polars, so rerunning the
-experiment after PR #17 would silently benchmark production Polars under
-the `python-row` label. The frozen copy prevents that: the label keeps its
-historical meaning before and after PR #17.
-
-What is frozen (verbatim, no "improvements"): the Silver python-row
-transform (`_exact_amount`, `_aware_instant`, `_single_published_value`,
-`_ted_country`, TED/PLACSP/BOE event mapping, tombstone mapping,
-deterministic provenance selection, canonical-collision detection) plus its
-transitive transformation semantics (`_first_text`, `_parse_date`,
-`_normalize_amount_text`, `_parse_amount`, `_url_from_links`,
-`_as_code_list`, `normalize_ted`, `normalize_boe`) and the data containers
-it materializes through (`PROCUREMENT_EVENT_SCHEMA`, `TenderRecord`,
-`ProcurementEvent` with UTC coercion, `procurement_events_frame`). The
-frozen module imports nothing from `tfm_licitaciones` (stdlib + polars
-only); static and dynamic regression tests enforce that a future
-production refactor cannot silently change it.
-
-Intentionally shared (harness, not baseline semantics): the Bronze frame
-constructors (`tfm_licitaciones.bronze`) and the parity comparator
-(`tfm_licitaciones.silver_parity`). If production ever changes the
-canonical schema, parity will fail loudly instead of moving the historical
-baseline.
-
-## Historical workload pin (reproducibility)
-
-Freezing the baseline is not enough: the measured workload itself comes
-from the live generator `tfm_licitaciones.bench_silver` (`PROFILES`,
-`dataset_profile`, `write_bronze_parts`). A future generator change that
-keeps the same row counts but alters payloads would silently move what
-`--profile small --seed 7` denotes. Instead of copying the ~700-line
-generator, the experiment pins it cheaply:
-
-- generator commit: `e69016f62fb985639e17153e24b3a570f2f39c20` (verified:
-  `bench_silver.py`/`bronze.py` are byte-identical between that commit and
-  this branch);
-- deterministic fingerprint over canonicalized logical Bronze row values
-  (payload + provenance, never Parquet writer bytes) for the pinned
-  workloads `tiny`/`small` with `seed=7` (see `workload.py`:
-  `HISTORICAL_WORKLOADS`).
-
-`bench_engines.run_comparison` asserts the pin for those workloads before
-measuring (metrics record `workload_sha256`, `workload_pinned` and the
-generator provenance described below), and
-`tests/test_workload_fingerprint.py` asserts it in CI (including a
-sensitivity test proving the digest moves on a count-preserving content
-change). The pin is checked first: any other profile/seed returns manifest
-counts with `workload_pinned: false` / `workload_sha256: null` without
-reading, sorting or materializing the Bronze frames, so exploratory runs
-at medium/large/backfill scale pay no fingerprinting overhead.
-
-Provenance honesty: metrics always record
-`historical_workload_generator_commit` (the commit the pin is defined
-against), but `workload_generator_commit` is only populated when the pin
-was actually asserted (`workload_pinned: true`). Unpinned exploratory
-workloads are generated by whatever generator is current, so theirs stays
-`null` instead of claiming false `e69016f` provenance.
-
-## Errata (reports stay byte-identical)
-
-The three dated reports are preserved verbatim as executed; verified
-against the pre-curation blobs. One verified inconsistency, documented
-here instead of editing the artifact:
-
-- `reports/silver-distributed-2026-09-16.md` §Topología shows a single
-  reproducible command with `--spark-driver-memory 3g
-  --spark-executor-memory 4g`. Checked against the retained evidence, that
-  configuration matches the **large** cluster run (`large-07-cluster.json`:
-  driver 3g / executor 4g, table `3×(4c/4g)`), but **not** the medium
-  cluster runs (`medium-07-cluster.json`, `medium-07-cluster3.json`:
-  driver 2g / executor 3g, matching the table's `3×(4c/3g)` label). The
-  table labels are correct; only the shared command block conflates the
-  two configs. To reproduce medium on the cluster use
-  `--spark-driver-memory 2g --spark-executor-memory 3g`.
-
-The historical conclusion is unchanged: Polars won canonical Silver in the
-measured single-node envelope; Spark local and same-host standalone were
-slower at that scale; Spark remains relevant for distributed and
-high-cardinality workloads. Do not rerun benchmarks to get prettier numbers
-and do not overwrite the retained reports/results: a smoke/tiny rerun only
-validates the frozen wiring, it is not replacement evidence.
-
-## Reproduce
-
-From the repository root (offline; Spark parts need the pinned extra):
+Desde la raíz del repositorio, con Java 17+ para Spark:
 
 ```bash
-# full experiment suite (Spark behavior tests skip without PySpark)
-uv run --with-editable . python -m unittest discover \
-  -s experiments/silver_engine_comparison/tests -t . -v
-
-# with the pinned Spark
-uv run --with 'pyspark==4.0.1' --with-editable . python -m unittest discover \
-  -s experiments/silver_engine_comparison/tests -t . -v
-
-# rerun the comparison (small profile, seed 7)
-uv run --with 'pyspark==4.0.1' --with-editable . \
+uv run --locked --with 'pyspark==4.0.1' --with-editable . \
+  python -m unittest discover -s experiments/silver_engine_comparison/tests -t . -v
+uv run --locked --with 'pyspark==4.0.1' --with-editable . \
   python -m experiments.silver_engine_comparison.bench_engines \
-  --profile small --seed 7 \
+  --profile small --seed 7 --spark-master 'local[16]' \
   --work-dir /tmp/silver-engines-small --output /tmp/silver-engines-small.json
 ```
 
-The default production suite (`python -m unittest discover -s tests`)
-never discovers this directory. CI (`.github/workflows/tests.yml`) runs
-both the production suite and this experiment suite without PySpark (Spark
-behavior tests skip there; run them locally with the pinned extra).
+Los resultados nuevos deben conservarse aparte del JSON histórico. La suite
+normal de `tests/` no descubre este directorio. Sin PySpark, las pruebas del
+candidato Spark se omiten.
+
+El harness `bench_silver`, distinto de esta comparación, mide la referencia
+Python por filas de producción (`silver_reference`), sin la guarda ni el kernel
+híbrido. También sirve como comprobación rápida de generación y persistencia:
+
+```bash
+uv run --locked --with-editable . python -m tfm_licitaciones.bench_silver \
+  --profile tiny --seed 7
+```
+
+Perfiles disponibles: `tiny`, `small`, `medium`, `large`, `backfill`; los grandes
+son ejecuciones manuales con necesidades de memoria crecientes. `--with-collision`
+introduce un conflicto material y debe hacer fallar la transformación.

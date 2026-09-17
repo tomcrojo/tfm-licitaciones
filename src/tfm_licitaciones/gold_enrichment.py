@@ -1,40 +1,12 @@
-"""Minimal deterministic Gold enrichments over canonical Silver events.
+"""CPV and DIR3 enrichment with explicit schemas and coverage metrics.
 
-Two independent, composable datasets are produced at the Gold boundary:
+CPV preserves each code and its array position; DIR3 joins buyer_id to dir3_code
+without rewriting canonical identity. Dimension keys must be unique/non-null,
+left joins preserve unmatched facts, and row counts are checked after each join.
+Repeated CPV codes within an event violate the canonical input contract.
 
-- ``cpv_enriched``: one row per ``(event_id, cpv_code)`` occurrence, carrying
-  the official CPV 2008 attributes from ``data/reference/cpv_codes.parquet``.
-  Exploding keeps every published code with its original position, so the
-  multiple CPV codes of one event are never collapsed arbitrarily and the
-  original code is always preserved.
-- ``buyer_dir3_enriched``: canonical Silver events (event grain preserved)
-  plus official DIR3 attributes joined on ``buyer_id = dir3_code`` against
-  ``data/reference/dir3/dir3_units.parquet``. ``buyer_id``/``buyer_name``
-  themselves remain the canonical Gold values; DIR3 only adds attributes.
-
-Determinism and cardinality invariants enforced here:
-
-- dimension primary keys are validated for null-freeness and uniqueness
-  before any join, so a broken dimension fails loudly instead of silently
-  multiplying facts. There is no fuzzy matching: with a validated key the
-  join is 1:1 at most and
-  "ambiguous" fact rows cannot exist (the duplicate-key count is reported as
-  a metric after the guard proves it is zero);
-- fact row counts are asserted unchanged before/after each join;
-- unmatched facts are preserved by left joins and counted in the returned
-  metrics (``resolved``/``unresolved`` counts are measured from real data);
-- duplicated CPV codes inside one event's ``cpv_codes`` array are a malformed
-  canonical boundary and fail instead of being deduplicated again.
-
-DIR3 availability: the units dimension is a local artifact built after an
-explicit network download (``licitaciones-pipeline ingest --source dir3`` plus
-``licitaciones-pipeline dir3``). When it is absent, ``dir3_units_dimension``
-returns ``None`` and the caller must skip DIR3 enrichment and proceed with the
-canonical ``buyer_id``/``buyer_name``, which are already valid for Gold. No
-runtime fallback dimension is invented here.
-
-This module deliberately implements enrichment only: it does not resolve
-current state, does not modify Silver, and does not build the Gold marts.
+An absent DIR3 dimension returns None so callers can skip that enrichment.
+The principal Gold builder uses these transforms for metrics only.
 """
 
 from __future__ import annotations
@@ -59,7 +31,7 @@ CPV_ENRICHED_SCHEMA_VERSION = 1
 BUYER_DIR3_ENRICHED_DATASET = "buyer_dir3_enriched"
 BUYER_DIR3_ENRICHED_SCHEMA_VERSION = 1
 
-# Expected schema of data/reference/cpv_codes.parquet (docs/cpv-reference.md).
+# Expected schema of data/reference/cpv_codes.parquet (docs/references.md#cpv-2008).
 # Nullability mirrors the Polars build schema; value-level enforcement of the
 # required columns happens in read_cpv_dimension.
 CPV_DIMENSION_FIELDS = (
@@ -72,7 +44,7 @@ CPV_DIMENSION_FIELDS = (
 )
 
 # Expected schema of data/reference/dir3/dir3_units.parquet
-# (docs/dir3-reference.md), mapped to Spark logical types.
+# (docs/references.md#dir3), mapped to Spark logical types.
 DIR3_DIMENSION_FIELDS = (
     FieldSpec("dir3_code", "string", False),
     FieldSpec("name", "string", False),

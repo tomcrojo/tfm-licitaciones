@@ -1,19 +1,8 @@
-"""Tests for the principal Gold dataset (open/actionable opportunities).
+"""Gold policy, enrichment metrics, manifests and Silver/Gold boundary tests.
 
-Offline checks cover the frozen policy constants and the ``as_of``
-normalization. Join/policy/manifest tests require the pinned PySpark
-runtime and compose only the merged interfaces: current-state resolution
-(PR #24), CPV/DIR3 enrichment (PR #22) and the typed Spark foundation
-(PR #19). Numbered cases map to the mandatory list: 1 valid open appears;
-2 deleted excluded; 3 past deadline excluded; 4 future deadline included;
-5 closed status excluded; 6 open status included; 7 unknown/insufficient
-counted, never published; 8 null-deadline policy; 9 multiple CPV keep the
-grain; 10 unmatched CPV conserved and counted; 11 missing DIR3 never
-blocks; 12 matched DIR3 keeps buyer identity; 13 procedure_id uniqueness;
-14 manifest versions/counts; 15 deterministic as_of; 16 Silver -> Gold
-boundary roundtrip. Cases 17-18 freeze the official PLACSP lifecycle:
-17 every closed status (EV/ADJ/ADJ_PAR/RES/RES_PAR/ANUL) excluded;
-18 PRE never opens.
+Pure checks cover policy constants and as_of normalization. Spark checks cover
+status/deadline precedence, deletion, insufficient evidence, CPV cardinality,
+optional DIR3, deterministic results and manifest reconciliation.
 """
 
 from __future__ import annotations

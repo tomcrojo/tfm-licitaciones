@@ -1,12 +1,128 @@
-# Dimensión de referencia DIR3 (unidades orgánicas)
+# Datos de referencia
+
+## CPV 2008
+
+
+Fuente de referencia oficial para la taxonomía de categorías de contratación.
+Consumible por Silver (resolución de `cpv_codes`) y por productos Gold sin
+dependencia de red.
+
+### Origen y fichero fuente
+
+| Aspecto | Valor |
+| --- | --- |
+| Vocabulario | Common Procurement Vocabulary (CPV) 2008, Reglamento (CE) 213/2008 |
+| Editor | Comisión Europea (portal SIMAP/TED) |
+| Fichero local | `config/reference/cpv2008_es.csv` (etiquetas ES + EN) |
+| Método de captura | descarga puntual consolidada en el repositorio (sin red en pruebas) |
+| Cobertura | vocabulario principal completo: 9.454 códigos (medido) |
+| Cadencia / revisiones | estático: vocabulario cerrado desde 2008, sin actualizaciones ni borrados |
+| Clave natural | cuerpo de 8 dígitos como cadena (ver «dígito de control») |
+| Formato raw | CSV UTF-8 con columnas `code`, `nombre`, `name` |
+
+El vocabulario complementario (códigos `EXXXX`) no está incluido.
+
+### Cuerpo de 8 dígitos y dígito de control
+
+La jerarquía reside íntegramente en el cuerpo de 8 dígitos. El noveno dígito
+(separado por guion, `XXXXXXXX-Y`) es un detector de erratas sin semántica
+clasificatoria: no es un nivel, no forma parte de ninguna máscara y jamás debe
+intervenir en padres, niveles u hojas. La clave canónica de la dimensión es el
+cuerpo de 8 dígitos como cadena; los ceros a la izquierda (`03`, `09`) son
+significativos y el parseo como entero los corrompería.
+
+Nota de validación: los dígitos de control de la publicación oficial de 2008
+son internamente inconsistentes (error reconocido por OP-TED, discusión ePO
+#589). Por tanto nunca se rechazará un dato entrante por mismatch de dígito de
+control; si una fuente lo incluye (p. ej. TED), se descarta en el límite de
+Bronze y puede conservarse como procedencia raw.
+
+### Semántica de la jerarquía
+
+Los dos primeros dígitos se leen como bloque (división) y cada dígito
+siguiente añade un nivel de clasificación, hasta 7 niveles. Solo los cuatro
+primeros tienen denominación clásica en la normativa; los niveles 5–7 son
+grados adicionales de precisión sin nombre oficial propio y se nombran
+internamente `level 5/6/7`.
+
+| Nivel | Forma | Denominación | Ejemplo | Códigos (medido) |
+| --- | --- | --- | --- | --- |
+| 1 | `XX000000` | división | `03000000` | 45 |
+| 2 | `XXX00000` | grupo | `03100000` | 272 |
+| 3 | `XXXX0000` | clase | `03110000` | 1.002 |
+| 4 | `XXXXX000` | categoría | `03111000` | 2.379 |
+| 5 | `XXXXXX00` | — (precisión) | `03212200` | 3.140 |
+| 6 | `XXXXXXX0` | — (precisión) | `03212210` | 1.811 |
+| 7 | `XXXXXXXX` | — (precisión) | `03212211` | 805 |
+
+El nivel se calcula desde la propia cadena (`k` = posición del último dígito
+distinto de cero; `k ≤ 2` ⇒ nivel 1, en otro caso nivel `k − 1`), nunca
+contando saltos desde la raíz, porque las cadenas publicadas pueden saltarse
+niveles. El padre estructural se obtiene poniendo a cero el último dígito
+significativo; las divisiones (`30000000`, `14000000`) son raíces: poner a
+cero `14000000` daría el inexistente `10000000`.
+
+#### Validez estructural de los códigos
+
+En CPV 2008 los ceros solo aparecen como relleno final o dentro del bloque de
+división (verificado: 0 violaciones en los 9.454 códigos). Un código con un
+cero entre el bloque de división y su último dígito significativo (p. ej.
+`03210200`) no es un CPV 2008 válido y se trata como error de calidad del
+dato entrante, nunca se «corrige» silenciosamente.
+
+#### Huecos del vocabulario publicado
+
+La tabla oficial omite 11 nodos intermedios (`30192120`, `34511000`,
+`35611000`, `35612000`, `35811000`, `38527000`, `39250000`, `42924000`,
+`44115300`, `44613100`, `60110000`): los 35 códigos afectados (medido; cada
+hueco salta exactamente un nivel) resuelven su `parent_code` al ancestro
+publicado más cercano. La dimensión contiene solo códigos oficiales: nunca se
+materializan nodos sintéticos.
+
+Advertencia semántica: el punto de engarce tras resolver un hueco es
+estructural, no semántico (`30192121` «Bolígrafos» cuelga de `30192100`
+«Gomas de borrar»). Es válido para recuentos y rollups; no debe usarse para
+inferir significado.
+
+### Esquema de salida (`data/reference/cpv_codes.parquet`)
+
+| Columna | Tipo | Descripción |
+| --- | --- | --- |
+| `cpv_code` | String | cuerpo oficial de 8 dígitos |
+| `label_es` | String | etiqueta oficial en español (`nombre`) |
+| `label_en` | String | etiqueta oficial en inglés (`name`; nula en 3 códigos sin etiqueta) |
+| `level` | Int8 | nivel 1–7 derivado de la cadena |
+| `parent_code` | String | ancestro publicado más cercano; nulo en las 45 divisiones |
+| `is_leaf` | Boolean | verdadero si ningún código publicado lo tiene por padre |
+
+`is_leaf` es descriptivo de esta versión del vocabulario, no una restricción
+de validez: cualquier código publicado puede aparecer legítimamente en una
+licitación (Guía CPV 2008), hoja o no. Debe recalcularse si cambia la versión
+del vocabulario de referencia.
+
+La salida se ordena por `cpv_code` y es reproducible: reconstruir desde el
+CSV produce un DataFrame idéntico. No se commita: se regenera con:
+
+```sh
+uv run --locked --with-editable . python -c "from tfm_licitaciones.cpv import build_cpv_dimension, DEFAULT_CPV_SOURCE; from tfm_licitaciones.io import write_parquet; from pathlib import Path; print(write_parquet(Path('data/reference/cpv_codes.parquet'), build_cpv_dimension(DEFAULT_CPV_SOURCE)))"
+```
+
+### Limitaciones conocidas
+
+- Sin vocabulario complementario CPV (`EXXXX`).
+- Los códigos `14820000`, `14830000` y `14930000` carecen de etiqueta inglesa
+  en la fuente oficial: se almacenan como nulos en `label_en`.
+- Las etiquetas se conservan tal cual publica la fuente (incluido el punto
+  final); no se normaliza el texto.
+
+## DIR3
+
 
 Fuente oficial: listados de **unidades orgánicas** del Directorio Común de
 Unidades Orgánicas y Oficinas (DIR3), publicados por el Portal de
-Administración Electrónica (PAe/CTT, solución DIR3). La dimensión alimenta la
-futura identificación de órganos de contratación (`buyer`) con identificadores
-oficiales.
+Administración Electrónica (PAe/CTT, solución DIR3). La dimensión permite enriquecer compradores por identificador oficial DIR3.
 
-## Ficheros fuente y cobertura
+### Ficheros fuente y cobertura
 
 Solo se ingieren las seis distribuciones de unidades orgánicas por ámbito de
 administración. Quedan fuera del alcance: oficinas, UGEP, SIR, cámaras de
@@ -29,7 +145,7 @@ El registro con nombres deterministas, nivel y URL vive en
 `src/tfm_licitaciones/dir3.py` (`DIR3_UNIT_SOURCES`). Cada descarga se guarda
 como `data/raw/dir3/dir3-unidades-<ambito>.xlsx`.
 
-## Método de descarga y cadencia
+### Método de descarga y cadencia
 
 - Descarga explícita: `licitaciones-pipeline ingest --source dir3` (requiere
   red). stdlib `urllib` con cookie jar y reintentos con backoff; se valida
@@ -38,13 +154,14 @@ como `data/raw/dir3/dir3-unidades-<ambito>.xlsx`.
   del host, con instrucciones de descarga manual en el navegador).
 - Cadencia: el PAe publica snapshots completos sin changelog ni fecha de corte
   declarada; la identidad del contenido descargado es su URL + `sha256`,
-  registrados en `data/reference/dir3/build_manifest.json`.
+  registrados en el manifest de cada construcción. El
+  [manifest histórico](evidence/dir3-build-2026-09-15.json) respalda este snapshot.
 - La operación es idempotente: un fichero local ya válido no se vuelve a
   descargar (y por tanto tampoco se refresca: ver limitaciones).
 - Cobertura temporal: snapshot vigente en el momento de la descarga; todas las
-  filas del snapshot actual tienen `status = V`.
+  filas del snapshot medido del 15 de septiembre de 2026 tienen `status = V`.
 
-## Formato raw y diferencias reales entre ficheros
+### Formato raw y diferencias reales entre ficheros
 
 Cada XLSX tiene una primera hoja de datos, una hoja `Leyenda de campos` y una
 hoja `Catálogos de clasificación`. En la hoja de datos: primera fila y primera
@@ -63,7 +180,7 @@ Diferencias medidas entre ámbitos:
 - Universidades reutiliza el nombre de hoja `Unidades AGE V+T` (artefacto del
   fichero oficial).
 
-## Clave natural y decisión sobre versión (DIR3 2.0)
+### Clave natural y decisión sobre versión (DIR3 2.0)
 
 - `C_ID_UD_ORGANICA` es único dentro de cada fichero (0 duplicados) y entre los
   seis ficheros (0 solapes) en el snapshot medido: 108.261 códigos de 9
@@ -80,7 +197,7 @@ Diferencias medidas entre ámbitos:
   futuro se consumen servicios web con histórico, la dimensión deberá añadir un
   eje de versión; se recoge como limitación.
 
-## Esquema canónico
+### Esquema canónico
 
 Tipado Polars, orden determinista por `dir3_code` ascendente. Cada columna se
 justifica en una columna real del fichero; no hay columnas decorativas.
@@ -105,7 +222,7 @@ superior/principal/EDP (recomputables por cruce con `dir3_code`), campos EDP
 `CONTACTOS` en EELL (enriquecimiento territorial futuro vía INE/NUTS), y
 `CARGADOR` en Justicia (interno de la administración de justicia).
 
-### Fechas de dos dígitos: se conserva el valor oficial, sin siglo inventado
+#### Fechas de dos dígitos: se conserva el valor oficial, sin siglo inventado
 
 DIR3 publica `D_VIG_ALTA_OFICIAL` como texto `dd/mm/yy` y no documenta regla
 alguna de resolución de siglo. Por eso la dimensión **conserva el valor
@@ -118,7 +235,7 @@ reconstrucción, además de no resolver la ambigüedad real (`01/01/25` puede se
 normalizada como cambio explícito. La única validación es de forma: lo que no
 sea `dd/mm/yy` se rechaza de forma observable.
 
-## Reglas de ingesta
+### Reglas de ingesta
 
 - Fila rechazada (contabilizada por motivo en el manifiesto, nunca filtrada en
   silencio): código ausente o con formato inválido, denominación/estado/nivel
@@ -131,22 +248,23 @@ sea `dd/mm/yy` se rechaza de forma observable.
   extinguidas que no aparecen en un listado de vigentes): se conservan tal cual
   y se cuentan en `parents_unresolved` como métrica de calidad.
 
-## Ejecución
+### Ejecución
 
 ```bash
-# descarga explícita (red); DIR3 nunca forma parte de `--source all`
+## descarga explícita (red); DIR3 nunca forma parte de `--source all`
 uv run --with-editable . python -m tfm_licitaciones.cli ingest \
   --start 2026-09-15 --end 2026-09-15 --source dir3
 
-# construcción offline de la dimensión desde data/raw/dir3
+## construcción offline de la dimensión desde data/raw/dir3
 uv run --with-editable . python -m tfm_licitaciones.cli dir3
 ```
 
-Salidas (no versionadas): `data/reference/dir3/dir3_units.parquet` y
-`data/reference/dir3/build_manifest.json` (el manifiesto sí se versiona como
-evidencia de la construcción).
+Salidas locales (no versionadas): `data/reference/dir3/dir3_units.parquet` y
+`data/reference/dir3/build_manifest.json`. Se conserva un
+[manifest histórico del 15 de septiembre de 2026](evidence/dir3-build-2026-09-15.json)
+como evidencia de los conteos citados; no sustituye al manifest de cada ejecución.
 
-## Limitaciones
+### Limitaciones
 
 - Snapshot puntual sin histórico: no hay versiones ni ciclo de vida (E/A/T)
   observable con estos ficheros.

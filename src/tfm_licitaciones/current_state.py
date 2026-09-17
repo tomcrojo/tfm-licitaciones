@@ -1,65 +1,11 @@
 """Spark current-state resolution from canonical Silver.
 
-Boundary::
+Group by source-namespaced procedure_id and order by source_updated_at,
+then event_id. Competing undated events and invalid identities remain issues;
+ingestion time never breaks a business-time tie. A lone valid event is resolvable
+without a source timestamp. is_deleted reflects the selected tombstone.
 
-    canonical Silver Parquet
-        -> current_state Parquet
-        -> current_state_issues Parquet when applicable
-        -> current_state_manifest.json with frozen schema versions and counts
-
-This module implements only the deterministic resolution semantics frozen by
-the merged contracts:
-
-- PR #19: ``CURRENT_STATE_FIELDS`` grain (one row per deterministically
-  resolvable ``procedure_id``) and typed Parquet foundation.
-- PR #20: dated PLACSP tombstones carry authoritative ``source_updated_at``;
-  undated tombstones remain valid but unordered evidence.
-- PR #21: PLACSP notices and tombstones share ``procedure_id`` by exact
-  published-URI equality (RFC 6721 ``ref == atom:id``). No URL
-  normalization, fuzzy matching or ingestion-order heuristic.
-
-Semantics
----------
-
-- Group by canonical ``procedure_id``. No cross-source merge: the key is
-  already source-namespaced.
-- Order business history using ``source_updated_at`` only when present.
-  Dated tombstones participate normally in that ordering.
-- Undated competing events are never ordered with ``ingested_at``,
-  retrieval provenance, filename, row order or processing order. A
-  procedure with more than one event where at least one
-  ``source_updated_at`` is null is unresolved.
-- A lone observed event is sufficient evidence for state even when its
-  ``source_updated_at`` is null: there is no competition to order. This
-  also covers single-event TED procedures (TED has no authoritative
-  ``source_updated_at`` in canonical Silver).
-- TED procedures require a non-null canonical ``procedure_id``. Null keys
-  are never invented or joined; each null-key event becomes an issue.
-- PLACSP identity is validated against the exact #21 bridge before any
-  temporal decision. Unresolved identity never receives a synthetic key.
-- Ties on ``source_updated_at`` are broken deterministically by
-  ``event_id`` (largest wins). ``event_id`` is unique in canonical Silver,
-  so the total order does not depend on physical input order.
-- ``is_deleted`` is true exactly when the selected event has
-  ``source_event_type == 'tombstone'``.
-- Every input event that cannot contribute to a deterministic state is
-  surfaced in ``current_state_issues`` with a deterministic ``reason``:
-
-  - ``missing_procedure_id``: ``procedure_id`` is null.
-  - ``missing_or_invalid_procedure_id``: PLACSP non-null key without a
-    usable ``placsp:procedure:<ref>`` published ref.
-  - ``unsupported_placsp_event_type``: PLACSP event type outside
-    ``{notice_snapshot, tombstone}``.
-  - ``event_procedure_identity_mismatch``: PLACSP ``event_id`` does not
-    agree with ``procedure_id`` under the exact #21 rule.
-  - ``undated_competing_events``: procedure has >1 identity-valid event
-    and at least one null ``source_updated_at``.
-
-Determinism uses only business columns (``procedure_id``,
-``source_updated_at``, ``event_id``). Spark ``Window.partitionBy`` /
-``orderBy`` implement grouping and ranking; ``write_typed_parquet`` sorts
-before the distributed write, but consumers must treat schema and values
-as the contract, never part-file order or names.
+Contracts and reason codes: docs/data_contract.md#estado-vigente.
 """
 
 from __future__ import annotations
@@ -330,7 +276,7 @@ def build_current_state_from_silver(
     ``<output_dir>/current_state_issues`` with ``write_typed_parquet`` and
     deterministic pre-write sorts, plus a minimal
     ``<output_dir>/current_state_manifest.json`` carrying the frozen schema
-    versions and row counts required by PR #19. Returns output paths and
+    versions and row counts. Returns output paths and
     row counts.
     """
 
