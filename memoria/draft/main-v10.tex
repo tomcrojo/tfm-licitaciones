@@ -1,0 +1,910 @@
+% ============================================================
+%  TFM Memoria: Pipeline Licitaciones
+%  Estilo suizo: todo sans, monocromo, jerarquía tipográfica
+%  Compila con XeLaTeX (fontspec). En Overleaf: Compiler → XeLaTeX
+% ============================================================
+\documentclass[11pt,a4paper]{article}
+
+% ---------- Idioma ----------
+\usepackage[spanish,es-tabla,es-noshorthands]{babel}
+\usepackage{microtype}
+
+% ---------- Tipografía: todo sans (XeLaTeX / fontspec) ----------
+\usepackage{fontspec}
+\IfFontExistsTF{Roboto}{
+  \setmainfont{Roboto}
+  \setsansfont{Roboto}
+}{
+  \setmainfont{Noto Sans}
+  \setsansfont{Noto Sans}
+}
+\IfFontExistsTF{Roboto Mono}{
+  \setmonofont{Roboto Mono}[Scale=MatchLowercase]
+}{
+  \setmonofont{Noto Sans Mono}[Scale=MatchLowercase]
+}
+\renewcommand{\familydefault}{\sfdefault}
+
+% ---------- Color: solo grises ----------
+\usepackage[table]{xcolor}
+\definecolor{ink}{HTML}{111111}    % texto
+\definecolor{muted}{HTML}{6B6B6B}  % secundario
+\definecolor{line}{HTML}{CFCFCF}   % reglas
+\definecolor{paper2}{HTML}{F4F4F4} % fondo suave
+\definecolor{enlace}{HTML}{1E40AF} % azul sobrio solo para enlaces
+
+% ---------- Página ----------
+\usepackage[a4paper,top=2.5cm,bottom=2.7cm,left=2.6cm,right=2.6cm,headsep=16pt]{geometry}
+\usepackage{parskip}
+\setlength{\parskip}{0.5em}
+
+% ---------- Cabecera / pie ----------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\color{line}\hrule width\headwidth height 0.4pt}
+\fancyhead[L]{\footnotesize\color{muted}TFM · Pipeline de contratación pública}
+\fancyhead[R]{\footnotesize\color{muted}\nouppercase{\leftmark}}
+\fancyfoot[L]{\footnotesize\color{muted}T. Campoy Rojo}
+\fancyfoot[R]{\footnotesize\bfseries\thepage}
+
+% ---------- Secciones ----------
+\usepackage{titlesec}
+\titleformat{\section}
+  {\bfseries\Large}{\thesection}{0.7em}{}
+  [{\color{line}\vspace{3pt}\titlerule[0.6pt]}]
+\titlespacing*{\section}{0pt}{2em}{1em}
+\titleformat{\subsection}
+  {\bfseries\large}{\thesubsection}{0.6em}{}
+\titlespacing*{\subsection}{0pt}{1.4em}{0.5em}
+\titleformat{\subsubsection}[runin]
+  {\bfseries\color{muted}}{\thesubsubsection}{0.5em}{}
+
+% ---------- Tablas ----------
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\renewcommand{\arraystretch}{1.3}
+\newcommand{\cabecera}[1]{{\bfseries #1}}
+
+% ---------- Figuras ----------
+\usepackage{graphicx}
+\usepackage{caption}
+\captionsetup{font={small},labelfont={bf},labelsep=quad}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{needspace}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds}
+
+% ---------- Código ----------
+\usepackage{listings}
+\lstdefinestyle{plain}{
+  basicstyle=\ttfamily\footnotesize\color{ink},
+  backgroundcolor=\color{paper2},
+  keywordstyle=\bfseries,
+  commentstyle=\color{muted}\itshape,
+  stringstyle=\color{ink},
+  showstringspaces=false,
+  columns=fullflexible,
+  frame=none, xleftmargin=12pt, xrightmargin=8pt,
+  aboveskip=1em, belowskip=1em
+}
+\lstset{style=plain}
+
+% ---------- Listas ----------
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.3em, itemsep=0.3em, topsep=0.45em,
+  label=\textcolor{muted}{\rule[0.35ex]{4pt}{4pt}}}
+\setlist[enumerate]{leftmargin=1.6em, itemsep=0.3em, topsep=0.45em}
+
+% ---------- Enlaces ----------
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=enlace, urlcolor=enlace, citecolor=enlace,
+  pdftitle={TFM: Pipeline reproducible para datos de contratación pública},
+  pdfauthor={Tomás Campoy Rojo}}
+
+% ---------- Utilidades ----------
+\newcommand{\tarrow}{$\rightarrow$}
+
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{2}
+\renewcommand{\contentsname}{Contenido}
+\addto\captionsspanish{\renewcommand{\refname}{Bibliografía}}
+
+\begin{document}
+
+% ============================================================
+%  PORTADA
+% ============================================================
+\begin{titlepage}
+\raggedright
+{\small\bfseries\MakeUppercase{Trabajo Fin de Máster}}\\[3pt]
+{\small\color{muted}Máster en Ingeniería de Datos · Universidad Complutense de Madrid}\\[1em]
+{\color{ink}\rule{\textwidth}{0.8pt}}
+
+\vspace{4cm}
+
+{\fontsize{32}{37}\selectfont\bfseries
+Pipeline reproducible para integrar y analizar datos de contratación pública\par}
+
+\vspace{1.2cm}
+
+{\large\color{muted}TED · Open Data Portal de la Plaza (PLACSP) · DIR3 · CPV\par}
+
+\vfill
+
+{\color{line}\rule{\textwidth}{0.4pt}}\\[1em]
+{\bfseries Tomás Campoy Rojo}\\[2pt]
+{\color{muted}Autor}\\[0.9em]
+{\bfseries Septiembre de 2026}
+\end{titlepage}
+
+% ============================================================
+%  ÍNDICE
+% ============================================================
+\tableofcontents
+\clearpage
+
+% ============================================================
+%  1. INTRODUCCIÓN
+% ============================================================
+\section{Introducción}
+\markboth{Introducción}{Introducción}
+
+Cada año, las administraciones públicas españolas y europeas publican decenas de
+miles de oportunidades de negocio en portales oficiales heterogéneos. La
+información existe, es abierta y gratuita, pero llega fragmentada en formatos
+distintos (JSON, ZIP, Atom, CODICE/XML), con reglas de publicación y revisión
+propias. Para una empresa que vende tecnología, la diferencia entre encontrar
+una licitación a tiempo y descubrirla cuando ya ha finalizado el plazo es,
+puede suponer perder una oportunidad de negocio.
+
+Este TFM aborda ese problema desde la ingeniería de datos: construir un
+pipeline reproducible que \textbf{integre, normalice y estructure} los avisos de
+licitación publicados en TED (ámbito europeo) y en el portal de datos abiertos
+de la Plataforma de Contratación (OpenPLACSP), dejando el dato listo para
+análisis y consumo.
+
+Integrar ambas fuentes no es un mero ejercicio de formato. Cada portal usa sus
+propios identificadores, sus reglas de versionado y su granularidad temporal:
+un expediente puede aparecer como aviso previo, rectificarse varias veces,
+adjudicarse o anularse, y cada uno de esos hechos llega como una publicación
+distinta que hay que reconciliar sin perder la traza.
+
+También hay que registrar qué periodo cubre cada descarga, si está completo y
+qué contenido exacto se obtuvo. Sin esa procedencia, dos ejecuciones no se
+pueden comparar ni auditar.
+
+Para una empresa proveedora, el valor está en pasar de portales fragmentados a
+una vista accionable: qué procedimientos siguen abiertos, con qué plazo, en
+qué categorías CPV encajan con su oferta y qué historial tiene el comprador.
+El resultado del proyecto es un dashboard analítico que permite consultar esa
+información sin conocer el funcionamiento interno del pipeline.
+
+\subsection{Pregunta de investigación}
+
+\emph{¿Hasta qué punto es posible construir con fuentes abiertas oficiales un
+histórico unificado y trazable de la contratación pública, con identidad
+estable de los avisos ante revisiones y anulaciones, que soporte productos de
+datos como un feed diario de oportunidades?}
+
+\subsection{Contribuciones}
+
+\begin{itemize}
+  \item Un pipeline por capas (raw \tarrow{} Bronze \tarrow{} Silver \tarrow{} Gold) con procedencia
+        explícita y rechazos localizados en lugar de descartes silenciosos.
+  \item Un modelo canónico de eventos de contratación que preserva el histórico
+        de avisos, revisiones y \emph{tombstones} con identidad determinista.
+  \item Un estado vigente derivado con Spark desde el histórico canónico, con
+        política de apertura congelada sobre el ciclo de vida oficial de PLACSP
+        (\texttt{open\_opportunities} en Parquet).
+  \item Una capa analítica ligera (DuckDB) que expone vistas reproducibles y un
+        export determinista a CSV para Tableau, sin redefinir la lógica de
+        negocio.
+  \item Un contrato de datos versionado entre capas, junto con un \emph{manifest}
+        de ejecución con conteos y checksums.
+  \item Un marco de evaluación reproducible (mismo resultado y
+        rendimiento) como base para decisiones de implementación: las mejoras
+        solo se aceptan si mantienen el comportamiento esperado.
+\end{itemize}
+
+% ============================================================
+%  2. OBJETIVOS Y ALCANCE
+% ============================================================
+\section{Objetivos y alcance}
+
+El alcance se divide en un núcleo obligatorio y varias extensiones, de modo
+que el resultado principal sea entregable dentro del plazo del máster.
+
+\subsection{Núcleo (entregable mínimo)}
+
+\begin{itemize}
+  \item Descarga explícita y conservación local de TED (API JSON), OpenPLACSP
+        (ZIP, Atom, CODICE/XML) y foto DIR3 de unidades orgánicas.
+  \item Parsing y normalización a Bronze Parquet con procedencia, rechazos
+        localizados y conteos de ingesta.
+  \item Silver canónico: \texttt{procurement\_events.parquet} con histórico de
+        avisos, revisiones y \emph{tombstones} como eventos, construido con
+        Polars y verificado contra la implementación inicial.
+  \item Gold: estado vigente resuelto con Spark desde Silver canónico
+        (\texttt{open\_opportunities} en Parquet), con política
+        abierto/accionable congelada sobre el ciclo de vida oficial y
+        enriquecimiento CPV/DIR3; la vista legada en memoria (TenderRecord) y el
+        Gold provisional quedaron sustituidos.
+  \item Capa analítica DuckDB (vistas versionadas solo-lectura sobre Gold) y
+        export determinista a CSV para el dashboard Tableau.
+  \item Contrato de datos versionado y \emph{manifest} de ejecución con checksums.
+\end{itemize}
+
+\subsection{Extensiones (si hay tiempo)}
+
+\begin{itemize}
+  \item Orquestación programada con Airflow sobre las funciones actuales del
+        pipeline. El empaquetado reproducible con Docker ya está implementado.
+  \item Feed diario de oportunidades con filtros por perfil de proveedor.
+\end{itemize}
+
+\subsection{Criterios de éxito}
+
+El trabajo se considera completo cuando la cadena puede ejecutarse de forma
+reproducible desde los datos de entrada hasta los conjuntos utilizados por
+Tableau, los registros rechazados quedan identificados con su causa y el
+histórico de revisiones puede reconstruirse desde Silver. La ejecución debe
+dejar conteos, checksums de las salidas deterministas y artefactos de control
+suficientes para comprobar el resultado.
+
+% ============================================================
+%  3. FUENTES DE DATOS
+% ============================================================
+\section{Fuentes de datos}
+
+\subsection{Panorama}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}l l l X@{}}
+\toprule
+\cabecera{Fuente} & \cabecera{Ámbito} & \cabecera{Formato} & \cabecera{Papel en el pipeline}\\
+\midrule
+TED eSender & Europeo & JSON (API) & Avisos previos y adjudicaciones de toda la UE\\
+Open Data PLACSP & España & ZIP · Atom · CODICE/XML & Licitaciones y adjudicaciones nacionales\\
+DIR3 & España & CSV/online & Dimensión de unidades orgánicas por ámbito\\
+CPV & UE & Reglamento 2015/2424 & Taxonomía oficial de objeto del contrato\\
+\bottomrule
+\end{tabularx}
+\caption{Fuentes oficiales integradas y su función en la plataforma.}
+\end{table}
+
+El corpus de referencia cubre enero--junio de 2026: seis ZIP mensuales de
+OpenPLACSP y un JSONL de TED, con rutas, tamaños y checksums fijados en el
+manifest versionado. La consulta TED de ese corpus incluye términos
+tecnológicos, luego está sesgada al caso de estudio y no representa el
+histórico completo.
+
+La dimensión de compradores se apoya en DIR3, el directorio común de unidades
+orgánicas: seis ámbitos con 108.261 unidades en la foto de septiembre de 2026.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{0.62\textwidth}{@{}X r@{}}
+\toprule
+\cabecera{Ámbito DIR3} & \cabecera{Unidades}\\
+\midrule
+AGE & 19.919\\
+CCAA & 18.825\\
+EELL & 26.606\\
+Universidades & 7.360\\
+Otras instituciones & 1.338\\
+Justicia & 34.213\\
+\midrule
+\cabecera{Total} & \cabecera{108.261}\\
+\bottomrule
+\end{tabularx}
+\caption{DIR3 por ámbito (foto de septiembre de 2026).}
+\end{table}
+
+La taxonomía de objeto del contrato es el vocabulario CPV 2008: 9.454 códigos
+en un cuerpo de 8 dígitos más un noveno dígito de control tras un guion
+(\texttt{XXXXXXXX-Y}). El dígito de control solo detecta erratas y los ceros a
+la izquierda son significativos: la clave canónica es el cuerpo como cadena,
+nunca como entero.
+
+\subsection{Volumen del corpus}
+
+El corpus de referencia reúne datos de TED y OpenPLACSP entre enero y junio de
+2026. Los seis ZIP mensuales de OpenPLACSP ocupan 1.118.920.855 bytes y el
+fichero JSONL de TED, 105.503.327 bytes. Los tamaños y checksums individuales
+se conservan en \texttt{data/gold/run\_manifest.json}.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}l X r r@{}}
+\toprule
+\cabecera{Fuente} & \cabecera{Periodo o ficheros} & \cabecera{Tamaño} & \cabecera{Entradas}\
+\midrule
+OpenPLACSP & Enero--junio de 2026, seis ZIP & 1.118.920.855 bytes & 349.399\
+TED & Enero--junio de 2026, un JSONL & 105.503.327 bytes & 9.905\
+DIR3 & Foto de septiembre de 2026, seis ámbitos & n/d & 108.261\
+CPV 2008 & Dimensión oficial versionada & n/d & 9.454\
+\bottomrule
+\end{tabularx}
+\caption{Volumen de las fuentes y dimensiones del corpus de referencia.}
+\end{table}
+
+Las fuentes difieren tanto en su empaquetado como en su granularidad. El
+pipeline conserva esos originales y los transforma en representaciones
+Parquet comunes para que las etapas posteriores no dependan del formato de
+cada portal. Los conteos de las capas derivadas se presentan en Resultados.
+
+\subsection{El problema de la identidad}
+
+Un mismo expediente puede publicarse varias veces: aviso previo, rectificación,
+aclaración, formalización o anulación. Cada fuente usa su propio identificador
+y sus propias reglas de versionado. Parte central del diseño es una identidad
+determinista que permita plegar revisiones sin perder el histórico: en Silver
+nada se sobrescribe, todo es un evento con orden y causa.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\cabecera{Fuente} & \cabecera{\texttt{event\_id}} & \cabecera{Regla}\\
+\midrule
+TED & \texttt{ted:notice:<ND>} & Un número de aviso es un evento; repetirlo no crea filas\\
+OpenPLACSP & \texttt{placsp:notice:<atom>@<updated>} & Cada \texttt{updated} válido es una revisión distinta\\
+OpenPLACSP & \texttt{placsp:tombstone:<ref>} & El borrado es una fila, no una eliminación\\
+\bottomrule
+\end{tabularx}
+\caption{Identidad determinista por fuente: sin UUIDs ni relojes; reprocesar el
+mismo payload produce el mismo \texttt{event\_id}.}
+\end{table}
+
+Si aparece contenido distinto para un \texttt{event\_id} ya existente, la
+transformación falla e identifica la colisión. Ninguna versión sobrescribe a
+la otra de forma silenciosa.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  evento/.style={draw=ink, line width=0.5pt, fill=white,
+    minimum height=1.1cm, minimum width=3.1cm, align=center},
+  ultimo/.style={evento, dashed},
+  barra/.style={draw=none, fill=paper2,
+    minimum height=1.0cm, minimum width=14.3cm, align=center},
+  vista/.style={draw=ink, line width=0.5pt, fill=white,
+    minimum height=1.1cm, minimum width=7.2cm, align=center},
+  flecha/.style={-{Latex[length=2mm]}, line width=0.5pt, color=ink},
+  conector/.style={line width=0.5pt, color=muted}
+]
+\node[evento] (e1) at (1.55,0) {Aviso previo\\ {\scriptsize\color{muted}publicación inicial}};
+\node[evento] (e2) at (5.25,0) {Rectificación\\ {\scriptsize\color{muted}corrige importes}};
+\node[evento] (e3) at (8.95,0) {Formalización\\ {\scriptsize\color{muted}contrato firmado}};
+\node[ultimo] (e4) at (12.65,0) {Anulación\\ {\scriptsize\color{muted}tombstone}};
+\draw[flecha] (e1) -- (e2);
+\draw[flecha] (e2) -- (e3);
+\draw[flecha] (e3) -- (e4);
+\node[barra] (silver) at (7.1,-2.0) {Silver · \texttt{procurement\_events}\\ {\scriptsize\color{ink}conserva los 4 eventos con su orden y su causa}};
+\draw[conector] (1.55,-0.55) -- (1.55,-1.5);
+\draw[conector] (5.25,-0.55) -- (5.25,-1.5);
+\draw[conector] (8.95,-0.55) -- (8.95,-1.5);
+\draw[conector] (12.65,-0.55) -- (12.65,-1.5);
+\node[fill=white, text=muted, inner sep=2pt, font=\scriptsize, align=center] at (7.1,-1.02)
+  {una sola identidad determinista\\ \texttt{placsp:procedure:<atom\_id>}};
+\draw[flecha] (7.1,-2.5) -- (7.1,-3.1);
+\node[vista] (gold) at (7.1,-3.65) {Gold: estado vigente\\ {\scriptsize\color{muted}Anulado · el tombstone no borra el histórico}};
+\end{tikzpicture}
+\caption{Plegado de revisiones: un expediente, cuatro eventos, una identidad.
+Silver conserva todo el histórico; Gold deriva el estado vigente sin destruir
+nada.}
+\end{figure}
+
+% ============================================================
+%  4. ARQUITECTURA
+% ============================================================
+\section{Arquitectura del pipeline}
+
+El diseño sigue el patrón \emph{medallion}: capas con contrato explícito entre
+ellas, de menor a mayor calidad semántica.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  node distance=0.5cm,
+  capa/.style={draw=ink, line width=0.5pt, fill=white,
+    minimum height=1.35cm, minimum width=2.2cm, align=center},
+  fuente/.style={capa, minimum width=3.0cm},
+  p0/.style={dashed, line width=0.5pt, color=muted, -{Latex[length=2mm]}},
+  flecha/.style={-{Latex[length=2mm]}, line width=0.5pt, color=ink}
+]
+\node[fuente] (ted) {TED\\ API JSON\\ {\scriptsize\color{muted}ámbito europeo}};
+\node[fuente, below=of ted] (placsp) {OpenPLACSP\\ ZIP · Atom · CODICE\\ {\scriptsize\color{muted}ámbito nacional}};
+\node[capa, right=0.9cm of ted.east, yshift=0.125cm] (raw) {Raw\\ JSONL\\ {\scriptsize\color{muted}copia íntegra}};
+\node[capa, right=of raw] (bronze) {Bronze\\ Parquet\\ {\scriptsize\color{muted}nada se pierde}};
+\node[capa, right=of bronze] (silver) {Silver\\ canónico\\ {\scriptsize\color{muted}eventos}};
+\node[capa, below=0.75cm of bronze] (tender) {TenderRecord\\ en memoria\\ {\scriptsize\color{muted}vista legada}};
+\node[capa, right=0.5cm of tender] (mid) {Enlace y\\ clasificación\\ {\scriptsize\color{muted}baseline}};
+\node[capa, right=0.5cm of mid] (gold) {Gold\\ vista + feed\\ {\scriptsize\color{muted}estado vigente}};
+\begin{scope}[on background layer]
+  \node[fill=paper2, inner sep=7pt, fit=(raw)(bronze)(silver)(tender)(mid)(gold)] (bg) {};
+\end{scope}
+\node[anchor=south west, font=\scriptsize\bfseries, color=muted]
+  at ([yshift=3pt]bg.north west) {PLATAFORMA · BATCH LOCAL, SIN RED};
+\draw[flecha] (ted.east) -- (raw.west);
+\draw[flecha] (placsp.east) -- ++(0.5,0) |- (raw.west);
+\draw[flecha] (raw) -- (bronze);
+\draw[flecha] (bronze) -- (silver);
+\draw[flecha] (bronze.south) -- (tender.north);
+\draw[flecha] (tender.east) -- (mid.west);
+\draw[flecha] (mid.east) -- (gold.west);
+\draw[p0] (silver.east) -- ++(0.6,0) -| (gold.north);
+\node[anchor=east, font=\scriptsize, color=muted] at (12.9,-0.7) {P0};
+\end{tikzpicture}
+\caption{Vista inicial v0.1: las fuentes alimentan Raw y Bronze y Silver ya se
+construye como canónico, pero el Gold provisional todavía consumía la vista
+legada en memoria (TenderRecord) con enlace y clasificación baseline. La
+cadena final, con Gold derivado de Silver, se muestra en la Figura 3.}
+\end{figure}
+
+\subsection{Del prototipo a la cadena final}
+
+La primera versión completa construía Gold a partir de una vista legada en
+memoria que colapsaba revisiones y mezclaba lógica de negocio con ejecución.
+Silver pasó a ser el único contrato persistido de entrada: contiene los
+eventos canónicos necesarios y permite retirar esa dependencia.
+
+Spark obtiene el estado vigente y aplica el enriquecimiento sobre ese
+histórico. DuckDB queda limitado a la consulta analítica de Gold y la
+exportación a Tableau conserva un orden determinista. Las fronteras Parquet
+permiten reejecutar y auditar cada etapa sin repetir toda la cadena.
+
+\subsection{Decisiones de diseño}
+
+\begin{itemize}
+  \item Los registros que no validan van a
+        un área de rechazos con su motivo, no desaparecen.
+  \item Silver preserva revisiones y anulaciones como
+        eventos; el estado vigente es una vista derivada, no el almacenamiento.
+  \item El contrato de datos está versionado entre capas; los cambios de esquema
+        son cambios de contrato, visibles y revisables.
+  \item Cada ejecución emite un manifiesto con
+        conteos y checksums de las salidas.
+\end{itemize}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  fuente/.style={draw=ink, line width=0.5pt, fill=white,
+    minimum height=1.35cm, align=center},
+  barra/.style={draw=ink, line width=0.5pt, fill=white,
+    minimum height=1.05cm, minimum width=12.4cm, align=center},
+  gris/.style={barra, fill=paper2},
+  flecha/.style={-{Latex[length=2mm]}, line width=0.5pt, color=ink}
+]
+\node[fuente, minimum width=2.2cm] (s1) at (3.0,0) {TED\\ {\scriptsize\color{muted}API JSON}};
+\node[fuente, minimum width=2.5cm] (s2) at (5.6,0) {OpenPLACSP\\ {\scriptsize\color{muted}licitaciones}};
+\node[fuente, minimum width=2.2cm] (s3) at (8.4,0) {CPV 2008\\ {\scriptsize\color{muted}referencia}};
+\node[fuente, minimum width=2.3cm] (s4) at (11.0,0) {DIR3\\ {\scriptsize\color{muted}organismos}};
+\node[gris] (raw) at (6.9,-1.85) {Raw inmutable\\ {\scriptsize\color{ink}payload + ventana + timestamp + checksum}};
+\node[gris] (bronze) at (6.9,-3.15) {Bronze Parquet\\ {\scriptsize\color{ink}parsing + procedencia + rechazos}};
+\node[gris] (silver) at (6.9,-4.45) {Silver Parquet\\ {\scriptsize\color{ink}\texttt{procurement\_events} · histórico canónico}};
+\node[gris] (spark) at (6.9,-5.75) {Spark · estado vigente + enriquecimiento\\ {\scriptsize\color{ink}vigencia · CPV · DIR3}};
+\node[gris] (gold) at (6.9,-7.05) {Gold Parquet\\ {\scriptsize\color{ink}\texttt{open\_opportunities} · una fila por procedimiento}};
+\node[gris] (duck) at (6.9,-8.35) {DuckDB · vistas analíticas\\ {\scriptsize\color{ink}solo lectura sobre Gold · comprador · CPV · mensual}};
+\node[barra] (tab) at (6.9,-9.65) {Tableau · CSV reproducibles + dashboard\\ {\scriptsize\color{muted}cinco conjuntos ordenados de forma determinista}};
+\foreach \x in {3.0,5.6,8.4,11.0} \draw[flecha] (\x,-0.675) -- (\x,-1.3);
+\draw[flecha] (6.9,-2.42) -- (6.9,-2.6);
+\draw[flecha] (6.9,-3.72) -- (6.9,-3.9);
+\draw[flecha] (6.9,-5.02) -- (6.9,-5.2);
+\draw[flecha] (6.9,-6.32) -- (6.9,-6.5);
+\draw[flecha] (6.9,-7.62) -- (6.9,-7.8);
+\draw[flecha] (6.9,-8.92) -- (6.9,-9.1);
+\end{tikzpicture}
+\caption{Arquitectura final implementada: cuatro fuentes oficiales, capas
+inmutables con procedencia, histórico canónico en Silver, estado vigente y
+enriquecimiento con Spark, Gold en Parquet, vistas analíticas con DuckDB y
+consumo en Tableau. La ejecución es batch local; la orquestación programada
+queda fuera de esta versión.}
+\end{figure}
+
+% ============================================================
+%  5. IMPLEMENTACIÓN
+% ============================================================
+\section{Implementación}
+
+\Needspace{12\baselineskip}
+\subsection{Stack}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}l X@{}}
+\toprule
+\cabecera{Componente} & \cabecera{Elección y motivo}\\
+\midrule
+Python 3.10+ & Parsers de fuentes, procedencia, Silver y CLI\\
+Polars & Procesamiento columnar de la capa Silver\\
+Parquet & Formato columnar entre etapas\\
+PySpark 4.0.1 & Estado vigente, enriquecimiento y Gold (extra de ejecución)\\
+DuckDB & Vistas analíticas solo-lectura sobre Gold\\
+Tableau & Export CSV determinista + dashboard de oportunidades\\
+uv & Gestión reproducible del entorno y de las ejecuciones\\
+\texttt{unittest} & Verificación automática de parsing, identidad, contratos, Gold, DuckDB y export Tableau\\
+CLI (\texttt{licitaciones-pipeline}) & Interfaz única: ingesta, transformación, Gold, analítica y export\\
+\bottomrule
+\end{tabularx}
+\caption{Stack tecnológico final.}
+\end{table}
+
+\subsection{Punto de entrada}
+
+La CLI reúne los comandos de la cadena en una única interfaz. La ingesta es la
+única etapa que necesita acceso a red; transformación, Gold, analítica y export
+se pueden repetir localmente a partir de los artefactos persistidos. El
+siguiente listado muestra una ejecución de ejemplo, no el corte de la
+ejecución final.
+
+\begin{lstlisting}[caption={Interfaz del pipeline (esquema)}]
+# Ingesta explicita (es la unica etapa con red)
+licitaciones-pipeline ingest --source ted \
+  --start 2026-01-01 --end 2026-06-30
+licitaciones-pipeline ingest --source placsp \
+  --start 2026-01-01 --end 2026-06-30
+
+# Transformacion sin red y reproducible
+licitaciones-pipeline run
+licitaciones-pipeline build-gold --as-of 2026-09-17
+licitaciones-pipeline build-analytics
+licitaciones-pipeline export-tableau
+\end{lstlisting}
+
+\subsection{Procedencia desde el primer byte}
+
+Cada fichero Raw viaja con un fichero de procedencia
+\texttt{<fichero>.provenance.json}. Este fichero registra la fuente, la ruta,
+la ventana temporal, la fecha de recuperación y el checksum. Bronze comprueba
+esa evidencia antes de procesar el contenido y detiene la ejecución si falta o
+es incoherente.
+
+\begin{lstlisting}[caption={Fichero de procedencia (ejemplo)}]
+{
+  "version": 1,
+  "source": "placsp",
+  "raw_path": "placsp/2026-09.zip",
+  "sha256": "9f2c...a41b",
+  "retrieved_at": "2026-09-02T11:14:03+00:00",
+  "partition": "202609",
+  "window_start": "2026-09-01",
+  "window_end": "2026-09-30"
+}
+\end{lstlisting}
+
+\Needspace{16\baselineskip}
+\subsection{Validación y control de calidad}
+
+La validación empieza en Raw, con la comprobación de la procedencia y el
+checksum, y continúa durante el parsing de Bronze, la construcción de la
+identidad canónica de Silver y los contratos de Gold. Se comprueban tipos,
+claves, fechas, importes, conteos entre capas y unicidad del procedimiento.
+Los manifiestos y los informes de ingesta conservan los conteos y el estado de
+estas comprobaciones.
+
+Cada registro rechazado se escribe con un valor de
+\texttt{rejection\_reason}, por ejemplo \texttt{invalid\_json} o
+\texttt{source\_mismatch}. El contenido original permanece en Raw y puede
+localizarse mediante su procedencia.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}l X@{}}
+\toprule
+\cabecera{Salida Bronze} & \cabecera{Contenido}\\
+\midrule
+\texttt{records.parquet} & Registros aceptados con procedencia completa\\
+\texttt{tombstones.parquet} & Cada control de borrado válido, sin deduplicar\\
+\texttt{rejections.parquet} & Descartados con motivo (\texttt{rejection\_reason}) y alcance\\
+\texttt{ingestion\_report.json} & Conteos: \texttt{parsed = accepted + rejected}, por fuente\\
+\bottomrule
+\end{tabularx}
+\caption{Salidas generadas por la capa Bronze.}
+\end{table}
+
+\subsection{Decisión del motor de Silver}
+
+La implementación inicial en Python se utilizó como referencia para comparar
+los motores candidatos. Polars y Spark solo se consideraron válidos cuando
+produjeron el mismo resultado semántico que esa referencia.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}l r r l@{}}
+\toprule
+\cabecera{Motor} & \cabecera{Tiempo} & \cabecera{Memoria} & \cabecera{Resultado}\\
+\midrule
+Python & 0,617\,s & 360,96\,MB & Referencia\\
+Polars & 0,254\,s & 302,31\,MB & Mismo resultado\\
+Spark & 10,010\,s & 1.335,80\,MB & Mismo resultado\\
+\bottomrule
+\end{tabular}
+\caption{Comparativa en el perfil \texttt{small} ($\sim$25.000 filas, mediana
+de 3 repeticiones). Informe completo en
+\texttt{experiments/silver\_engine\_comparison/}.}
+\end{table}
+
+En el perfil \texttt{small}, Polars completó la transformación en 0,254 s
+frente a 0,617 s de la referencia, unas 2,4 veces más rápido. Spark mantuvo la
+paridad, pero sus 10,010 s no compensaron su coste de arranque en esta etapa.
+Silver usa Polars como ruta rápida y conserva la implementación inicial para
+los lotes que requieren la ruta conservadora.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\footnotesize, x=1cm, y=1cm]
+\node[anchor=east] at (-0.2,0) {python-row};
+\node[anchor=east] at (-0.2,-0.75) {polars-native};
+\node[anchor=east] at (-0.2,-1.5) {spark-native};
+\fill[ink] (0,-0.22) rectangle (2.0,0.22);
+\fill[ink] (0,-0.97) rectangle (4.8,-0.53);
+\fill[ink] (0,-1.72) rectangle (0.2,-1.28);
+\node[anchor=west] at (2.15,0) {1,0\texttimes{}};
+\node[anchor=west] at (4.95,-0.75) {2,4\texttimes{}};
+\node[anchor=west] at (0.35,-1.5) {0,10\texttimes{}};
+\draw[color=line, line width=0.4pt] (0,-2.0) -- (8.0,-2.0);
+\foreach \x in {0,2,4,6,8} \draw[color=line, line width=0.4pt] (\x,-2.0) -- (\x,-2.12);
+\node[font=\scriptsize\color{muted}] at (4,-2.35) {aceleración frente a la referencia (2\,cm = 1\texttimes{})};
+\end{tikzpicture}
+\caption{Aceleración frente a la referencia en el perfil \texttt{small}:
+Polars $\sim$2,4\texttimes{} con el mismo resultado; Spark local queda en
+0,10\texttimes{} en esta escala por su coste de arranque. Tiempos
+absolutos en la tabla anterior.}
+\end{figure}
+
+% ============================================================
+%  6. EVALUACIÓN
+% ============================================================
+\section{Evaluación}
+
+La evaluación se apoya en un marco de pruebas reproducible con perfiles de
+carga de distinto tamaño y métricas conservadas en JSON. Ninguna
+cifra de rendimiento se publica en la memoria sin su ejecución registrada.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}l r r r X@{}}
+\toprule
+\cabecera{Perfil} & \cabecera{TED} & \cabecera{PLACSP} & \cabecera{Filas} & \cabecera{Uso}\\
+\midrule
+\texttt{tiny} & 120 & 120 & $\sim$310 & Pruebas automáticas, milisegundos\\
+\texttt{small} & 10.000 & 10.000 & $\sim$25.000 & Comparación local\\
+\texttt{medium} & 100.000 & 100.000 & $\sim$250.000 & Escala heurística\\
+\texttt{large} & 800.000 & 800.000 & $\sim$2\,M & Exploratorio n=1 (2026-09-16)\\
+\texttt{backfill} & 2.000.000 & 2.000.000 & $\sim$5{,}1\,M & Definido, sin resultado conservado\\
+\bottomrule
+\end{tabularx}
+\caption{Perfiles de prueba: conjuntos sintéticos de distinto tamaño.}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}X l l@{}}
+\toprule
+\cabecera{Criterio} & \cabecera{Se mide con} & \cabecera{Umbral}\\
+\midrule
+Mismo resultado Bronze\tarrow Silver & Contrato semántico comparado & Igualdad exacta en todos los motores\\
+Rendimiento de la etapa & Tiempo y memoria por perfil (JSON) & Mediana de 3 repeticiones\\
+Cobertura de ingesta & Conteos del manifiesto frente a fuente & 349.399 entradas PLACSP verificadas\\
+Integridad de identidad & Pruebas de colisión y unicidad & Ninguna colisión resuelta en silencio\\
+\bottomrule
+\end{tabularx}
+\caption{Criterios de evaluación del pipeline.}
+\end{table}
+
+\subsection{Criterio de aceptación de resultados}
+
+Una implementación más rápida solo se acepta si produce exactamente los mismos
+resultados que la de referencia, de forma consistente en los perfiles medidos.
+La medición aceptó combinar Polars con la implementación inicial como respaldo;
+Spark no se incorporó a esta etapa del pipeline. Si los resultados difieren,
+la divergencia no se descarta: se documenta y se convierte en hallazgo de la
+memoria.
+
+La batería de pruebas se ejecuta con \texttt{unittest}. Cubre el parsing, la
+procedencia, la identidad, los contratos entre capas, el estado vigente, el
+enriquecimiento, las vistas DuckDB y el export a Tableau. Las suites de Spark
+se ejecutan cuando está instalado el extra correspondiente; la validación
+offline no necesita acceso a las fuentes oficiales.
+
+Las pruebas incluyen una comprobación de colisiones: ante dos contenidos
+distintos bajo el mismo identificador la
+transformación debe fallar, nunca elegir. La clasificación tecnológica se
+conserva como baseline histórico, pero no forma parte de la cadena E2E final
+ni se presenta como evaluación principal porque no existe una muestra humana
+anotada que permita validarla adecuadamente.
+
+% ============================================================
+%  7. RESULTADOS
+% ============================================================
+\section{Resultados finales}
+
+\subsection{Ejecución E2E final}
+
+La cadena Raw--Tableau está implementada, pero el repositorio no conserva aún
+una ejecución final de producción realizada después de incorporar Gold,
+DuckDB y el export de Tableau. Por esta razón no se reutilizan como resultado
+final los conteos del manifiesto del 2 de septiembre, que corresponde a una
+arquitectura anterior. El cierre de esta subsección requiere ejecutar la
+cadena sobre el corpus de referencia y conservar los manifiestos de Bronze,
+Silver, Gold y Tableau.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}X X@{}}
+\toprule
+\cabecera{Etapa} & \cabecera{Evidencia pendiente de la ejecución final}\\
+\midrule
+Bronze & Aceptados, rechazos, tombstones y causas\\
+Silver & Filas de \texttt{procurement\_events} y checksum\\
+Estado vigente y Gold & Procedimientos, incidencias y oportunidades abiertas\\
+DuckDB & Construcción y conteos de las vistas analíticas\\
+Tableau & Cinco CSV, filas por fichero y manifest del export\\
+\bottomrule
+\end{tabularx}
+\caption{Evidencia que debe conservar la ejecución E2E final.}
+\end{table}
+
+Silver conserva el histórico completo de publicaciones y revisiones. A partir
+de él, Gold obtiene una fila por procedimiento para una fecha de corte
+concreta. Una licitación se incluye entre las oportunidades abiertas cuando
+la evidencia indica que sigue activa y su plazo no ha vencido. Un plazo
+terminado o la existencia de una adjudicación, resolución o anulación la
+clasifican como cerrada. Los anuncios previos y los casos sin información
+suficiente no se muestran como oportunidades abiertas. La fecha de evaluación
+se proporciona al comando, por lo que una repetición con los mismos datos y
+la misma fecha aplica la misma regla.
+
+\subsection{Explotación: DuckDB y Tableau}
+
+DuckDB expone vistas de solo lectura sobre Gold. El comando
+\texttt{export-tableau} escribe cinco CSV con orden determinista y un
+manifiesto que registra el conteo de cada fichero.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}l X X@{}}
+\toprule
+\cabecera{Conjunto de datos} & \cabecera{Uso principal} & \cabecera{Granularidad}\\
+\midrule
+\texttt{open\_opportunities} & Detalle de oportunidades vigentes & Una fila por \texttt{procedure\_id}\\
+\texttt{opportunity\_cpv} & Relación entre oportunidades y códigos CPV & Una fila por procedimiento, CPV y posición\\
+\texttt{buyer\_summary} & Resumen por comprador & Una fila por identidad analítica del comprador\\
+\texttt{cpv\_summary} & Resumen por categoría CPV & Una fila por \texttt{cpv\_code}\\
+\texttt{opportunities\_monthly} & Evolución temporal por fuente & Una fila por mes y fuente\\
+\bottomrule
+\end{tabularx}
+\caption{Conjuntos analíticos exportados para Tableau.}
+\end{table}
+
+El dashboard permite explorar la evolución temporal, los compradores y las
+categorías CPV. Tableau consume estos conjuntos analíticos y no vuelve a
+implementar las reglas de estado vigente definidas en Gold. Los conteos de los
+cinco CSV y la captura definitiva se incorporarán cuando se conserve el
+manifest de la ejecución final.
+
+% ============================================================
+%  8. DISCUSIÓN
+% ============================================================
+\section{Discusión}
+
+La identidad y el histórico condicionan los resultados. Un procedimiento
+puede originar varias publicaciones, por lo que contar filas sin resolver sus
+revisiones mezcla eventos y procedimientos. La identidad determinista y las
+pruebas de colisión permiten conservar esas revisiones y detectar contenidos
+incompatibles sin escoger una versión de forma arbitraria.
+
+La reproducibilidad se apoya en checksums de procedencia, esquemas versionados,
+manifiestos con conteos y exports ordenados. Las medidas que todavía no tienen
+un artefacto conservado, como el perfil \texttt{backfill} y la ejecución E2E
+final de producción, permanecen identificadas como pendientes.
+
+El benchmark local justificó Polars para Silver: en el perfil
+\texttt{small} redujo la transformación de 0,617 s a 0,254 s con el mismo
+resultado. Spark fue más lento en esa frontera, pero se utiliza en el estado
+vigente y el enriquecimiento, donde se aplican ventanas y joins sobre el
+histórico. La elección depende de la operación y del volumen medido en cada
+etapa.
+
+La arquitectura final separa dos necesidades. Silver conserva todo el
+histórico publicado y Gold ofrece el estado vigente para análisis. Esta
+separación evita destruir evidencia al actualizar una vista de negocio.
+
+El corpus TED usado como referencia está sesgado hacia tecnología por la
+consulta de adquisición. Esa limitación afecta a los resultados descriptivos
+del corpus, pero no restringe el modelo de datos: la ingesta, las entidades
+canónicas y el enriquecimiento CPV admiten contratación de cualquier sector.
+
+% ============================================================
+%  9. CONCLUSIONES
+% ============================================================
+\section{Conclusiones y trabajo futuro}
+
+El proyecto integra fuentes heterogéneas de contratación pública en una cadena
+trazable. La decisión principal fue representar cada publicación como un
+evento con identidad determinista. Así se conservan las correcciones y
+anulaciones y se puede derivar el estado vigente sin perder el histórico.
+
+Raw conserva la evidencia original, Bronze normaliza y registra rechazos,
+Silver mantiene el histórico canónico y Gold publica las oportunidades
+vigentes. DuckDB y los CSV de Tableau completan la frontera de consumo sin
+duplicar la lógica de negocio. Falta conservar la ejecución final sobre el
+corpus completo y añadir su captura de Tableau; la memoria no presenta esos
+resultados como terminados hasta disponer de los artefactos.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+\cabecera{Área} & \cabecera{Hoy} & \cabecera{Corrección prevista}\\
+\midrule
+Corpus & Ventana ene--jun 2026; TED sesgado a tecnología & Ampliar histórico y filtros sectoriales\\
+Completitud & Sin refresco automático de meses cacheados & Estado de ventana y reintentos persistentes\\
+Rechazos & El estado global de calidad no integra todavía todos los resultados de ingesta & Unificar la decisión de calidad\\
+Ejecución & Batch local reproducible y empaquetado con Docker; sin orquestación & Programación con Airflow\\
+Dashboard & Capa de demostración analítica & Personalización opcional por perfil de empresa\\
+\bottomrule
+\end{tabularx}
+\caption{Limitaciones vigentes y líneas futuras: ingesta periódica,
+enriquecimiento con nuevas fuentes (p.\,ej.\ contratos menores) y semántica
+para ranking y búsqueda.}
+\end{table}
+
+% ============================================================
+%  BIBLIOGRAFÍA
+% ============================================================
+\clearpage
+\begin{thebibliography}{9}
+\addcontentsline{toc}{section}{Bibliografía}
+
+\bibitem{ted} Publications Office of the European Union.
+\emph{TED eSender: API documentation}. Oficina de Publicaciones de la UE.
+
+\bibitem{placsp} Ministerio de Economía, Comercio y Empresa.
+\emph{Open Data Portal de la Plataforma de Contratación del Sector Público}.
+
+\bibitem{dir3} Ministerio de Políticas Territoriales.
+\emph{DIR3: Directorio Común de unidades orgánicas y oficinas}.
+
+\bibitem{cpv} Reglamento (UE) 2015/2424, que modifica el Reglamento (CE) 2195/2007
+sobre el Vocabulario Común de Contratos Públicos (CPV).
+
+\bibitem{polars} Polars. \emph{User guide}. \url{https://pola.rs}
+
+\bibitem{spark} Apache Software Foundation. \emph{Apache Spark documentation}.
+\url{https://spark.apache.org/docs/latest/}
+
+\bibitem{duckdb} DuckDB Foundation. \emph{DuckDB documentation}.
+\url{https://duckdb.org/docs/stable/}
+
+\bibitem{tableau} Salesforce. \emph{Tableau documentation}.
+\url{https://help.tableau.com/}
+
+\bibitem{kleppmann} Kleppmann, M. (2017). \emph{Designing Data-Intensive
+Applications}. O'Reilly.
+
+\end{thebibliography}
+
+\end{document}
