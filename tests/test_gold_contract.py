@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+import polars as pl
+
 from tfm_licitaciones.gold_contract import (
     CANONICAL_SILVER_FIELDS,
     CURRENT_STATE_FIELDS,
@@ -12,6 +14,22 @@ from tfm_licitaciones.models import PROCUREMENT_EVENT_SCHEMA
 
 def signature(fields):
     return tuple((field.name, field.logical_type, field.nullable) for field in fields)
+
+
+def polars_logical_type(dtype: pl.DataType) -> str:
+    if dtype == pl.String:
+        return "string"
+    if dtype == pl.Date:
+        return "date"
+    if dtype == pl.Datetime("us", "UTC"):
+        return "timestamp"
+    if dtype == pl.Decimal(precision=20, scale=2):
+        return "decimal(20,2)"
+    if dtype == pl.List(pl.String):
+        return "array<string>"
+    if dtype == pl.Boolean:
+        return "boolean"
+    raise AssertionError(f"unmapped canonical Silver Polars dtype: {dtype!r}")
 
 
 CANONICAL_SILVER_V1 = (
@@ -90,6 +108,10 @@ class GoldContractTests(unittest.TestCase):
         self.assertEqual(
             tuple(field.name for field in CANONICAL_SILVER_FIELDS),
             tuple(PROCUREMENT_EVENT_SCHEMA.keys()),
+        )
+        self.assertEqual(
+            tuple(field.logical_type for field in CANONICAL_SILVER_FIELDS),
+            tuple(polars_logical_type(dtype) for dtype in PROCUREMENT_EVENT_SCHEMA.values()),
         )
 
     def test_current_state_v1_is_fully_pinned(self) -> None:
