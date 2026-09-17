@@ -206,14 +206,24 @@ or enrichment logic is reimplemented; both merged interfaces are composed).
 Evidence inspected before freezing: canonical Silver always carries
 `status=NULL` and `deadline=NULL` for TED and BOE (no mapping populates
 them; `silver_native`/`silver_reference` set literal nulls); PLACSP carries
-the free-text `ContractFolderStatusCode` with the only real-fixture value
-`EV` on live published procedures (`tests/fixtures/placsp/mini-placsp.atom`,
-`tests/fixtures/raw/placsp/placsp-202601.zip`); `ADJ` is the only other
-status string in the repository (synthetic lifecycle progression in
-`bench_silver.py`); `is_deleted` is true exactly for tombstone-selected
-current-state rows; `ingested_at` is retrieval provenance only. Legacy Gold
-0.1 publishes every non-tombstoned record with no status filter and is
-historical reference only, never a source for this policy.
+the `ContractFolderStatusCode` lifecycle value; `is_deleted` is true
+exactly for tombstone-selected current-state rows; `ingested_at` is
+retrieval provenance only. Legacy Gold 0.1 publishes every non-tombstoned
+record with no status filter and is historical reference only, never a
+source for this policy.
+
+Official source for the PLACSP lifecycle (frozen, no longer a follow-up):
+the DGPE CODICE codelist `SyndicationContractFolderStatusCode` 2.04
+(<https://contrataciondelestado.es/codice/cl/2.04/SyndicationContractFolderStatusCode-2.04.gc>):
+
+| Code | Nombre oficial | Gold policy |
+| --- | --- | --- |
+| `PRE` | Anuncio Previo | `insufficient_evidence`: a prior notice never proves bids can be submitted |
+| `PUB` | EN PLAZO | `open`: the only status proving an actionable bidding window |
+| `EV` | PENDIENTE DE ADJUDICACION | `status_closed`: submission phase finished, never actionable |
+| `ADJ` | Adjudicada | `status_closed` (likewise `ADJ_PAR`, partial-award variants) |
+| `RES` | Resuelta | `status_closed` (likewise `RES_PAR`, partial-resolution variants) |
+| `ANUL` | Anulada | `status_closed` |
 
 Decision per current-state row, in precedence order:
 
@@ -221,11 +231,11 @@ Decision per current-state row, in precedence order:
 2. `deadline` non-null, `as_of` provided, `deadline < as_of` (strict, UTC;
    `as_of` is the start of the evaluation day) → `deadline_passed`
    (not actionable; wins over any status text).
-3. `source == "placsp"`: `status == "EV"` → `open` (only status with real
-   fixture evidence; null deadlines do not block it); `status == "ADJ"` →
-   `status_closed` (not actionable; wins over a stale future deadline);
-   null or any other string → `insufficient_evidence` (exact,
-   case-sensitive match; never silently opened).
+3. `source == "placsp"`: `status == "PUB"` → `open` (null deadlines do not
+   block it); `status` in `{"EV", "ADJ", "ADJ_PAR", "RES", "RES_PAR",
+   "ANUL"}` → `status_closed` (not actionable; wins over a stale future
+   deadline); `"PRE"`, null or any other string → `insufficient_evidence`
+   (exact, case-sensitive match; never silently opened).
 4. Any other source (TED/BOE/…): non-null `status` →
    `insufficient_evidence` (unexpected taxonomy: the contract says TED/BOE
    status is always null); null `status` with non-null `deadline` and a
@@ -238,9 +248,8 @@ Consequences: a null `deadline` never excludes; without `as_of` no
 deadline is evaluated (production runs must pass `--as-of`); no
 `datetime.now()` hides inside the logic; `source_event_type`,
 `awarded_value`, `publication_date`, `source_updated_at` and `ingested_at`
-are not openness signals. `EV`/`ADJ` are provisional minimal sets: the
-follow-up is to freeze the full official CODICE `ContractFolderStatusCode`
-codelist instead of widening them by intuition.
+are not openness signals. The lifecycle table above is the frozen
+codelist: no status string is interpreted by intuition.
 
 ### Enrichment composition (frozen)
 
@@ -360,7 +369,5 @@ joins (enforced inside `gold_enrichment`).
    DuckDB unless a structural need is proven).
 6. Consolidate the `pyspark==4.0.1` runtime pin into one packaging/CI source of
    truth now that the executable Gold path (`build-gold`) exists.
-7. Freeze the full official CODICE `ContractFolderStatusCode` codelist to
-   replace the provisional `EV`/`ADJ` minimal sets, and map the real
-   deadline sources (TED `deadline-receipt-tender-date-lot` is requested
-   but unused; PLACSP publishes no deadline field today).
+7. Map the real deadline sources (TED `deadline-receipt-tender-date-lot`
+   is requested but unused; PLACSP publishes no deadline field today).

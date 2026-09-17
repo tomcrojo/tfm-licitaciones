@@ -31,11 +31,13 @@ record):
   TED/PLACSP/BOE mapping populates it); the column exists in the contract
   and the policy evaluates it whenever it is populated.
 - ``status`` is structurally always null for TED and BOE. For PLACSP it
-  carries the free-text ``ContractFolderStatusCode``; the only value
-  demonstrated by real fixtures on live published procedures is ``"EV"``.
-  ``"ADJ"`` is the only other status string present in the repository
-  (synthetic lifecycle progression in ``bench_silver``) and is treated as
-  explicitly closed. No cross-source taxonomy is invented.
+  carries the ``ContractFolderStatusCode`` lifecycle value, whose semantics
+  are frozen by the official DGPE CODICE codelist
+  ``SyndicationContractFolderStatusCode`` 2.04: only ``"PUB"`` ("EN PLAZO")
+  proves an actionable bidding window. ``EV`` ("PENDIENTE DE ADJUDICACION")
+  means the submission phase is finished and is never actionable. No
+  cross-source taxonomy is invented. ``PRE`` ("Anuncio Previo") never opens:
+  a prior notice does not prove bids can be submitted.
 - ``ingested_at``, retrieval time, processing time, filenames, row order
   and part-file order are technical provenance and never business time.
 
@@ -47,12 +49,14 @@ Decision for one current-state row, in precedence order:
    evaluation day) -> ``deadline_passed`` (not actionable, wins over any
    status text).
 3. ``source == "placsp"``:
-   - ``status == "EV"`` -> ``open`` (the only status value with real
-     fixture evidence on live procedures; null deadlines do not block it).
-   - ``status == "ADJ"`` -> ``status_closed`` (not actionable, wins over a
-     stale future deadline).
-   - null or any other string -> ``insufficient_evidence`` (observable, never
-     silently opened; exact case-sensitive match, no normalization).
+   - ``status == "PUB"`` -> ``open`` (official "EN PLAZO"; null deadlines
+     do not block it).
+   - ``status`` in ``{"EV", "ADJ", "ADJ_PAR", "RES", "RES_PAR", "ANUL"}`` ->
+     ``status_closed`` (not actionable, wins over a stale future
+     deadline).
+   - ``"PRE"``, null or any other string -> ``insufficient_evidence``
+     (observable, never silently opened; exact case-sensitive match, no
+     normalization).
 4. Any other source (TED/BOE/...):
    - ``status`` is not null -> ``insufficient_evidence`` (the contract says
      TED/BOE status is always null, so any value is unexpected taxonomy).
@@ -121,11 +125,17 @@ GOLD_MANIFEST_FILENAME = "gold_manifest.json"
 
 CPV_CODES_FILENAME = "cpv_codes.parquet"
 
-# Provisional minimal status evidence. Only "EV" is demonstrated by real
-# PLACSP fixtures on live published procedures; only "ADJ" is present in the
-# repository as a post-open lifecycle marker. Everything else is unknown.
-PLACSP_OPEN_STATUSES = frozenset({"EV"})
-PLACSP_CLOSED_STATUSES = frozenset({"ADJ"})
+# Official PLACSP lifecycle evidence: DGPE CODICE codelist
+# SyndicationContractFolderStatusCode 2.04
+# (https://contrataciondelestado.es/codice/cl/2.04/SyndicationContractFolderStatusCode-2.04.gc):
+# PRE=Anuncio Previo, PUB=EN PLAZO, EV=PENDIENTE DE ADJUDICACION,
+# ADJ=Adjudicada, RES=Resuelta, ANUL=Anulada. Only PUB ("EN PLAZO") proves
+# an actionable bidding window. ADJ_PAR/RES_PAR (partial award/resolution
+# variants seen in newer feeds) are closed by the same definition: the
+# submission phase is finished. PRE stays insufficient evidence: a prior
+# notice never proves that bids can be submitted.
+PLACSP_OPEN_STATUSES = frozenset({"PUB"})
+PLACSP_CLOSED_STATUSES = frozenset({"EV", "ADJ", "ADJ_PAR", "RES", "RES_PAR", "ANUL"})
 
 PLACSP_SOURCE = "placsp"
 

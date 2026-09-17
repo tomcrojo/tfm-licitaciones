@@ -11,7 +11,9 @@ counted, never published; 8 null-deadline policy; 9 multiple CPV keep the
 grain; 10 unmatched CPV conserved and counted; 11 missing DIR3 never
 blocks; 12 matched DIR3 keeps buyer identity; 13 procedure_id uniqueness;
 14 manifest versions/counts; 15 deterministic as_of; 16 Silver -> Gold
-boundary roundtrip.
+boundary roundtrip. Cases 17-18 freeze the official PLACSP lifecycle:
+17 every closed status (EV/ADJ/ADJ_PAR/RES/RES_PAR/ANUL) excluded;
+18 PRE never opens.
 """
 
 from __future__ import annotations
@@ -71,9 +73,12 @@ REF_B = "https://contrataciondelestado.es/sindicacion/licitacionesPerfilContrata
 class AsOfPolicyTests(unittest.TestCase):
     """Offline checks: normalization never touches the system clock."""
 
-    def test_policy_status_sets_are_frozen_minimal(self) -> None:
-        self.assertEqual(PLACSP_OPEN_STATUSES, frozenset({"EV"}))
-        self.assertEqual(PLACSP_CLOSED_STATUSES, frozenset({"ADJ"}))
+    def test_policy_status_sets_match_the_official_codelist(self) -> None:
+        self.assertEqual(PLACSP_OPEN_STATUSES, frozenset({"PUB"}))
+        self.assertEqual(
+            PLACSP_CLOSED_STATUSES,
+            frozenset({"EV", "ADJ", "ADJ_PAR", "RES", "RES_PAR", "ANUL"}),
+        )
 
     def test_parse_as_of_accepts_unequivocal_forms(self) -> None:
         self.assertEqual(
@@ -150,7 +155,7 @@ class GoldOpenOpportunitiesTests(unittest.TestCase):
             source="placsp",
             source_event_type="notice_snapshot",
             source_updated_at=when,
-            status="EV",
+            status="PUB",
             title="PLACSP notice",
         )
         row.update(overrides)
@@ -324,7 +329,13 @@ class GoldOpenOpportunitiesTests(unittest.TestCase):
 
     def test_06_open_status_included(self) -> None:
         current = self._current_state(
-            [self._placsp_notice(REF_A, datetime(2026, 1, 8, 10, 0, tzinfo=UTC))]
+            [
+                self._placsp_notice(
+                    REF_A,
+                    datetime(2026, 1, 8, 10, 0, tzinfo=UTC),
+                    status="PUB",
+                )
+            ]
         )
         gold, metrics = build_open_opportunities(current, as_of=AS_OF)
         self.assertEqual(gold.count(), 1)
@@ -335,7 +346,7 @@ class GoldOpenOpportunitiesTests(unittest.TestCase):
             self._placsp_notice(
                 REF_A, datetime(2026, 1, 8, 10, 0, tzinfo=UTC), status=status
             )
-            for status in ("PUB", "XYZ", "ev", "", None)
+            for status in ("XYZ", "ev", "pub", "", None)
         ]
         # Distinct procedures: one row per status value under test.
         for index, row in enumerate(rows):
@@ -350,7 +361,7 @@ class GoldOpenOpportunitiesTests(unittest.TestCase):
         self.assertEqual(metrics["excluded_insufficient_evidence"], 5)
 
     def test_08_null_deadline_policy(self) -> None:
-        # Null deadlines never exclude: EV openness comes from status alone.
+        # Null deadlines never exclude: PUB openness comes from status alone.
         open_current = self._current_state(
             [
                 self._placsp_notice(
@@ -385,6 +396,48 @@ class GoldOpenOpportunitiesTests(unittest.TestCase):
         gold_na, metrics_na = build_open_opportunities(current, as_of=None)
         self.assertEqual(gold_na.count(), 0)
         self.assertEqual(metrics_na["reasons"][DECISION_INSUFFICIENT_EVIDENCE], 1)
+
+    def test_17_closed_lifecycle_statuses_excluded(self) -> None:
+        # Official codelist: EV is evaluation (submission finished), ADJ/RES
+        # families are awarded/resolved, ANUL is cancelled. None is open.
+        for status in ("EV", "ADJ", "ADJ_PAR", "RES", "RES_PAR", "ANUL"):
+            with self.subTest(status=status):
+                current = self._current_state(
+                    [
+                        self._placsp_notice(
+                            REF_A,
+                            datetime(2026, 1, 8, 10, 0, tzinfo=UTC),
+                            status=status,
+                        )
+                    ]
+                )
+                gold, metrics = build_open_opportunities(current, as_of=AS_OF)
+                self.assertEqual(gold.count(), 0)
+                self.assertEqual(metrics["reasons"][DECISION_STATUS_CLOSED], 1)
+                self.assertEqual(metrics["excluded_not_actionable"], 1)
+                self.assertEqual(metrics["open_opportunities_rows"], 0)
+
+    def test_18_prior_notice_never_opens(self) -> None:
+        # PRE (Anuncio Previo) never proves bids can be submitted, with or
+        # without a future deadline: it stays observable, never published.
+        for deadline in (None, datetime(2026, 3, 1, 12, 0, tzinfo=UTC)):
+            with self.subTest(deadline=deadline):
+                current = self._current_state(
+                    [
+                        self._placsp_notice(
+                            REF_A,
+                            datetime(2026, 1, 8, 10, 0, tzinfo=UTC),
+                            status="PRE",
+                            deadline=deadline,
+                        )
+                    ]
+                )
+                gold, metrics = build_open_opportunities(current, as_of=AS_OF)
+                self.assertEqual(gold.count(), 0)
+                self.assertEqual(
+                    metrics["reasons"][DECISION_INSUFFICIENT_EVIDENCE], 1
+                )
+                self.assertEqual(metrics["excluded_insufficient_evidence"], 1)
 
     # -- enrichment composition -----------------------------------------
 
