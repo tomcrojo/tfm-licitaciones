@@ -219,6 +219,20 @@ class TombstoneSourceTimeTests(unittest.TestCase):
                 tombstone_frame([_row(when, ref="   ")]),
             )
 
+    def test_divergent_whitespace_ref_keeps_original_reference_semantics(self) -> None:
+        when = datetime(2026, 1, 10, 16, 1, 39, 351000, tzinfo=UTC)
+        divergent_ref = "\x1c" + REF
+        with self.assertLogs("tfm_licitaciones.silver", level="INFO") as captured:
+            events = build_procurement_events(
+                bronze_frame([]),
+                tombstone_frame([_row(when, ref=divergent_ref)]),
+            )
+        route_records = [record for record in captured.records if record.getMessage() == "silver_batch_route"]
+        self.assertEqual(route_records[0].route, "reference-fallback")
+        self.assertEqual(events["event_id"][0], f"placsp:tombstone:{REF}")
+        self.assertEqual(events["procedure_id"][0], f"placsp:procedure:{REF}")
+        self.assertIsNone(events["source_updated_at"][0])
+
     def test_legacy_undated_tombstone_keeps_historical_identity(self) -> None:
         events = build_procurement_events(bronze_frame([]), tombstone_frame([_row(None)]))
         self.assertEqual(events.height, 1)
