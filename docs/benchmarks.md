@@ -255,7 +255,7 @@ print(f"eligible={eligibility.eligible} guard {t_guard:.2f}s  reference {t_ref:.
 PY
 ```
 
-El coste fijo de plan del kernel nativo (~0,6 s por llamada, medido en el
+El coste fijo de plan del kernel nativo (~0,4 s por llamada, medido en el
 build de una fila) es irrelevante a esta escala y solo penaliza ejecuciones
 con muchos lotes diminutos (documentado como seguimiento para ventanas
 diarias pequeñas).
