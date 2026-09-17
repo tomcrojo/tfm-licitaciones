@@ -1,0 +1,16 @@
+# Versionado y CI: no aportan nada al runtime.
+.git
+.github
+
+# Datasets y artefactos derivados viven fuera de la imagen (docs/docker.md).
+data
+
+# Entornos y caches locales.
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+
+# Material no necesario en el runtime (disponible en el repo).
+experiments
+docs

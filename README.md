@@ -71,6 +71,9 @@ El montaje del dashboard en Tableau es manual; el repositorio genera sus datos.
 La [guía analítica](docs/analytics.md) explica los granos y cómo evitar doble
 conteo al analizar varios CPV por oportunidad.
 
+El runtime también se puede ejecutar con [Docker o Podman](docs/docker.md),
+con Python 3.11, Java 17 y PySpark 4.0.1. Los datos se montan fuera de la imagen.
+
 ## Pruebas
 
 La suite utiliza **unittest**, fixtures locales y HTTP simulado:
