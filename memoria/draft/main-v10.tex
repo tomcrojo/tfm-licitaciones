@@ -545,16 +545,23 @@ CLI (\texttt{licitaciones-pipeline}) & Interfaz única: ingesta, transformación
 \caption{Stack tecnológico final.}
 \end{table}
 
-\subsection{Punto de entrada}
+\subsection{Interfaz de línea de comandos}
 
-La CLI reúne los comandos de la cadena en una única interfaz. La ingesta es la
-única etapa que necesita acceso a red; transformación, Gold, analítica y export
-se pueden repetir localmente a partir de los artefactos persistidos. El
-siguiente listado muestra una ejecución de ejemplo, no el corte de la
-ejecución final.
+Para reducir la fricción de uso se definió un único ejecutable,
+\texttt{licitaciones-pipeline}, en lugar de exponer una colección de scripts
+independientes. Sus subcomandos llaman a las mismas funciones de la aplicación,
+toman las rutas de \texttt{config/pipeline.json} ---sobrescribibles por
+argumentos--- y devuelven un resumen JSON con salidas y conteos. Mantener las
+etapas separadas permite reanudar la cadena desde el último artefacto válido.
+
+La ingesta es la única operación con acceso a red. \texttt{run},
+\texttt{build-gold}, \texttt{build-analytics} y \texttt{export-tableau}
+trabajan sobre artefactos persistidos y pueden repetirse localmente. El listado
+muestra la interfaz y una ejecución de ejemplo, no el corte de la ejecución final.
 
 \begin{lstlisting}[caption={Interfaz del pipeline (esquema)}]
 # Ingesta explicita (es la unica etapa con red)
+licitaciones-pipeline --help
 licitaciones-pipeline ingest --source ted \
   --start 2026-01-01 --end 2026-06-30
 licitaciones-pipeline ingest --source placsp \
