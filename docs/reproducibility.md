@@ -1,10 +1,12 @@
-# Guía de ejecución
+# Reproducibilidad y ejecución
 
 ## Prerrequisitos
 
 - Python 3.10 o posterior;
 - `uv`;
-- red únicamente para la ingesta explícita.
+- Java 17 o posterior y PySpark 4.0.1 para Gold;
+- red para instalar dependencias y para la ingesta explícita. Las pruebas y
+  transformaciones usan datos locales una vez instalado el entorno.
 
 OpenPLACSP utiliza una cadena TLS de la FNMT. El adaptador carga la raíz
 incluida en `config/certs/` y no desactiva la validación de certificados.
@@ -22,8 +24,8 @@ Los sidecars de `tests/fixtures/raw` usan un timestamp de recuperación
 
 ## Ejecución con fixtures
 
-Es recomendable indicar un directorio de salida temporal para no sustituir los
-artefactos Gold versionados:
+Los datos y resultados locales quedan excluidos de Git. Para una comprobación
+aislada se puede usar un directorio temporal:
 
 ```bash
 uv run --with-editable . python -m tfm_licitaciones.cli run \
@@ -85,8 +87,8 @@ uv run --with-editable . python -m tfm_licitaciones.cli run
 uv run --with-editable . python -m tfm_licitaciones.cli report
 ```
 
-El corpus raw no se versiona. El manifest Gold conserva rutas, tamaños y
-checksums de los inputs utilizados en la última ejecución publicada.
+El corpus raw no se versiona. El manifest de cada ejecución conserva rutas,
+tamaños y checksums de sus inputs.
 Cada nueva descarga conserva además `<fichero>.provenance.json` junto al Raw.
 Copie ambos al mover un corpus, manteniendo sus rutas relativas dentro de Raw.
 La transformación verifica este sidecar y hereda su `retrieved_at` y `sha256`
@@ -161,8 +163,60 @@ planos.
   completitud de ventana.
 - La transformación `run` es offline y determinista respecto a sus inputs de
   negocio, salvo por los timestamps técnicos de ejecución.
-- Bronze y Silver canónico utilizan Parquet; JSONL y CSV siguen siendo formatos
-  transitorios de Gold.
+- `run` conserva el Gold de compatibilidad JSONL/CSV. El flujo analítico actual
+  continúa con `build-gold` (Parquet), `build-analytics` y `export-tableau`.
 
-Estas limitaciones se mantienen visibles para que los siguientes cambios
-puedan demostrar qué propiedad añaden.
+La arquitectura distingue estas limitaciones del trabajo futuro.
+
+## Gold, DuckDB y Tableau
+
+El [README](../README.md#ejecución-local) contiene el recorrido completo con
+fixtures. Para procesar los datos de los directorios configurados:
+
+```bash
+uv run --locked --with 'pyspark==4.0.1' --with-editable . \
+  licitaciones-pipeline build-gold --as-of 2026-09-17
+uv run --locked --with-editable . licitaciones-pipeline build-analytics
+uv run --locked --with-editable . licitaciones-pipeline export-tableau
+```
+
+Fije `--as-of` según la fecha que quiera evaluar y conserve el manifest junto
+con el corpus y la revisión de código (`git rev-parse HEAD`). La descarga de
+hoy no reconstruye por sí sola el estado conocido en una fecha histórica.
+`build-gold` escribe `open_opportunities/` y `gold_manifest.json`; cuenta las
+incidencias de estado vigente pero no persiste sus filas. Las salidas del
+baseline permanecen separadas. La [guía analítica](analytics.md) documenta las
+vistas, sus comprobaciones y el bundle de cinco CSV para Tableau.
+
+Los datos de `data/` no se versionan. Se conservan únicamente fixtures pequeños,
+el vocabulario CPV y evidencia seleccionada en `docs/evidence/` y
+`experiments/silver_engine_comparison/results/`. Los sidecars de fixtures
+contienen fechas sintéticas; no son evidencia de descargas reales.
+
+## Validación completa y comprobaciones rápidas
+
+Las pruebas utilizan `unittest`, no requieren consultas a fuentes oficiales y
+pueden instalar sus dependencias desde red. Con PySpark y Java disponibles:
+
+```bash
+uv run --locked --with 'pyspark==4.0.1' --with-editable . \
+  python -m unittest discover -s tests -v
+uv run --locked --with 'pyspark==4.0.1' --with-editable . \
+  python -m unittest discover -s experiments/silver_engine_comparison/tests -t . -v
+```
+
+Sin el extra PySpark las pruebas Spark se omiten. La configuración CI está en
+[tests.yml](../.github/workflows/tests.yml). Los smoke tests disponibles son
+el recorrido de fixtures del README y el perfil `tiny` del benchmark:
+
+```bash
+uv run --locked --with-editable . python -m tfm_licitaciones.bench_silver \
+  --profile tiny --seed 7
+uv run --locked --with-editable . python tests/fuzz_silver_guard.py \
+  --iterations 100 --seed 20260917
+```
+
+El fuzzer es una comprobación diferencial acotada, no una prueba universal de
+paridad. El [experimento de motores](../experiments/silver_engine_comparison/README.md)
+explica el protocolo, la referencia congelada y la evidencia conservada. No se
+confunden los tiempos de los smoke tests con resultados de escalabilidad.

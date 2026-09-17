@@ -1,88 +1,13 @@
-"""Principal Gold dataset: open/actionable opportunities from current-state.
+"""Build open_opportunities Parquet and gold_manifest.json from canonical Silver.
 
-Boundary::
+Compose current-state resolution, the conservative open/actionable policy and
+CPV/DIR3 coverage metrics. Keep one row per resolved source procedure; enrichment
+never changes canonical identity or explodes the Gold grain.
 
-    canonical Silver Parquet
-        -> current_state via ``tfm_licitaciones.current_state`` (PR #24, reused)
-        -> open/actionable policy (this module; frozen below)
-        -> open_opportunities Parquet + gold_manifest.json
-
-**Grain:** one row per resolvable source ``procedure_id`` that can be
-conservatively proven to be an open/actionable opportunity. The contract is
-``gold_contract.GOLD_OPEN_OPPORTUNITIES_FIELDS``; this module never widens it.
-
-This module composes the already-merged interfaces without reimplementing
-them: current-state resolution (``current_state.build_current_state``),
-CPV/DIR3 enrichment (``gold_enrichment.enrich_cpv`` /
-``enrich_buyers_dir3``, metrics only) and typed IO
-(``spark_foundation``). It contains no Silver semantics, no identity logic
-and no ranking/ML.
-
-Frozen open/actionable policy (conservative, deterministic)
------------------------------------------------------------
-
-Evidence inspection (see ``docs/gold_spark_contract.md`` for the full
-record):
-
-- ``is_deleted`` (PR #24: true exactly when the selected current-state
-  event is a tombstone) is the only deletion signal. Deleted procedures are
-  never opportunities.
-- ``deadline`` is structurally always null in canonical Silver today (no
-  TED/PLACSP/BOE mapping populates it); the column exists in the contract
-  and the policy evaluates it whenever it is populated.
-- ``status`` is structurally always null for TED and BOE. For PLACSP it
-  carries the ``ContractFolderStatusCode`` lifecycle value, whose semantics
-  are frozen by the official DGPE CODICE codelist
-  ``SyndicationContractFolderStatusCode`` 2.04: only ``"PUB"`` ("EN PLAZO")
-  proves an actionable bidding window. ``EV`` ("PENDIENTE DE ADJUDICACION")
-  means the submission phase is finished and is never actionable. No
-  cross-source taxonomy is invented. ``PRE`` ("Anuncio Previo") never opens:
-  a prior notice does not prove bids can be submitted.
-- ``ingested_at``, retrieval time, processing time, filenames, row order
-  and part-file order are technical provenance and never business time.
-
-Decision for one current-state row, in precedence order:
-
-1. ``is_deleted`` is true -> ``deleted`` (never published).
-2. ``deadline`` is not null, ``as_of`` is provided and
-   ``deadline < as_of`` (strict, UTC; ``as_of`` is the start of the
-   evaluation day) -> ``deadline_passed`` (not actionable, wins over any
-   status text).
-3. ``source == "placsp"``:
-   - ``status == "PUB"`` -> ``open`` (official "EN PLAZO"; null deadlines
-     do not block it).
-   - ``status`` in ``{"EV", "ADJ", "ADJ_PAR", "RES", "RES_PAR", "ANUL"}`` ->
-     ``status_closed`` (not actionable, wins over a stale future
-     deadline).
-   - ``"PRE"``, null or any other string -> ``insufficient_evidence``
-     (observable, never silently opened; exact case-sensitive match, no
-     normalization).
-4. Any other source (TED/BOE/...):
-   - ``status`` is not null -> ``insufficient_evidence`` (the contract says
-     TED/BOE status is always null, so any value is unexpected taxonomy).
-   - ``status`` is null, ``deadline`` is not null, ``as_of`` is provided
-     and ``deadline >= as_of`` -> ``open`` (an explicit future deadline is
-     direct actionability evidence requiring no taxonomy).
-   - otherwise -> ``insufficient_evidence`` (in particular: null deadline
-     with null status can never prove actionability).
-
-Consequences: a null ``deadline`` never excludes by itself; without
-``as_of`` no deadline is evaluated (production runs must pass ``--as-of``
-for deadline enforcement); ``source_event_type``, ``awarded_value``,
-``publication_date`` and ``source_updated_at`` are not openness signals.
-
-Enrichment composition
-----------------------
-
-- CPV: the canonical ``cpv_codes`` array is preserved untouched in
-  ``open_opportunities`` (no explosion, no collapsing, grain unchanged).
-  ``enrich_cpv`` runs on the open set for measured resolved/unresolved
-  metrics only; no ``opportunity_cpv`` secondary dataset is persisted
-  because the array already carries every published code.
-- DIR3: ``enrich_buyers_dir3`` runs on the open set for measured metrics
-  only. Canonical ``buyer_id``/``buyer_name`` are never rewritten and a
-  missing DIR3 dimension never blocks Gold (recorded as
-  ``dir3.available=false``).
+Deleted rows and expired deadlines take precedence. PLACSP opens only with PUB;
+other sources require a dated, non-expired deadline and no status taxonomy.
+Without explicit as_of, deadlines are not evaluated. Technical timestamps never
+provide actionability evidence. Full policy: docs/data_contract.md#gold-parquet.
 """
 
 from __future__ import annotations

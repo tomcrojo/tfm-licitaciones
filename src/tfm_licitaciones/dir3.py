@@ -5,7 +5,7 @@ administration scope (AGE, CCAA, EELL, Universidades, Otras Instituciones y
 Justicia). Every file keeps an empty first row and column, the real header in
 the second row, and repeats the name column ``C_DNM_UD_ORGANICA`` four times,
 so columns are resolved by position relative to unique anchor columns instead
-of by name. See ``docs/dir3-reference.md`` for the measured per-scope layout.
+of by name. See ``docs/references.md#dir3`` for the measured per-scope layout.
 """
 
 from __future__ import annotations

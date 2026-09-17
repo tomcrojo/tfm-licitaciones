@@ -78,7 +78,7 @@
       "base_url": "https://administracionelectronica.gob.es",
       "timeout_seconds": 120,
       "retry_attempts": 3,
-      "note": "Listados oficiales de unidades organicas por ambito (PAe/CTT DIR3). El host usa proteccion F5/TSPD: si la descarga programatica devuelve HTML, se descarga manualmente en data/raw/dir3/ con el nombre determinista de cada ambito. Ver docs/dir3-reference.md."
+      "note": "Listados oficiales de unidades organicas por ambito (PAe/CTT DIR3). El host usa proteccion F5/TSPD: si la descarga programatica devuelve HTML, se descarga manualmente en data/raw/dir3/ con el nombre determinista de cada ambito. Ver docs/references.md#dir3."
     }
   },
   "linkage": {
