@@ -188,14 +188,18 @@ ruta:
   el **documento JSON completo** (campos no usados y claves incluidos)
   porque el backend resuelve todas las rutas a nulo en silencio fuera de sus
   límites: máximo 64 contenedores anidados, enteros de 64 bits con signo,
-  flotantes finitos y ninguna cadena con los separadores ASCII U+001C–U+001F
+  flotantes finitos, claves `[A-Za-z0-9_-]+` a cualquier profundidad
+  (incluidos objetos ignorados) y ninguna cadena con los separadores ASCII U+001C–U+001F
   (CPython los recorta como espacio y el backend no). Además: identidades de
   texto no vacías, texto localizado plano (cadenas o listas planas de
-  cadenas), CPV escalar/lista de cadenas, importes decimales simples (las
+  cadenas), CPV escalar/lista de cadenas, importes de texto decimal simple
+  o enteros (los floats monetarios van a fallback salvo gates PLACSP con
+  texto `*_raw` validado; no se usa su representación JSON para el Decimal). Las
   cadenas sin dígitos son elegibles solo cuando su proyección sin
   separadores no es un deletreo de infinito positivo: la referencia las
-  normaliza a `inf` y lanza, el kernel devolvería nulo), países limitados a
-  `ESP` o pares ASCII en mayúsculas, fechas con prefijo `YYYY-MM-DD`
+  normaliza a `inf` y lanza, el kernel devolvería nulo. Países restringidos
+  a cadenas ASCII: `ESP` y pares mayúsculos se conservan/mapean, el resto
+  queda nulo; otros alfabetos usan referencia. Fechas con prefijo `YYYY-MM-DD`
   estricto, instantes RFC 3339 estrictos con segundos y offset de minutos
   completos (o formas que la referencia resuelve como "sin fecha"), y
   tombstones PLACSP con referencia completa sin esos separadores;
@@ -210,8 +214,9 @@ precisión) y la ruta elegida se registra una vez por batch en el logger
 `tombstones`). Una ejecución con fallback no se etiqueta como nativa.
 
 La semántica histórica sigue congelada en `silver_reference.py` como oráculo
-de paridad, y `tests/test_silver_native.py` exige paridad exacta de frames y
-de mensajes contra ella para ambas rutas, además de cubrir la propia frontera
+de paridad, y `tests/test_silver_native.py` y `tests/test_silver_guard_r4.py`
+exigen paridad exacta de frames y de mensajes contra ella para ambas rutas,
+además de cubrir la propia frontera
 (una fila inelegible activa fallback, la referencia recibe los frames
 originales, las excepciones nativas no se ocultan). La comparación controlada
 entre motores y su auditoría adversarial viven como evidencia experimental en
@@ -219,10 +224,13 @@ entre motores y su auditoría adversarial viven como evidencia experimental en
 canónico en el envelope medido de un solo nodo y que Spark queda reservado a
 scale-out y joins de alta cardinalidad.
 
-Medición de la API productiva completa (guarda incluida) sobre el dataset
-sintético retenido del generador (`bench_silver`, semilla 7, misma frontera
-lectura→transformación, generación excluida del cronómetro, paridad
-verificada con `silver_parity` en todas las rutas ejecutadas):
+Resultados históricos reportados antes de la corrección R4, presentes en
+`5ed1d1c` (la tabla y el comando no identifican el SHA exacto de ejecución).
+No representan el rendimiento del guard posterior a R4 ni se han vuelto a
+medir con él. El comando mostrado mide la transformación sobre frames ya en
+memoria, con la guarda incluida en la API pública y sin lectura/escritura
+Parquet ni generación dentro del cronómetro (`bench_silver`, semilla 7).
+La paridad con `silver_parity` fue reportada en las rutas de aquella medición:
 
 | Perfil | Observaciones Bronze | Eventos Silver | python-row (ref) | híbrido API completa | Aceleración |
 | --- | --- | --- | --- | --- | --- |
@@ -250,7 +258,7 @@ guarda completa + referencia.
 
 Configuración medida: Python 3.11.16, Polars 1.44.2, 16 CPU, semilla 7.
 
-Comando reproducible (por perfil; `n_ted`/`n_placsp`/`rows_per_part` según
+Comando del protocolo de transformación (por perfil; `n_ted`/`n_placsp`/`rows_per_part` según
 la tabla de perfiles del protocolo; las tres rutas —generada, control nativo
 y fallback forzado— se miden sobre el mismo corpus):
 
@@ -289,7 +297,7 @@ measure("forced-fallback", forced)
 PY
 ```
 
-El coste fijo de plan del kernel nativo (~0,4 s por llamada, medido en el
+El coste fijo de plan del kernel nativo (~0,4 s por llamada, reportado antes de R4 en el
 build de una fila) es irrelevante a esta escala y solo penaliza ejecuciones
 con muchos lotes diminutos (documentado como seguimiento para ventanas
 diarias pequeñas).

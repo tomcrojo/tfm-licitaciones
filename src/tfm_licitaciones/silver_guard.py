@@ -26,6 +26,9 @@ silently -- every path resolves to null -- outside its own limits:
   magnitude are parsed by the backend as doubles until they overflow);
 - finite floats only (``1e309`` parses as infinity in CPython and is
   rejected by the backend);
+- object keys match ``[A-Za-z0-9_-]+`` at every depth, including unused
+  objects: quotes can spoof type/presence probes and colons can spoof the
+  object-value extractor, even in canonical JSON;
 - no string containing the ASCII information separators U+001C-U+001F:
   CPython ``str.strip`` treats them as whitespace and the backend
   ``strip_chars`` does not, so any trimmed use would diverge.
@@ -40,14 +43,17 @@ Eligible domain (per record ``source``):
   flat string lists. Amount keys are plain decimals
   (``[+-]?digits(.[0-9]{1,2})?``, at most 18 integer digits), digit-free
   strings whose separator-free projection is not a positive-infinity
-  spelling (both engines resolve them to null) or JSON numbers whose Python
-  ``str()`` is a plain decimal; positive-infinity spellings and non-plain
+  spelling (both engines resolve them to null) or JSON integers of at most
+  18 digits. JSON floats fall back: their decimal text can change in the
+  backend parser even when Python ``str()`` looks like a plain decimal.
+  Positive-infinity spellings and non-plain
   digit-bearing spellings are decided by the reference. Scalar keys (``currency``,
   ``procedure-identifier``, ``BT-04-notice``, ``buyer-identifier``, ``BI``,
   ``notice-type``, ``CY``, ``country``, ``url``) and ``links.html`` values
-  are strings. Country keys additionally admit only ``ESP`` or an ASCII
-  uppercase two-letter pair where the reference ``isalpha()/isupper()``
-  rule and the native uppercase-letter rule agree. Date keys
+  are strings. Country keys additionally require ASCII: ``ESP`` maps to
+  ``ES``, uppercase pairs are preserved, and other ASCII text becomes null
+  in both engines. Non-ASCII countries fall back in both directions of
+  Unicode disagreement. Date keys
   (``PD``/``publication_date``/``publication-date``) are strings whose
   first ten stripped characters are ``YYYY-MM-DD`` with a valid
   year/month/day range.
@@ -60,7 +66,9 @@ Eligible domain (per record ``source``):
   present ``*_raw`` must be a plain-decimal string (or absent/null) even
   when the value gate is null or the value key is absent, because the
   kernel's plan decodes it regardless; a present value must be null or a
-  plain decimal (the legacy numeric path).
+  plain-decimal string/integer. Floats whose Python ``str()`` is a plain
+  decimal remain eligible only with validated, non-null retained raw text:
+  the float is then a presence gate, never the source of the Decimal.
 - ``boe``: identity/text/scalar keys as above; ``publication_date`` follows
   the TED date rule.
 - tombstones: ``source`` is exactly ``placsp`` and ``source_record_id``
@@ -68,8 +76,9 @@ Eligible domain (per record ``source``):
 
 Additionally, no probed key may appear nested anywhere in a payload: the
 kernel's quoted-string probes are textual and rely on Bronze's canonical
-JSON serialization (escaped quotes cannot fake structure), so a shadowed
-key would make them ambiguous.
+JSON serialization plus the restricted key alphabet, so a shadowed key
+would make them ambiguous. Escaped quotes in values cannot fake these
+probes when all keys satisfy that alphabet.
 
 Everything outside this domain (numeric identities, exponential or
 underscored amounts, offset seconds/fractions, basic/week dates, nested
@@ -95,6 +104,7 @@ REASON_PAYLOAD_NOT_OBJECT = "payload_not_object"
 REASON_DOCUMENT_DEPTH = "document_depth_out_of_domain"
 REASON_NUMBER_DOMAIN = "numeric_domain_out_of_domain"
 REASON_STRING_DOMAIN = "string_domain_out_of_domain"
+REASON_KEY_DOMAIN = "key_domain_out_of_domain"
 REASON_IDENTITY = "identity_out_of_domain"
 REASON_LOCALIZED_TEXT = "localized_text_out_of_domain"
 REASON_CODE_LIST = "cpv_out_of_domain"
@@ -116,7 +126,9 @@ _RFC3339 = re.compile(
 _PLAIN_DECIMAL = re.compile(r"^[+-]?[0-9]{1,18}(?:\.[0-9]{1,2})?$")
 _DIGIT_FREE = re.compile(r"^[^0-9]*$")
 _INFINITY_SPELLING = re.compile(r"^\+?(?:inf|infinity)$", re.IGNORECASE)
-_ASCII_ALPHA2 = re.compile(r"^[A-Z]{2}$")
+# This alphabet excludes JSON syntax/escapes in keys, at every depth.
+# Values retain their original Unicode and punctuation domain.
+_SAFE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 # CPython ``str.strip`` trims the ASCII information separators; the native
 # ``strip_chars`` (Rust ``char::is_whitespace``) does not. Every other
 # whitespace code point behaves identically in both runtimes.
@@ -208,13 +220,14 @@ def _document_domain_reason(payload: dict[str, Any]) -> str | None:
     The backend parses the complete payload for every path expression and
     silently resolves every path to null once the document leaves its own
     parser limits, so field-level validation is not enough. Keys are checked
-    too: the rule is "no string in the document", which keeps the predicate
-    simple and conservative. Traversal is iterative so an extreme document
-    cannot raise ``RecursionError`` here.
+    too, both for divergent whitespace and for the alphabet required by
+    the kernel's textual probes/extractors. Traversal is iterative so an
+    extreme document cannot raise ``RecursionError`` here.
     """
 
     stack: list[tuple[Any, int]] = [(payload, 1)]
     search = _DIVERGENT_WHITESPACE.search
+    safe_key = _SAFE_KEY.fullmatch
     while stack:
         value, depth = stack.pop()
         kind = type(value)
@@ -224,6 +237,8 @@ def _document_domain_reason(payload: dict[str, Any]) -> str | None:
             for key, item in value.items():
                 if search(key) is not None:
                     return REASON_STRING_DOMAIN
+                if safe_key(key) is None:
+                    return REASON_KEY_DOMAIN
                 item_kind = type(item)
                 if item_kind is str:
                     if search(item) is not None:
@@ -310,15 +325,19 @@ def _code_value(value: Any) -> bool:
 
 
 def _plain_decimal(value: Any) -> bool:
-    """Python-``str`` representation of a number inside the native Decimal domain."""
+    """Plain string/integer without a JSON float round trip.
+
+    Finiteness and a plain Python spelling cannot establish exactness for
+    floats: e.g. 123456789012345.67 becomes 123456789012345.69 when resolved
+    by the backend JSON parser. Monetary floats need the reference unless
+    PLACSP supplies validated retained text instead (checked separately).
+    """
 
     if isinstance(value, bool):
         return False
     if isinstance(value, str):
         return _PLAIN_DECIMAL.fullmatch(value) is not None
     if isinstance(value, int):
-        return _PLAIN_DECIMAL.fullmatch(str(value)) is not None
-    if isinstance(value, float):
         return _PLAIN_DECIMAL.fullmatch(str(value)) is not None
     return False
 
@@ -364,7 +383,10 @@ def _placsp_amount_field_eligible(payload: dict[str, Any], key: str) -> bool:
     value key is absent, so a present ``*_raw`` must always be a
     plain-decimal string (or null). The legacy value is only consulted when
     the key is present and not JSON-null, exactly like the reference
-    presence gate.
+    presence gate. A float needs validated raw text, so only its non-null
+    presence is used; its backend-decoded spelling never reaches Decimal.
+    Keep the previous plain-spelling bound even on these float gates to
+    avoid expanding the eligible domain while closing the audit defects.
     """
 
     raw = payload.get(f"{key}_raw")
@@ -377,28 +399,24 @@ def _placsp_amount_field_eligible(payload: dict[str, Any], key: str) -> bool:
     value = payload[key]
     if value is None:
         return True
+    if isinstance(value, float):
+        return raw is not None and _PLAIN_DECIMAL.fullmatch(str(value)) is not None
     return _plain_decimal(value)
 
 
 def _country_value(value: Any) -> bool:
     """Eligible country value for the TED ``_ted_country`` mapping.
 
-    The reference accepts any two-character ``isalpha() and isupper()``
-    value, which includes pairs with uncased letters (``"A中"``), while the
-    native rule accepts only two uppercase letters. The guard admits
-    ``ESP`` (the documented alpha-3 mapping) and two-character values that
-    the reference does not accept, plus ASCII uppercase pairs; anything
-    where the reference would accept and ASCII would not falls back.
+    ASCII makes the reference's ``isalpha()/isupper()`` and the kernel's
+    Unicode uppercase-letter regex agree, including null results for junk
+    ASCII. Reject all other strings: Unicode disagreement goes both ways
+    (Python accepts ``A中``; the backend accepts newer letters such as
+    U+1C89 that Python 3.11's Unicode tables do not recognize as alphabetic).
     """
 
     if value is None:
         return True
-    if not isinstance(value, str):
-        return False
-    text = value.strip()
-    if len(text) == 2 and text.isalpha() and text.isupper():
-        return _ASCII_ALPHA2.fullmatch(text) is not None
-    return True
+    return isinstance(value, str) and value.isascii()
 
 
 def _placsp_amount_eligible(payload: dict[str, Any]) -> bool:

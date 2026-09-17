@@ -361,9 +361,11 @@ esquema, reglas temporales y de importes, mapeo por fuente y persistencia)
 es independiente del motor de ejecución. La ejecución productiva es
 híbrida y se decide por batch antes de transformar: `silver_guard.py`
 inspecciona todas las filas con el parser JSON de CPython y admite solo el
-dominio nativo estrecho (identidades de texto, texto localizado plano, CPV
-de cadenas, importes decimales simples, fechas estrictas, instantes
-RFC 3339 estrictos y tombstones PLACSP completos); si alguna fila queda
+dominio nativo estrecho (claves `[A-Za-z0-9_-]+` a cualquier profundidad,
+identidades de texto, texto localizado plano, CPV de cadenas, países ASCII,
+importes de texto decimal simple o enteros; floats monetarios solo como gates
+PLACSP con texto `*_raw` validado). Se admiten fechas estrictas, instantes
+RFC 3339 estrictos y tombstones PLACSP completos; si alguna fila queda
 fuera, el batch completo se procesa con la referencia python-row congelada
 (`silver_reference.py`) sobre los frames originales. Ambas rutas emiten
 exactamente el mismo contrato y la misma semántica de errores, y la ruta

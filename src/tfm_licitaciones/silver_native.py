@@ -20,14 +20,16 @@ payloads the guard excludes:
 - code lists are strings or flat string lists;
 - amounts are plain decimals (optional sign, at most 18 integer digits and
   two fractional digits), digit-free strings whose historical float gate
-  yields null, or JSON numbers whose Python ``str()`` is a plain decimal;
+  yields null, or JSON integers of at most 18 digits; PLACSP float gates
+  require validated retained raw text, which supplies the Decimal instead;
   every eligible decimal is representable as ``decimal(20,2)``, so no
   scale/precision failure classification is reachable here;
 - publication dates start with a strict ``YYYY-MM-DD``;
 - ``updated`` is empty or a strict RFC 3339 instant with seconds and a
   whole-minute offset;
-- no probed key appears nested (the guard rejects shadowing), which keeps
-  the textual quoted-string probes exact over Bronze's canonical JSON;
+- all keys match ``[A-Za-z0-9_-]+`` and no probed key appears nested (the
+  guard rejects shadowing), keeping the textual probes and object-value
+  extraction inside their justified domain over Bronze's canonical JSON;
 - tombstones are PLACSP deletions with a non-empty reference.
 
 Within that domain the kernel mirrors the reference exactly: identity
@@ -105,10 +107,9 @@ def _is_json_string(container: pl.Expr, key: str) -> pl.Expr:
     """Whether the JSON value for ``key`` in ``container`` is a quoted string.
 
     Textual probe over the canonical payload: Bronze serializes payloads with
-    :func:`json.dumps`, so escaped quotes inside string content cannot fake
-    the ``"key": "`` pattern, and the eligibility guard rejects payloads
-    where a probed key also appears nested. The first occurrence of the
-    pattern is therefore the value of the top-level route.
+    :func:`json.dumps`; the guard restricts every key to ``[A-Za-z0-9_-]+``
+    and rejects nested probed keys. These restrictions exclude escaped-key
+    lookalikes; escaped quotes inside values cannot fake ``"key": "``.
     """
 
     return container.str.contains(f'"{key}"\\s*:\\s*"', literal=False).fill_null(False)
@@ -185,12 +186,13 @@ def _or_text(*values) -> pl.Expr:
 def _leaf_text(raw: pl.Expr, is_string: pl.Expr) -> pl.Expr:
     """Terminal ``_first_text`` for scalar JSON values (exact, no unescape).
 
-    ``raw`` is already exactly decoded by ``json_path_match``. Strings keep
+    ``raw`` is the text returned by ``json_path_match``. Strings keep
     their text verbatim (including ``"null"``/``"[]"``/``"{}"`` and values
-    with surrounding quotes); numbers keep their JSON text, which the guard
-    restricts to plain decimals (identical to Python ``str()`` for the
-    eligible amount values); containers reduce to null so callers route them
-    to list/object logic. Booleans are outside the eligible domain.
+    with surrounding quotes); numbers keep their JSON text. Only integers
+    may supply Decimal text; eligible PLACSP floats use retained raw text
+    instead of this potentially rounded representation. Containers reduce
+    to null so callers route them to list/object logic. Booleans are outside
+    the eligible domain.
     """
 
     stripped = raw.str.strip_chars()
@@ -701,8 +703,8 @@ def _ted_branch(ted: pl.LazyFrame) -> pl.LazyFrame:
             .then(pl.lit("ES"))
             .when(country_text.str.len_chars() == 2)
             .then(
-                # ``str.isupper`` semantics (two cased-uppercase letters,
-                # Unicode-aware) mirroring ``_ted_country``.
+                # The guard restricts countries to ASCII, where this rule
+                # agrees with the reference's isalpha()/isupper() pair.
                 pl.when(country_text.str.contains(r"^\p{Lu}{2}$")).then(country_text).otherwise(None)
             )
             .otherwise(None)
@@ -769,8 +771,9 @@ def _placsp_branch(placsp: pl.LazyFrame) -> pl.LazyFrame:
         __overall_text=_first_text(pl.col("__overall_raw"), pl.col("__overall_raw_str")),
         __tax_text=_first_text(pl.col("__tax_raw"), pl.col("__tax_raw_str")),
         # Legacy payloads without retained raw text fall back to the Python
-        # ``str()`` of the value; the guard admits only values whose ``str``
-        # equals the canonical JSON text (plain decimals).
+        # ``str()`` of a string/integer value. Float values require retained
+        # raw text under the guard: their backend spelling may be rounded,
+        # but coalesce selects the non-null raw text before Decimal parsing.
         __overall_legacy=_first_text(pl.col("__overall_value"), pl.col("__overall_value_str")),
         __tax_legacy=_first_text(pl.col("__tax_value"), pl.col("__tax_value_str")),
     )

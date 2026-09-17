@@ -114,9 +114,12 @@ la ruta productiva es **híbrida con guarda de elegibilidad**. Antes de
 ejecutar nada, `silver_guard.py` inspecciona el batch completo (records y
 tombstones) con el parser JSON de CPython y admite solo el dominio nativo
 estrecho documentado allí (documento completo dentro del dominio del parser:
-máximo 64 contenedores anidados, enteros de 64 bits, flotantes finitos y
-sin separadores U+001C–U+001F; identidades de texto, texto localizado plano,
-CPV de cadenas, importes decimales simples, países ASCII, fechas estrictas,
+máximo 64 contenedores anidados, enteros de 64 bits, flotantes finitos,
+claves `[A-Za-z0-9_-]+` a cualquier profundidad y sin separadores
+U+001C–U+001F; identidades de texto, texto localizado plano,
+CPV de cadenas, importes de texto decimal simple o enteros —los floats
+monetarios requieren fallback salvo gates PLACSP con texto `*_raw` validado—,
+países ASCII, fechas estrictas,
 instantes RFC 3339 estrictos, tombstones PLACSP completos); si una sola fila
 queda fuera, el batch completo se procesa con la referencia python-row congelada
 sobre los frames originales, conservando valores, orden del primer error y
