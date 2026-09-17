@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -21,6 +22,8 @@ from tfm_licitaciones.current_state import (
 from tfm_licitaciones.gold_contract import (
     CURRENT_STATE_FIELDS,
     CURRENT_STATE_ISSUES_FIELDS,
+    CURRENT_STATE_ISSUES_SCHEMA_VERSION,
+    CURRENT_STATE_SCHEMA_VERSION,
 )
 from tfm_licitaciones.spark_foundation import (
     PYSPARK_VERSION,
@@ -395,6 +398,42 @@ class CurrentStateTests(unittest.TestCase):
             self.assertEqual(
                 loaded_current.collect()[0]["procedure_id"], PROC_A
             )
+
+    def test_manifest_persists_versions_and_counts(self) -> None:
+        t1 = datetime(2026, 1, 8, 10, 0, tzinfo=UTC)
+        rows = [_notice(REF_A, t1, title="v1"), _ted_notice("ted:notice:NULL", None)]
+        with tempfile.TemporaryDirectory() as tmp:
+            silver_path = Path(tmp) / "silver" / "procurement_events.parquet"
+            silver_path.parent.mkdir(parents=True)
+            silver_frame = self.spark.createDataFrame(rows, schema=canonical_silver_schema())
+            silver_frame.write.mode("overwrite").parquet(str(silver_path))
+            output_dir = Path(tmp) / "gold"
+            out = build_current_state_from_silver(self.spark, silver_path, output_dir)
+            manifest_path = Path(out["manifest"])
+            self.assertTrue(manifest_path.is_file())
+            self.assertEqual(manifest_path.parent, output_dir)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                manifest["current_state_schema_version"], CURRENT_STATE_SCHEMA_VERSION
+            )
+            self.assertEqual(
+                manifest["current_state_issues_schema_version"],
+                CURRENT_STATE_ISSUES_SCHEMA_VERSION,
+            )
+            self.assertEqual(manifest["counts"]["current_state"], 1)
+            self.assertEqual(manifest["counts"]["current_state_issues"], 1)
+            self.assertEqual(manifest["counts"]["current_state"], out["current_state_rows"])
+            self.assertEqual(
+                manifest["counts"]["current_state_issues"], out["current_state_issues_rows"]
+            )
+            loaded_current = self.spark.read.schema(current_state_schema()).parquet(
+                out["current_state"]
+            )
+            loaded_issues = self.spark.read.schema(current_state_issues_schema()).parquet(
+                out["current_state_issues"]
+            )
+            self.assertEqual(loaded_current.count(), manifest["counts"]["current_state"])
+            self.assertEqual(loaded_issues.count(), manifest["counts"]["current_state_issues"])
 
 
 if __name__ == "__main__":

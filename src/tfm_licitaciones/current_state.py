@@ -5,6 +5,7 @@ Boundary::
     canonical Silver Parquet
         -> current_state Parquet
         -> current_state_issues Parquet when applicable
+        -> current_state_manifest.json with frozen schema versions and counts
 
 This module implements only the deterministic resolution semantics frozen by
 the merged contracts:
@@ -63,10 +64,16 @@ as the contract, never part-file order or names.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .gold_contract import CURRENT_STATE_FIELDS, CURRENT_STATE_ISSUES_FIELDS
+from .gold_contract import (
+    CURRENT_STATE_FIELDS,
+    CURRENT_STATE_ISSUES_FIELDS,
+    CURRENT_STATE_ISSUES_SCHEMA_VERSION,
+    CURRENT_STATE_SCHEMA_VERSION,
+)
 from .spark_foundation import (
     assert_contract_schema,
     canonical_silver_schema,
@@ -93,6 +100,7 @@ PLACSP_DATED_TOMBSTONE_PREFIX = "placsp:tombstone-dated:"
 
 CURRENT_STATE_DATASET = "current_state"
 CURRENT_STATE_ISSUES_DATASET = "current_state_issues"
+CURRENT_STATE_MANIFEST_FILENAME = "current_state_manifest.json"
 
 
 def current_state_schema() -> "StructType":
@@ -314,12 +322,16 @@ def build_current_state_from_silver(
     *,
     current_state_name: str = CURRENT_STATE_DATASET,
     issues_name: str = CURRENT_STATE_ISSUES_DATASET,
+    manifest_name: str = CURRENT_STATE_MANIFEST_FILENAME,
 ) -> dict[str, str | int]:
     """Read canonical Silver Parquet and write typed current-state outputs.
 
-    Writes ``<output_dir>/current_state`` and
+    Writes ``<output_dir>/current_state``,
     ``<output_dir>/current_state_issues`` with ``write_typed_parquet`` and
-    deterministic pre-write sorts. Returns output paths and row counts.
+    deterministic pre-write sorts, plus a minimal
+    ``<output_dir>/current_state_manifest.json`` carrying the frozen schema
+    versions and row counts required by PR #19. Returns output paths and
+    row counts.
     """
 
     silver = read_canonical_silver(spark, silver_path)
@@ -328,6 +340,7 @@ def build_current_state_from_silver(
     output_root = Path(output_dir)
     current_path = output_root / current_state_name
     issues_path = output_root / issues_name
+    manifest_path = output_root / manifest_name
 
     write_typed_parquet(
         current,
@@ -341,9 +354,29 @@ def build_current_state_from_silver(
         expected_schema=current_state_issues_schema(),
         order_by=("event_id",),
     )
+    current_rows = current.count()
+    issues_rows = issues.count()
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "current_state_schema_version": CURRENT_STATE_SCHEMA_VERSION,
+                "current_state_issues_schema_version": CURRENT_STATE_ISSUES_SCHEMA_VERSION,
+                "counts": {
+                    "current_state": current_rows,
+                    "current_state_issues": issues_rows,
+                },
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return {
         "current_state": str(current_path),
         "current_state_issues": str(issues_path),
-        "current_state_rows": current.count(),
-        "current_state_issues_rows": issues.count(),
+        "manifest": str(manifest_path),
+        "current_state_rows": current_rows,
+        "current_state_issues_rows": issues_rows,
     }
