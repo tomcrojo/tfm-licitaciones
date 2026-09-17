@@ -1,0 +1,10 @@
+{
+  "partition": "202602",
+  "raw_path": "placsp/placsp-202602.zip",
+  "retrieved_at": "2026-09-17T19:47:13.145721+00:00",
+  "sha256": "b3414e3c08dae6fd230d980be937aac61d474cda531e2a23c6555e47914bd05e",
+  "source": "placsp",
+  "version": 1,
+  "window_end": "2026-02-28",
+  "window_start": "2026-02-01"
+}

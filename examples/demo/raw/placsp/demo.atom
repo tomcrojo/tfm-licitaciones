@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Synthetic demonstration fixture. Not a real open procurement notice. -->
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:cbc="urn:dgpe:names:draft:codice:schema:xsd:CommonBasicComponents-2" xmlns:cac="urn:dgpe:names:draft:codice:schema:xsd:CommonAggregateComponents-2" xmlns:cac-place-ext="urn:dgpe:names:draft:codice-place-ext:schema:xsd:CommonAggregateComponents-2" xmlns:cbc-place-ext="urn:dgpe:names:draft:codice-place-ext:schema:xsd:CommonBasicComponents-2" xmlns:at="http://purl.org/atompub/tombstones/1.0">
+    <id>https://contrataciondelestado.es/sindicacion/sindicacion_643/licitacionesPerfilesContratanteCompleto3.atom</id>
+    <title>Licitaciones publicadas en la Plataforma de Contratación del Sector Público: licitacionesPerfilesContratanteCompleto v3</title>
+    <updated>2026-01-10T20:41:20.531+02:00</updated>
+    <at:deleted-entry ref="https://contrataciondelestado.es/sindicacion/licitacionesPerfilContratante/99900001" when="2026-01-10T18:01:39.351+02:00">
+        <at:comment type="ANULADA"/>
+    </at:deleted-entry>
+    <entry>
+        <id>https://contrataciondelestado.es/sindicacion/licitacionesPerfilContratante/10000101</id>
+        <link href="https://contrataciondelestado.es/wps/poc?uri=deeplink:detalle_licitacion&amp;idEvl=abc"/>
+        <summary type="text">Id licitación: S1/2026; Órgano de Contratación: Centro de Sistemas y Tecnologías de la Información; Importe: 120000.0 EUR; Estado: PUB</summary>
+        <title>Servicio de migración a plataforma cloud y soporte de aplicaciones</title>
+        <updated>2026-01-08T10:00:00.000+01:00</updated>
+        <cac-place-ext:ContractFolderStatus>
+            <cbc:ContractFolderID>S1/2026</cbc:ContractFolderID>
+            <cbc-place-ext:ContractFolderStatusCode languageID="es">PUB</cbc-place-ext:ContractFolderStatusCode>
+            <cac-place-ext:LocatedContractingParty>
+                <cac:Party>
+                    <cac:PartyIdentification>
+                        <cbc:ID schemeName="DIR3">E00000001</cbc:ID>
+                    </cac:PartyIdentification>
+                    <cac:PartyIdentification>
+                        <cbc:ID schemeName="NIF">A00000001</cbc:ID>
+                    </cac:PartyIdentification>
+                    <cac:PartyName>
+                        <cbc:Name>Centro de Sistemas y Tecnologías de la Información</cbc:Name>
+                    </cac:PartyName>
+                    <cac:PostalAddress>
+                        <cbc:CityName>Madrid</cbc:CityName>
+                    </cac:PostalAddress>
+                </cac:Party>
+            </cac-place-ext:LocatedContractingParty>
+        </cac-place-ext:ContractFolderStatus>
+        <cac:ProcurementProject>
+            <cbc:Name>Servicio de migración a plataforma cloud y soporte de aplicaciones</cbc:Name>
+            <cac:BudgetAmount>
+                <cbc:EstimatedOverallContractAmount currencyID="EUR">240000.0</cbc:EstimatedOverallContractAmount>
+                <cbc:TaxExclusiveAmount currencyID="EUR">120000.0</cbc:TaxExclusiveAmount>
+            </cac:BudgetAmount>
+            <cac:RequiredCommodityClassification>
+                <cbc:ItemClassificationCode>72415000</cbc:ItemClassificationCode>
+            </cac:RequiredCommodityClassification>
+            <cac:RealizedLocation>
+                <cbc:CountrySubentity>Madrid</cbc:CountrySubentity>
+                <cbc:CountrySubentityCode>ES300</cbc:CountrySubentityCode>
+            </cac:RealizedLocation>
+        </cac:ProcurementProject>
+    </entry>
+    <entry>
+        <id>https://contrataciondelestado.es/sindicacion/licitacionesPerfilContratante/10000102</id>
+        <link href="https://contrataciondelestado.es/wps/poc?uri=deeplink:detalle_licitacion&amp;idEvl=def"/>
+        <summary type="text">Id licitación: S2/2026; Órgano de Contratación: Ayuntamiento de Cuenca; Importe: 90000.0 EUR; Estado: EV</summary>
+        <title>Mantenimiento de instalaciones deportivas municipales</title>
+        <updated>2026-01-09T11:30:00.000+01:00</updated>
+        <cac-place-ext:ContractFolderStatus>
+            <cbc:ContractFolderID>S2/2026</cbc:ContractFolderID>
+            <cbc-place-ext:ContractFolderStatusCode languageID="es">EV</cbc-place-ext:ContractFolderStatusCode>
+            <cac-place-ext:LocatedContractingParty>
+                <cac:Party>
+                    <cac:PartyIdentification>
+                        <cbc:ID schemeName="DIR3">P00000002</cbc:ID>
+                    </cac:PartyIdentification>
+                    <cac:PartyName>
+                        <cbc:Name>Ayuntamiento de Cuenca</cbc:Name>
+                    </cac:PartyName>
+                </cac:Party>
+            </cac-place-ext:LocatedContractingParty>
+        </cac-place-ext:ContractFolderStatus>
+        <cac:ProcurementProject>
+            <cbc:Name>Mantenimiento de instalaciones deportivas municipales</cbc:Name>
+            <cac:BudgetAmount>
+                <cbc:TaxExclusiveAmount currencyID="EUR">90000.0</cbc:TaxExclusiveAmount>
+            </cac:BudgetAmount>
+            <cac:RequiredCommodityClassification>
+                <cbc:ItemClassificationCode>45212200</cbc:ItemClassificationCode>
+            </cac:RequiredCommodityClassification>
+        </cac:ProcurementProject>
+    </entry>
+</feed>

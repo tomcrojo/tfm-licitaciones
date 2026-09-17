@@ -1,0 +1,26 @@
+{
+  "files": {
+    "buyer_summary.csv": {
+      "row_count": 4027,
+      "view": "buyer_summary"
+    },
+    "cpv_summary.csv": {
+      "row_count": 3751,
+      "view": "cpv_summary"
+    },
+    "open_opportunities.csv": {
+      "row_count": 14763,
+      "view": "open_opportunities"
+    },
+    "opportunities_monthly.csv": {
+      "row_count": 0,
+      "view": "opportunities_monthly"
+    },
+    "opportunity_cpv.csv": {
+      "row_count": 28730,
+      "view": "opportunity_cpv"
+    }
+  },
+  "format_version": 1,
+  "source_duckdb": "/mnt/pop-work/tfm-e2e-from-source/out/analytics/licitaciones.duckdb"
+}

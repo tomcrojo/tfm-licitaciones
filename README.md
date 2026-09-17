@@ -35,26 +35,21 @@ locales. `uv.lock` fija las dependencias base; PySpark se solicita con versión
 explícita porque es una dependencia opcional.
 
 ```bash
-uv run --locked --with-editable . licitaciones-pipeline --help
-uv run --locked --with-editable . licitaciones-pipeline run \
-  --raw-dir tests/fixtures/raw --output-root data/demo
-uv run --locked --with 'pyspark==4.0.1' --with-editable . \
-  licitaciones-pipeline build-gold --silver-dir data/demo/silver \
-  --gold-dir data/demo/gold --reference-dir data/demo/reference --as-of 2026-01-01
-uv run --locked --with-editable . licitaciones-pipeline build-analytics \
-  --gold-dir data/demo/gold --analytics-dir data/demo/analytics \
-  --reference-dir data/demo/reference
-uv run --locked --with-editable . licitaciones-pipeline export-tableau \
-  --analytics-dir data/demo/analytics --exports-dir data/demo/exports
+bash examples/demo/run.sh
 ```
 
-Los fixtures prueban el recorrido técnico, no representan una muestra de mercado.
-Con estos fixtures, Gold produce cero oportunidades abiertas y los CSV conservan
-sus cabeceras: es el resultado esperado de la política conservadora.
-Las referencias ausentes se registran como tales; véase cómo construir
-[CPV y DIR3](docs/references.md). Para datos reales, primero ejecutar `ingest`
-con fuente y fechas explícitas según la [guía de reproducción](docs/reproducibility.md).
-La configuración está en [config/pipeline.json](config/pipeline.json).
+La [demo reproducible](examples/demo/README.md) usa una fixture **sintética**:
+2 avisos y 1 tombstone producen 3 eventos Silver y **1 oportunidad abierta**,
+con categoría CPV oficial y cuatro CSV con datos. El CSV mensual conserva su
+cabecera porque PLACSP no aporta `publication_date` al contrato canónico.
+Los resultados permanecen en `data/demo/`; no representan una muestra de mercado.
+El script encadena los cuatro comandos productivos y prepara CPV sin descargar
+datos de contratación. DIR3 ausente se registra como tal.
+
+Para datos reales, ejecutar `ingest` con fuente y fechas explícitas según la
+[guía de reproducción](docs/reproducibility.md). La configuración está en
+[config/pipeline.json](config/pipeline.json); la construcción de dimensiones
+se explica en [CPV y DIR3](docs/references.md).
 
 Salidas del ejemplo (los directorios por defecto no incluyen `demo/`):
 
@@ -70,6 +65,16 @@ Salidas del ejemplo (los directorios por defecto no incluyen `demo/`):
 El montaje del dashboard en Tableau es manual; el repositorio genera sus datos.
 La [guía analítica](docs/analytics.md) explica los granos y cómo evitar doble
 conteo al analizar varios CPV por oportunidad.
+
+## Evidencia con datos reales
+
+La [ejecución documentada del 17 de septiembre de 2026](docs/real-run-evidence.md)
+procesó **359.304 avisos Bronze**, obtuvo **359.180 eventos Silver** y exportó
+**14.763 oportunidades abiertas** para la ventana solicitada enero–junio.
+Se conservan manifests, sidecars, logs, configuración del commit registrado y
+un inventario verificado de checksums y conteos. El documento distingue avisos,
+eventos, estado vigente y productos analíticos, e indica las limitaciones de
+cobertura, fechas y referencias. Los datasets grandes permanecen fuera de Git.
 
 ## Pruebas
 

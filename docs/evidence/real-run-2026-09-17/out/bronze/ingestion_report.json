@@ -1,0 +1,35 @@
+{
+  "parsed": 359304,
+  "accepted": 359304,
+  "rejected": 0,
+  "document_errors": 0,
+  "control_errors": 0,
+  "tombstones": 1046,
+  "by_source": {
+    "placsp": {
+      "parsed": 349399,
+      "accepted": 349399,
+      "rejected": 0,
+      "document_errors": 0,
+      "control_errors": 0,
+      "tombstones": 1046
+    },
+    "ted": {
+      "parsed": 9905,
+      "accepted": 9905,
+      "rejected": 0,
+      "document_errors": 0,
+      "control_errors": 0,
+      "tombstones": 0
+    }
+  },
+  "passed": true,
+  "placsp_zip_files": 6,
+  "placsp_entries": 349399,
+  "atom_files": 704,
+  "tombstone_ids": 1028,
+  "superseded_artifacts": 0,
+  "superseded_records": 0,
+  "tombstoned_removed": 3362,
+  "updates_folded": 216947
+}
