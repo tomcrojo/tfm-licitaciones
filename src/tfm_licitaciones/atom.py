@@ -79,7 +79,13 @@ def parse_placsp_atom(text: str) -> tuple[list[dict[str, Any]], set[str]]:
 
 
 def parse_atom_batch(text: str | bytes, source_member: str | None = None) -> AtomBatch:
-    """Return accepted entries, located rejections and separate deletion controls."""
+    """Return accepted entries, located rejections and separate deletion controls.
+
+    A tombstone with a valid ``ref`` is always retained as deletion evidence.
+    If it also publishes an unusable ``when`` value, the row remains undated
+    and a separate ``invalid_tombstone_when`` control rejection makes that
+    loss of ordering information observable to Bronze ingestion metrics.
+    """
 
     batch = AtomBatch(atom_files=1)
     location = {"source_member": source_member, "record_locator": None, "source_record_id": None}
