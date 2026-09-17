@@ -1,7 +1,7 @@
 """Minimal local Spark foundation for Silver -> current-state -> Gold work.
 
 The module is intentionally limited to reproducible session creation, canonical
-Silver Parquet IO and typed Parquet output.  It contains no current-state,
+Silver Parquet IO and typed Parquet output. It contains no current-state,
 enrichment, linkage, ranking or Gold business logic.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
-from .gold_contract import FieldSpec
+from .gold_contract import CANONICAL_SILVER_FIELDS, FieldSpec
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, SparkSession
@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 PYSPARK_VERSION = "4.0.1"
 DEFAULT_MASTER = "local[*]"
 DEFAULT_SHUFFLE_PARTITIONS = 8
-SILVER_DATASET_FILENAME = "procurement_events.parquet"
 
 
 def _spark_types():
@@ -62,36 +61,6 @@ def create_spark_session(
     return session
 
 
-def canonical_silver_schema() -> "StructType":
-    """Return the Spark schema corresponding exactly to PROCUREMENT_EVENT_SCHEMA."""
-
-    _, T = _spark_types()
-    return T.StructType(
-        [
-            T.StructField("event_id", T.StringType(), False),
-            T.StructField("procedure_id", T.StringType(), True),
-            T.StructField("source", T.StringType(), False),
-            T.StructField("source_event_type", T.StringType(), False),
-            T.StructField("buyer_id", T.StringType(), True),
-            T.StructField("buyer_name", T.StringType(), True),
-            T.StructField("title", T.StringType(), True),
-            T.StructField("description", T.StringType(), True),
-            T.StructField("cpv_codes", T.ArrayType(T.StringType(), containsNull=False), False),
-            T.StructField("estimated_value", T.DecimalType(20, 2), True),
-            T.StructField("awarded_value", T.DecimalType(20, 2), True),
-            T.StructField("currency", T.StringType(), True),
-            T.StructField("publication_date", T.DateType(), True),
-            T.StructField("source_updated_at", T.TimestampType(), True),
-            T.StructField("deadline", T.TimestampType(), True),
-            T.StructField("status", T.StringType(), True),
-            T.StructField("nuts_code", T.StringType(), True),
-            T.StructField("country", T.StringType(), True),
-            T.StructField("source_url", T.StringType(), True),
-            T.StructField("ingested_at", T.TimestampType(), False),
-        ]
-    )
-
-
 def schema_from_fields(fields: Iterable[FieldSpec]) -> "StructType":
     """Map an engine-neutral contract to a Spark StructType."""
 
@@ -114,33 +83,50 @@ def schema_from_fields(fields: Iterable[FieldSpec]) -> "StructType":
     return T.StructType(result)
 
 
-def read_canonical_silver(spark: "SparkSession", path: str | Path) -> "DataFrame":
-    """Read canonical Silver Parquet with the frozen explicit Spark schema."""
+def canonical_silver_schema() -> "StructType":
+    """Return the Spark representation of the guarded canonical Silver contract."""
 
-    return spark.read.schema(canonical_silver_schema()).parquet(str(path))
+    return schema_from_fields(CANONICAL_SILVER_FIELDS)
+
+
+def _logical_signature(schema: "StructType") -> tuple[tuple[str, str], ...]:
+    return tuple((field.name, field.dataType.simpleString()) for field in schema)
+
+
+def _assert_logical_schema(actual: "StructType", expected: "StructType") -> None:
+    if _logical_signature(actual) != _logical_signature(expected):
+        raise ValueError(
+            "schema mismatch at Parquet boundary:\n"
+            f"expected={expected.simpleString()}\n"
+            f"actual={actual.simpleString()}"
+        )
+
+
+def read_canonical_silver(spark: "SparkSession", path: str | Path) -> "DataFrame":
+    """Read canonical Silver only after validating the physical Parquet contract.
+
+    Spark can synthesize missing columns as null when an explicit schema is
+    supplied. The inferred Parquet schema is therefore checked first so missing,
+    reordered or mistyped columns fail at the layer boundary instead of being
+    silently projected into a canonical-looking frame.
+    """
+
+    expected = canonical_silver_schema()
+    inferred = spark.read.parquet(str(path))
+    _assert_logical_schema(inferred.schema, expected)
+    return spark.read.schema(expected).parquet(str(path))
 
 
 def assert_contract_schema(frame: "DataFrame", expected: "StructType") -> None:
     """Reject logical type/order drift and nulls forbidden by the contract.
 
     Parquet readers relax field and array-element nullability metadata even
-    when an explicit schema is supplied.  Those flags are therefore not used
-    as type identity.  The logical data types are compared via ``simpleString``
-    and the stronger nullability guarantees are checked against actual values.
+    when an explicit schema is supplied. Those flags are therefore not used as
+    type identity. Logical types are compared separately and the stronger
+    nullability guarantees are checked against actual values.
     """
 
-    actual_signature = tuple(
-        (field.name, field.dataType.simpleString()) for field in frame.schema
-    )
-    expected_signature = tuple(
-        (field.name, field.dataType.simpleString()) for field in expected
-    )
-    if actual_signature != expected_signature:
-        raise ValueError(
-            "schema mismatch at Parquet boundary:\n"
-            f"expected={expected.simpleString()}\n"
-            f"actual={frame.schema.simpleString()}"
-        )
+    _assert_logical_schema(frame.schema, expected)
 
     from pyspark.sql import functions as F
     from pyspark.sql.types import ArrayType
@@ -173,12 +159,12 @@ def write_typed_parquet(
     expected_schema: "StructType",
     order_by: Iterable[str] = (),
 ) -> None:
-    """Validate schema and write deterministic logical rows as Parquet.
+    """Validate the contract and write Parquet with an optional sort operation.
 
-    Spark does not guarantee stable physical filenames across executions.  This
-    helper therefore guarantees the data contract and, when ``order_by`` is
-    provided, deterministic logical row ordering before the write; consumers
-    must not treat part-file names or byte-for-byte Parquet layout as identity.
+    ``order_by`` sorts the DataFrame before the distributed write, but Spark
+    does not promise globally ordered rows across output part-files or stable
+    physical filenames/bytes. Consumers must treat the schema and values as the
+    deterministic contract, never filesystem enumeration order.
     """
 
     assert_contract_schema(frame, expected_schema)
