@@ -14,6 +14,7 @@ import re
 import zipfile
 import zlib
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -78,7 +79,13 @@ def parse_placsp_atom(text: str) -> tuple[list[dict[str, Any]], set[str]]:
 
 
 def parse_atom_batch(text: str | bytes, source_member: str | None = None) -> AtomBatch:
-    """Return accepted entries, located rejections and separate deletion controls."""
+    """Return accepted entries, located rejections and separate deletion controls.
+
+    A tombstone with a valid ``ref`` is always retained as deletion evidence.
+    If it also publishes an unusable ``when`` value, the row remains undated
+    and a separate ``invalid_tombstone_when`` control rejection makes that
+    loss of ordering information observable to Bronze ingestion metrics.
+    """
 
     batch = AtomBatch(atom_files=1)
     location = {"source_member": source_member, "record_locator": None, "source_record_id": None}
@@ -93,8 +100,22 @@ def parse_atom_batch(text: str | bytes, source_member: str | None = None) -> Ato
     for index, node in enumerate(root.findall("at:deleted-entry", CODICE_NS), 1):
         ref = node.attrib.get("ref", "").strip()
         if ref:
-            batch.tombstone_rows.append({**location, "record_locator": f"deleted-entry:{index}",
-                                         "source_record_id": ref})
+            source_deleted_at, invalid_when = _atom_source_instant(node.attrib.get("when"))
+            control_location = {
+                **location,
+                "record_locator": f"deleted-entry:{index}",
+                "source_record_id": ref,
+            }
+            batch.tombstone_rows.append({
+                **control_location,
+                "source_deleted_at": source_deleted_at,
+            })
+            if invalid_when:
+                batch.rejections.append({
+                    **control_location,
+                    "rejection_reason": "invalid_tombstone_when",
+                    "rejection_scope": "control",
+                })
         else:
             batch.rejections.append({**location, "record_locator": f"deleted-entry:{index}",
                                      "rejection_reason": "missing_tombstone_ref", "rejection_scope": "control"})
@@ -220,6 +241,31 @@ def _parse_entry(entry: ElementTree.Element) -> dict[str, Any]:
             # Decimal instead of reusing the legacy float conversion.
             payload[f"{key}_raw"] = text
     return payload
+
+
+def _atom_source_instant(value: str | None) -> tuple[datetime | None, bool]:
+    """Parse an Atom source instant and report malformed published values.
+
+    The boolean is ``True`` only when a ``when`` attribute was present but
+    unusable for authoritative ordering. A missing attribute is legitimate
+    undated evidence and is therefore not a control error.
+    """
+
+    if value is None:
+        return None, False
+    text = value.strip()
+    if not text:
+        return None, True
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None, True
+        normalized = parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        return None, True
+    return normalized, False
 
 
 def _text(entry: ElementTree.Element, local_name: str) -> str:

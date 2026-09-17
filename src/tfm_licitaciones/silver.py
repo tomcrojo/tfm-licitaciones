@@ -5,11 +5,15 @@ control. History is never folded here: revision folding and legacy tombstone
 deletes remain exclusive to the temporary in-memory ``TenderRecord`` path that
 Gold 0.1 still consumes (see `pipeline.fold_latest_updates`).
 
-Tombstones are unordered deletion evidence. They become canonical events but
-cannot derive an authoritative current state: the current Bronze contract does
-not retain the Atom ``when`` attribute, so repeated delete/re-publish/delete
-cycles for the same ref are indistinguishable and order is never invented from
-retrieval time.
+PLACSP tombstones retain the source-published Atom ``when`` instant when it is
+valid and timezone-aware. Dated delete controls therefore receive distinct
+canonical event identities and expose that instant through ``source_updated_at``;
+missing source time remains explicit unordered evidence, while malformed
+published ``when`` values are also surfaced as Bronze control errors. Downstream
+current-state logic can therefore order source-dated deletes without inventing
+time from ingestion provenance. Canonical timestamp precision is microseconds
+(``timestamp[us, UTC]``), matching the existing Silver schema and Parquet
+boundary; finer source fractions, if ever published, collapse to that precision.
 
 Production routing is hybrid by construction:
 
@@ -17,15 +21,26 @@ Production routing is hybrid by construction:
         -> native Polars kernel for the whole batch, or
         -> frozen python-row reference for the whole batch.
 
-:mod:`tfm_licitaciones.silver_guard` inspects every row (records and
+:mod:`tfm_licitaciones.silver_guard` inspects every original row (records and
 tombstones) *before* execution and admits only the narrow eligible domain
-documented there; one ineligible row routes the original frames to
-:mod:`tfm_licitaciones.silver_reference`, which is also the historical parity
-oracle. Both routes emit the same canonical contract
+documented there. Both execution routes emit the same canonical contract
 (``PROCUREMENT_EVENT_SCHEMA``, identity, revisions, tombstones, collision
 semantics, provenance selection, ``Decimal(20,2)`` amounts and UTC
 timestamps); a fallback run is never labelled as native. The routing decision
 is logged once per batch (route, fallback reason category and row counts).
+
+The frozen reference predates source-dated tombstones and stays untouched.
+Batches with no dated tombstones are passed to the selected engine as the exact
+original frames. Only when at least one source-dated delete exists does the
+facade, after route selection, give guard-compatible tombstones temporary,
+injective routing identities. Dated and undated controls use disjoint internal
+namespaces, so an arbitrary published ref cannot collide with the source-time
+encoding. After either route, the facade restores canonical tombstone event
+ids, the published ref as ``procedure_id`` and the authoritative source time.
+Tombstone rows outside the guard's reference domain are never decorated,
+preserving historical failure/value semantics and first-error behavior on the
+fallback route.
+
 A PySpark candidate is retained as an experimental scale-out path (see
 ``experiments/``) to be productionized separately if larger deployments
 justify it; its measured parity covers only the synthetic TED/PLACSP
@@ -52,10 +67,17 @@ IMPLEMENTATION = "hybrid-native-reference"
 
 IMPLEMENTATION_DETAIL = (
     f"eligibility-guarded hybrid: {_NATIVE_KERNEL_DETAIL} for batches inside "
-    "the documented domain; otherwise the frozen python-row reference over the "
-    "original frames (selection before execution, never a try/except fallback)"
+    "the documented domain; otherwise the frozen python-row reference after "
+    "selection (never a try/except fallback); source-dated PLACSP tombstones "
+    "receive injective internal routing identities and canonical source-time "
+    "enrichment without changing the frozen reference"
 )
 
+_TOMBSTONE_SOURCE_TIME = "source_deleted_at"
+_ROUTED_UNDATED_PREFIX = "__tfm_tombstone_undated_v1__:"
+_ROUTED_DATED_PREFIX = "__tfm_tombstone_dated_v1__:"
+_CANONICAL_DATED_PREFIX = "placsp:tombstone-dated:"
+_DIVERGENT_WHITESPACE_PATTERN = r"[\x1c-\x1f]"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -63,6 +85,86 @@ def _select_route(eligibility: NativeEligibility) -> str:
     """Name the executed route for logs; a fallback is never 'native'."""
 
     return "native" if eligibility.eligible else "reference-fallback"
+
+
+def _prepare_tombstone_identities(
+    tombstones: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame | None]:
+    """Route source-dated, guard-compatible tombstones injectively.
+
+    If the batch contains no source-dated deletion, return the exact input
+    frame object: the historical native/reference routing contract remains
+    byte-for-byte and identity-preserving for every pre-extension batch.
+
+    When at least one dated delete exists, the frozen builders still derive
+    tombstone identity from ``source_record_id``. Guard-compatible PLACSP
+    tombstones therefore receive disjoint internal identities after the guard
+    decision. Rows the guard rejects for source/ref semantics are left
+    byte-for-byte unchanged so reference fallback sees the original values.
+    """
+
+    if _TOMBSTONE_SOURCE_TIME not in tombstones.columns or tombstones.height == 0:
+        return tombstones, None
+    source_times = tombstones.get_column(_TOMBSTONE_SOURCE_TIME)
+    if source_times.null_count() == tombstones.height:
+        return tombstones, None
+
+    original_ref = pl.col("source_record_id")
+    source_ref = original_ref.fill_null("").str.strip_chars()
+    source_time = pl.col(_TOMBSTONE_SOURCE_TIME)
+    micros = source_time.cast(pl.Int64).cast(pl.String)
+    guard_compatible = (
+        (pl.col("source") == "placsp")
+        & original_ref.is_not_null()
+        & ~original_ref.str.contains(_DIVERGENT_WHITESPACE_PATTERN)
+        & (source_ref != "")
+    )
+
+    routed_ref = (
+        pl.when(source_time.is_not_null())
+        .then(pl.lit(_ROUTED_DATED_PREFIX) + micros + pl.lit(":") + source_ref)
+        .otherwise(pl.lit(_ROUTED_UNDATED_PREFIX) + source_ref)
+    )
+    routed = tombstones.with_columns(
+        pl.when(guard_compatible)
+        .then(routed_ref)
+        .otherwise(original_ref)
+        .alias("source_record_id")
+    )
+
+    canonical_event_id = (
+        pl.when(source_time.is_not_null())
+        .then(pl.lit(_CANONICAL_DATED_PREFIX) + micros + pl.lit(":") + source_ref)
+        .otherwise(pl.lit("placsp:tombstone:") + source_ref)
+    )
+    enrichment = (
+        tombstones.filter(guard_compatible)
+        .select(
+            event_id=pl.lit("placsp:tombstone:") + routed_ref,
+            __canonical_event_id=canonical_event_id,
+            __procedure_id=pl.lit("placsp:procedure:") + source_ref,
+            __source_updated_at=source_time,
+        )
+        .unique(subset=["event_id"], maintain_order=True)
+    )
+    return routed, enrichment
+
+
+def _apply_tombstone_source_time(events: pl.DataFrame, enrichment: pl.DataFrame | None) -> pl.DataFrame:
+    """Restore canonical tombstone identity and source-time fields after routing."""
+
+    if enrichment is None or enrichment.height == 0:
+        return events
+    return (
+        events.join(enrichment, on="event_id", how="left")
+        .with_columns(
+            event_id=pl.coalesce(pl.col("__canonical_event_id"), pl.col("event_id")),
+            procedure_id=pl.coalesce(pl.col("__procedure_id"), pl.col("procedure_id")),
+            source_updated_at=pl.coalesce(pl.col("__source_updated_at"), pl.col("source_updated_at")),
+        )
+        .drop("__canonical_event_id", "__procedure_id", "__source_updated_at")
+        .sort("event_id")
+    )
 
 
 def build_procurement_events(records: pl.DataFrame, tombstones: pl.DataFrame) -> pl.DataFrame:
@@ -74,14 +176,24 @@ def build_procurement_events(records: pl.DataFrame, tombstones: pl.DataFrame) ->
     a latest or earliest payload. The result is sorted ascending by
     ``event_id``.
 
-    The eligibility guard inspects the complete batch first. Eligible batches
-    run the native Polars kernel (:mod:`tfm_licitaciones.silver_native`);
-    every other batch runs the frozen python-row reference
-    (:mod:`tfm_licitaciones.silver_reference`) over the *original* frames, so
-    the historical values, first-error ordering and messages are preserved.
+    Dated PLACSP tombstones are distinct source events keyed by their published
+    delete instant. Repeated observations of the same ref/instant still
+    collapse by provenance; separate delete instants remain separate history.
+    Undated tombstones retain the historical ``placsp:tombstone:<ref>`` event
+    identity. Dated events use the disjoint
+    ``placsp:tombstone-dated:<epoch-us>:<ref>`` namespace.
+
+    The eligibility guard inspects the complete *original* batch first.
+    Eligible batches run the native Polars kernel
+    (:mod:`tfm_licitaciones.silver_native`); every other batch runs the frozen
+    python-row reference (:mod:`tfm_licitaciones.silver_reference`). Undated
+    batches are handed to that selected engine unchanged. Only batches that
+    actually contain source-dated deletes need injective internal tombstone
+    identities, and guard-rejected rows remain unchanged inside those batches.
     """
 
     eligibility = assess_native_eligibility(records, tombstones)
+    routed_tombstones, enrichment = _prepare_tombstone_identities(tombstones)
     _LOGGER.info(
         "silver_batch_route",
         extra={
@@ -92,5 +204,7 @@ def build_procurement_events(records: pl.DataFrame, tombstones: pl.DataFrame) ->
         },
     )
     if eligibility.eligible:
-        return build_procurement_events_native(records, tombstones)
-    return build_procurement_events_reference(records, tombstones)
+        events = build_procurement_events_native(records, routed_tombstones)
+    else:
+        events = build_procurement_events_reference(records, routed_tombstones)
+    return _apply_tombstone_source_time(events, enrichment)
