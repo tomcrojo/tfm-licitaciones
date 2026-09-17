@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>TFM · Plataforma DataOps para licitaciones públicas</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-2: #1c2430;
+      --line: rgba(184, 197, 211, .22);
+      --text: #f0f4f8;
+      --muted: #a9b4c0;
+      --faint: #74808e;
+      --green: #7ee787;
+      --blue: #79c0ff;
+      --orange: #f2b66d;
+      --red: #ff7b72;
+      --shadow: 0 24px 80px rgba(0, 0, 0, .42);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: var(--bg); color: var(--text); font-family: var(--sans); }
+    button { font: inherit; }
+    .deck { position: relative; width: 100vw; height: 100vh; isolation: isolate; }
+    .deck::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      background:
+        radial-gradient(circle at 88% 4%, rgba(121, 192, 255, .13), transparent 31%),
+        radial-gradient(circle at 10% 94%, rgba(126, 231, 135, .08), transparent 28%),
+        var(--bg);
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      align-content: center;
+      gap: clamp(1rem, 2.6vh, 2rem);
+      padding: clamp(4.5rem, 9vh, 7rem) clamp(2rem, 7vw, 7rem);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateX(2rem);
+      transition: opacity .3s ease, transform .3s ease, visibility .3s;
+    }
+    .slide.is-active { opacity: 1; visibility: visible; transform: none; }
+    .slide.is-before { transform: translateX(-2rem); }
+
+    .eyebrow {
+      margin: 0;
+      color: var(--green);
+      font: 650 clamp(.72rem, 1.1vw, .9rem)/1.3 var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 { max-width: 13ch; font-size: clamp(2.8rem, 7.2vw, 6.9rem); line-height: .96; letter-spacing: -.055em; }
+    h2 { max-width: 17ch; font-size: clamp(2.15rem, 5vw, 4.8rem); line-height: 1.02; letter-spacing: -.045em; }
+    h3 { font-size: clamp(1rem, 1.7vw, 1.35rem); line-height: 1.25; }
+    .lead { max-width: 65ch; color: var(--muted); font-size: clamp(1.05rem, 2vw, 1.6rem); line-height: 1.5; }
+    .accent { color: var(--green); }
+    .blue { color: var(--blue); }
+    .mono { font-family: var(--mono); }
+
+    .title-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(18rem, .65fr); gap: 5vw; align-items: end; }
+    .title-meta { border-top: 1px solid var(--line); padding-top: 1.25rem; color: var(--muted); font: 500 clamp(.75rem, 1vw, .9rem)/1.7 var(--mono); }
+    .time-chip { display: inline-flex; align-items: center; gap: .55rem; margin-top: 1rem; color: var(--text); }
+    .time-chip::before { content: ""; width: .6rem; height: .6rem; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 .3rem rgba(126,231,135,.12); }
+
+    .problem-grid, .evidence-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+    .card { min-height: 10rem; padding: clamp(1.2rem, 2.3vw, 2rem); background: rgba(22, 27, 34, .9); border: 1px solid var(--line); border-radius: .8rem; box-shadow: var(--shadow); }
+    .card .tag { display: block; margin-bottom: 2rem; color: var(--faint); font: 600 .76rem/1 var(--mono); }
+    .card p { margin-top: .65rem; color: var(--muted); line-height: 1.5; }
+    .card strong { color: var(--text); }
+    .card.is-focus { border-top: 3px solid var(--green); }
+
+    .statement { max-width: 23ch; font-size: clamp(2rem, 4.3vw, 4.2rem); line-height: 1.12; letter-spacing: -.035em; }
+    .pill-row { display: flex; flex-wrap: wrap; gap: .65rem; }
+    .pill { padding: .55rem .85rem; border: 1px solid var(--line); border-radius: .35rem; background: var(--surface); color: var(--muted); font: 600 clamp(.72rem, 1vw, .88rem)/1 var(--mono); }
+
+    .pipeline { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); align-items: stretch; gap: .8rem; }
+    .stage { position: relative; min-height: 9rem; padding: 1.1rem; border: 1px solid var(--line); background: var(--surface); border-radius: .65rem; }
+    .stage:not(:last-child)::after { content: "→"; position: absolute; z-index: 2; right: -.75rem; top: 50%; color: var(--green); font: 700 1.1rem var(--mono); transform: translate(50%, -50%); }
+    .stage b { display: block; margin-bottom: .8rem; color: var(--text); font: 700 clamp(.85rem, 1.3vw, 1.05rem)/1.2 var(--mono); }
+    .stage span { color: var(--muted); font-size: clamp(.74rem, 1.05vw, .92rem); line-height: 1.45; }
+    .stage:last-child { border-color: rgba(126, 231, 135, .5); }
+
+    .quality-layout { display: grid; grid-template-columns: .8fr 1.2fr; gap: 5vw; align-items: center; }
+    .rule-list { display: grid; gap: .2rem; }
+    .rule { display: grid; grid-template-columns: 3rem 1fr; gap: 1rem; align-items: start; padding: 1.1rem 0; border-bottom: 1px dashed var(--line); }
+    .rule code { color: var(--green); font-size: .9rem; }
+    .rule p { color: var(--muted); line-height: 1.45; }
+
+    .benchmark { display: grid; grid-template-columns: 1.2fr .8fr; gap: 4vw; align-items: end; }
+    .bars { display: grid; gap: 1rem; padding: 1.5rem; background: rgba(22,27,34,.72); border: 1px solid var(--line); border-radius: .8rem; }
+    .bar-row { display: grid; grid-template-columns: 8rem 1fr 5rem; gap: 1rem; align-items: center; }
+    .bar-row span, .bar-row b { font: 600 clamp(.72rem, 1vw, .88rem)/1 var(--mono); }
+    .bar-row span { color: var(--muted); }
+    .track { height: .7rem; overflow: hidden; background: var(--surface-2); border-radius: 99rem; }
+    .fill { display: block; height: 100%; min-width: .4rem; background: var(--blue); border-radius: inherit; }
+    .bar-row.best .fill { background: var(--green); }
+    .bar-row.best b { color: var(--green); }
+    .bench-note { color: var(--muted); font: 500 clamp(.72rem, 1vw, .86rem)/1.55 var(--mono); }
+
+    .metric { padding: 1.2rem 0; border-top: 1px solid var(--line); }
+    .metric strong { display: block; color: var(--green); font-size: clamp(2rem, 4vw, 4rem); line-height: 1; letter-spacing: -.04em; }
+    .metric span { display: block; margin-top: .7rem; color: var(--muted); line-height: 1.35; }
+
+    .limit-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 5vw; align-items: center; }
+    .not-list { display: grid; gap: .75rem; }
+    .not-list div { padding: .9rem 1rem; border-left: 2px solid var(--red); background: rgba(255,123,114,.06); color: var(--muted); }
+    .closing { font-size: clamp(1.8rem, 3.7vw, 3.6rem); line-height: 1.15; letter-spacing: -.035em; }
+
+    .chrome { position: fixed; z-index: 20; display: flex; align-items: center; color: var(--faint); font: 600 .72rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+    .brand { top: 1.8rem; left: clamp(2rem, 4vw, 4rem); gap: .65rem; }
+    .brand::before { content: ""; width: .7rem; height: .7rem; background: var(--green); }
+    .counter { top: 1.8rem; right: clamp(2rem, 4vw, 4rem); }
+    .controls { right: clamp(1rem, 2vw, 2rem); bottom: 1.5rem; gap: .45rem; }
+    .controls button { width: 2.7rem; height: 2.7rem; border: 1px solid var(--line); border-radius: .45rem; background: rgba(22,27,34,.9); color: var(--text); cursor: pointer; }
+    .controls button:hover, .controls button:focus-visible { border-color: var(--green); outline: none; }
+    .help { left: clamp(2rem, 4vw, 4rem); bottom: 1.9rem; }
+    .progress { position: fixed; z-index: 30; left: 0; bottom: 0; width: 100%; height: 3px; background: transparent; }
+    .progress span { display: block; height: 100%; background: var(--green); transition: width .25s ease; }
+
+    .notes { display: none; }
+    .notes-panel { position: fixed; z-index: 50; inset: auto 0 0; max-height: 44vh; overflow: auto; padding: 1.4rem clamp(2rem, 7vw, 7rem) 2rem; border-top: 1px solid var(--line); background: rgba(8, 12, 17, .97); box-shadow: 0 -20px 60px rgba(0,0,0,.4); transform: translateY(105%); transition: transform .25s ease; }
+    .notes-panel.is-open { transform: none; }
+    .notes-panel .notes-label { margin-bottom: .7rem; color: var(--green); font: 700 .76rem/1 var(--mono); text-transform: uppercase; }
+    .notes-panel .notes-copy { max-width: 88ch; color: var(--text); font-size: clamp(.95rem, 1.3vw, 1.12rem); line-height: 1.6; }
+
+    @media (max-width: 850px) {
+      .slide { padding: 4.5rem 1.4rem 5rem; overflow-y: auto; }
+      .title-grid, .quality-layout, .benchmark, .limit-grid { grid-template-columns: 1fr; }
+      .problem-grid, .evidence-grid { grid-template-columns: 1fr; }
+      .card { min-height: 0; }
+      .pipeline { grid-template-columns: repeat(2, 1fr); }
+      .stage::after { display: none; }
+      .help { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { .slide, .progress span, .notes-panel { transition: none; } }
+    @media print {
+      html, body { overflow: visible; height: auto; }
+      .deck { height: auto; }
+      .slide { position: relative; min-height: 100vh; opacity: 1; visibility: visible; transform: none; break-after: page; }
+      .chrome, .progress, .notes-panel { display: none; }
+    }
+  </style>
+</head>
+<body class="tpl-tech-sharing">
+  <main class="deck" aria-label="Presentación del TFM">
+    <header class="chrome brand">TFM · Data Engineering · UCM</header>
+    <div class="chrome counter" aria-live="polite"><span id="current">01</span>&nbsp;/&nbsp;08</div>
+
+    <section class="slide is-active" data-duration="0:20" aria-labelledby="s1-title">
+      <p class="eyebrow">Plataforma DataOps reproducible</p>
+      <div class="title-grid">
+        <div>
+          <h1 id="s1-title">De datos abiertos a oportunidades <span class="accent">trazables</span></h1>
+        </div>
+        <div class="title-meta">
+          Integración y explotación de licitaciones públicas<br>
+          Caso de estudio: contratación tecnológica
+          <div class="time-chip">Vídeo · 5 minutos</div>
+        </div>
+      </div>
+      <aside class="notes">La contratación pública publica una enorme cantidad de información, pero está repartida entre fuentes y formatos distintos. Mi TFM aborda ese problema desde la ingeniería de datos: he construido un prototipo reproducible que transforma datos oficiales de licitaciones en productos analíticos trazables. En cinco minutos explicaré el problema, la arquitectura, las decisiones técnicas y qué he podido demostrar realmente.</aside>
+    </section>
+
+    <section class="slide" data-duration="0:35" aria-labelledby="s2-title">
+      <p class="eyebrow">01 · El problema</p>
+      <h2 id="s2-title">Publicar no significa que los datos estén listos para analizar</h2>
+      <div class="problem-grid">
+        <article class="card"><span class="tag">FUENTES</span><h3>TED + OpenPLACSP</h3><p>Ámbitos, frecuencias y semánticas diferentes.</p></article>
+        <article class="card"><span class="tag">FORMATOS</span><h3>JSON · ZIP · Atom · XML</h3><p>Parsing específico sin perder el origen oficial.</p></article>
+        <article class="card is-focus"><span class="tag">HISTORIA</span><h3>Revisiones + anulaciones</h3><p>Una actualización no puede borrar la evidencia anterior.</p></article>
+      </div>
+      <aside class="notes">Las dos fuentes principales son TED, para avisos europeos, y OpenPLACSP, para licitaciones españolas. No ofrecen el mismo formato ni la misma semántica: hay JSON, ZIP, Atom y XML CODICE; también revisiones, anulaciones y campos incompletos. Descargar datos no basta. Para analizarlos con rigor hay que conservar el origen, contabilizar rechazos, separar fechas que significan cosas distintas y evitar que una nueva versión destruya la evidencia anterior.</aside>
+    </section>
+
+    <section class="slide" data-duration="0:35" aria-labelledby="s3-title">
+      <p class="eyebrow">02 · Objetivo y aportación</p>
+      <p id="s3-title" class="statement">Una cadena de datos <span class="accent">auditable</span>, no una caja negra de clasificación.</p>
+      <p class="lead">El caso tecnológico guía la demostración; el contrato canónico y CPV mantienen el sistema generalista.</p>
+      <div class="pill-row" aria-label="Propiedades principales">
+        <span class="pill">reproducible</span><span class="pill">trazable</span><span class="pill">tipado</span><span class="pill">sector-agnostic</span><span class="pill">offline-testable</span>
+      </div>
+      <aside class="notes">El objetivo ha sido diseñar una plataforma DataOps local, reproducible y generalista. Aunque el caso de estudio de la memoria son las licitaciones tecnológicas, el modelo se apoya en CPV, la taxonomía oficial, y no está limitado a un único sector. La aportación principal no es un clasificador sofisticado: es una cadena de datos auditable, con contratos estables, procedencia y decisiones que pueden volver a ejecutarse y revisarse.</aside>
+    </section>
+
+    <section class="slide" data-duration="0:50" aria-labelledby="s4-title">
+      <p class="eyebrow">03 · Arquitectura implementada</p>
+      <h2 id="s4-title">Cada capa responde una pregunta distinta</h2>
+      <div class="pipeline" aria-label="Flujo de datos implementado">
+        <div class="stage"><b>RAW</b><span>Payload, checksum y recuperación</span></div>
+        <div class="stage"><b>BRONZE</b><span>Parsing, rechazos y tombstones</span></div>
+        <div class="stage"><b>SILVER</b><span>Histórico canónico de eventos</span></div>
+        <div class="stage"><b>GOLD</b><span>Estado vigente y oportunidades</span></div>
+        <div class="stage"><b>DUCKDB</b><span>Vistas SQL versionadas</span></div>
+        <div class="stage"><b>TABLEAU</b><span>CSV deterministas</span></div>
+      </div>
+      <p class="lead"><span class="mono blue">Python</span> ingiere y parsea · <span class="mono blue">Polars</span> transforma · <span class="mono blue">PySpark</span> resuelve estado y Gold · <span class="mono blue">DuckDB</span> sirve analítica</p>
+      <aside class="notes">El flujo comienza en Raw, donde se conserva el payload oficial junto con su checksum y el instante de recuperación. Bronze parsea cada formato y separa registros aceptados, rechazados y tombstones. Silver construye un histórico canónico de eventos de contratación, sin reducirlo prematuramente a una única fila vigente. Después, PySpark resuelve el estado actual y genera Gold con las oportunidades abiertas. DuckDB publica vistas SQL y finalmente se exportan CSV deterministas para Tableau. Esta separación permite repetir una etapa sin reinterpretar las anteriores y mantiene la lógica fuera de la herramienta de visualización.</aside>
+    </section>
+
+    <section class="slide" data-duration="0:40" aria-labelledby="s5-title">
+      <p class="eyebrow">04 · Trazabilidad y calidad</p>
+      <div class="quality-layout">
+        <div>
+          <h2 id="s5-title">La calidad debe <span class="accent">revelar</span> problemas</h2>
+          <p class="lead">No fabricar un informe verde eliminando silenciosamente lo que no encaja.</p>
+        </div>
+        <div class="rule-list">
+          <div class="rule"><code>01</code><p><strong>Raw inmutable:</strong> bytes y checksum conservan la evidencia.</p></div>
+          <div class="rule"><code>02</code><p><strong>Rechazos observables:</strong> cada error mantiene motivo y localización.</p></div>
+          <div class="rule"><code>03</code><p><strong>Historia explícita:</strong> revisiones y tombstones siguen en Silver.</p></div>
+          <div class="rule"><code>04</code><p><strong>Gold conservador:</strong> sin evidencia de apertura, no se publica.</p></div>
+        </div>
+      </div>
+      <aside class="notes">Una decisión clave es no ocultar los datos problemáticos. Cada rechazo queda contabilizado con su motivo y localización. Los identificadores se derivan de claves oficiales; las revisiones y tombstones permanecen en Silver; y Gold solo publica una oportunidad como abierta cuando existe evidencia suficiente. Por eso, obtener cero oportunidades con los fixtures de prueba no es un fallo: es el comportamiento esperado de una política conservadora. Un informe verde no debe fabricarse filtrando silenciosamente lo que no encaja.</aside>
+    </section>
+
+    <section class="slide" data-duration="0:45" aria-labelledby="s6-title">
+      <p class="eyebrow">05 · Decisiones técnicas con evidencia</p>
+      <div class="benchmark">
+        <div>
+          <h2 id="s6-title">Elegir el motor según la carga, no por catálogo</h2>
+          <p class="lead">Transformación Bronze → Silver · 25.363 entradas sintéticas · paridad en 22.504 eventos</p>
+        </div>
+        <div class="bars" aria-label="Duración medida por motor">
+          <div class="bar-row best"><span>Polars</span><div class="track"><i class="fill" style="width:2.54%"></i></div><b>0,254 s</b></div>
+          <div class="bar-row"><span>Python</span><div class="track"><i class="fill" style="width:6.16%"></i></div><b>0,617 s</b></div>
+          <div class="bar-row"><span>Spark</span><div class="track"><i class="fill" style="width:100%"></i></div><b>10,01 s</b></div>
+          <p class="bench-note">Una ejecución · seed 7 · carga sintética acotada. No es un umbral universal ni mide el pipeline completo.</p>
+        </div>
+      </div>
+      <aside class="notes">También comparé motores para la transformación Silver. En el experimento versionado, con una carga sintética de 25.363 entradas Bronze y 22.504 eventos Silver, las tres implementaciones produjeron resultados equivalentes dentro del contrato medido. Polars nativo tardó 0,254 segundos; la referencia Python, 0,617; y el candidato Spark, 10,01 segundos. Esto no demuestra que Polars sea siempre mejor ni que Spark no sea útil. Demuestra algo más defendible: para esta transformación local y este volumen, Polars fue la opción medida más rápida; Spark se reserva para ventanas, joins y Gold, donde su modelo sí aporta.</aside>
+    </section>
+
+    <section class="slide" data-duration="0:45" aria-labelledby="s7-title">
+      <p class="eyebrow">06 · Resultado demostrable</p>
+      <h2 id="s7-title">Una cadena reproducible, desde el fichero oficial hasta el análisis</h2>
+      <div class="evidence-grid">
+        <div class="metric"><strong>6</strong><span>fronteras persistentes o publicadas: Raw, Bronze, Silver, Gold, DuckDB y CSV</span></div>
+        <div class="metric"><strong>9.454</strong><span>códigos del vocabulario oficial CPV medidos</span></div>
+        <div class="metric"><strong>5</strong><span>exportaciones CSV preparadas para el montaje en Tableau</span></div>
+      </div>
+      <p class="lead">CLI + Parquet + contratos + manifests + fixtures locales sin dependencia de red.</p>
+      <aside class="notes">El resultado es una cadena ejecutable desde CLI y probada con fixtures locales, sin red: Raw, Bronze y Silver; estado vigente y Gold en Parquet; vistas DuckDB; y cinco exportaciones CSV preparadas para Tableau. Además, el proyecto incluye la referencia CPV completa, con 9.454 códigos medidos, y una dimensión DIR3 construida desde seis ámbitos oficiales. Los manifests registran versiones, conteos y métricas para poder relacionar cada producto con la ejecución que lo generó.</aside>
+    </section>
+
+    <section class="slide" data-duration="0:30" aria-labelledby="s8-title">
+      <p class="eyebrow">07 · Límites y conclusión</p>
+      <div class="limit-grid">
+        <div>
+          <h2 id="s8-title">Un prototipo defendible, no una plataforma en producción</h2>
+          <div class="not-list" style="margin-top:1.5rem">
+            <div>Incremental completo + Airflow</div><div>Contratos menores + semántica</div><div>Cloud + operación multi-host</div>
+          </div>
+        </div>
+        <p class="closing">La utilidad analítica empieza por una base <span class="accent">reproducible</span>, <span class="blue">trazable</span> y honesta sobre sus límites.</p>
+      </div>
+      <aside class="notes">El prototipo no es una plataforma en producción. La completitud incremental de ventanas, Airflow, los contratos menores, el enriquecimiento semántico y el despliegue cloud quedan como trabajo futuro. La conclusión es que la utilidad analítica depende primero de una base reproducible y trazable. Este TFM aporta esa base: integra fuentes heterogéneas, conserva la historia y convierte datos oficiales en productos analíticos sin perder la evidencia necesaria para defender cada resultado.</aside>
+    </section>
+
+    <div class="chrome help">← → / espacio · N notas · F pantalla completa</div>
+    <nav class="chrome controls" aria-label="Navegación de diapositivas">
+      <button id="prev" type="button" aria-label="Diapositiva anterior">←</button>
+      <button id="next" type="button" aria-label="Diapositiva siguiente">→</button>
+    </nav>
+    <div class="progress" aria-hidden="true"><span id="progress"></span></div>
+    <aside id="notes-panel" class="notes-panel" aria-live="polite" aria-label="Notas del ponente">
+      <p class="notes-label">Guion · <span id="duration">0:20</span></p>
+      <p id="notes-copy" class="notes-copy"></p>
+    </aside>
+  </main>
+
+  <script>
+    (() => {
+      const slides = [...document.querySelectorAll('.slide')];
+      const current = document.getElementById('current');
+      const progress = document.getElementById('progress');
+      const notesPanel = document.getElementById('notes-panel');
+      const notesCopy = document.getElementById('notes-copy');
+      const duration = document.getElementById('duration');
+      function indexFromHash() {
+        const raw = location.hash.replace(/^#\/?/, '');
+        return Math.max(0, Math.min(slides.length - 1, Number(raw) - 1 || 0));
+      }
+      let index = indexFromHash();
+
+      function render(updateHash = true) {
+        slides.forEach((slide, i) => {
+          slide.classList.toggle('is-active', i === index);
+          slide.classList.toggle('is-before', i < index);
+          slide.setAttribute('aria-hidden', i === index ? 'false' : 'true');
+        });
+        current.textContent = String(index + 1).padStart(2, '0');
+        progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+        duration.textContent = slides[index].dataset.duration;
+        notesCopy.textContent = slides[index].querySelector('.notes').textContent.trim();
+        if (updateHash) history.replaceState(null, '', `#${index + 1}`);
+      }
+
+      function go(delta) { index = Math.max(0, Math.min(slides.length - 1, index + delta)); render(); }
+      function toggleNotes() { notesPanel.classList.toggle('is-open'); }
+      async function toggleFullscreen() {
+        if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+        else await document.exitFullscreen?.();
+      }
+
+      document.getElementById('prev').addEventListener('click', () => go(-1));
+      document.getElementById('next').addEventListener('click', () => go(1));
+      document.addEventListener('keydown', event => {
+        if (['ArrowRight', 'PageDown', ' '].includes(event.key)) { event.preventDefault(); go(1); }
+        if (['ArrowLeft', 'PageUp'].includes(event.key)) { event.preventDefault(); go(-1); }
+        if (event.key === 'Home') { index = 0; render(); }
+        if (event.key === 'End') { index = slides.length - 1; render(); }
+        if (event.key.toLowerCase() === 'n') toggleNotes();
+        if (event.key.toLowerCase() === 'f') toggleFullscreen();
+        if (event.key === 'Escape') notesPanel.classList.remove('is-open');
+      });
+      window.addEventListener('hashchange', () => {
+        index = indexFromHash();
+        render(false);
+      });
+      render(false);
+    })();
+  </script>
+  <!-- Visual structure adapted from the MIT-licensed html-ppt tech-sharing template. -->
+</body>
+</html>

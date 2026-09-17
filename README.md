@@ -103,6 +103,8 @@ data/         datos y outputs locales, excluidos de Git
 - [Reproducibilidad](docs/reproducibility.md): ingesta, ejecución y validación.
 - [Referencias](docs/references.md): CPV y DIR3.
 - [Experimento de motores](experiments/silver_engine_comparison/README.md): método y evidencia.
+- [Vídeo de cinco minutos](docs/video/guion.md): guion cronometrado y
+  [presentación HTML](docs/video/index.html) navegable con teclado.
 
 ## Limitaciones del prototipo
 
