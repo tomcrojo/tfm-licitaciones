@@ -49,8 +49,13 @@ spark.stop()
 "
 
 # Suite offline completa del proyecto:
-docker run --rm tfm-licitaciones:local python -m unittest discover -s tests -v
+docker run --rm --pids-limit=4096 tfm-licitaciones:local python -m unittest discover -s tests -v
 ```
+
+La suite completa acumula hilos de varias sesiones Spark en un mismo proceso.
+En Podman, el límite por defecto de 2.048 tareas puede agotarse
+(`pthread_create: EAGAIN`); el comando anterior lo amplía explícitamente.
+El smoke y la prueba Raw→Tableau aislada no necesitaron esa ampliación.
 
 ## Datos: mounts y paths
 
