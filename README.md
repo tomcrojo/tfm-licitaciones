@@ -76,6 +76,13 @@ un inventario verificado de checksums y conteos. El documento distingue avisos,
 eventos, estado vigente y productos analíticos, e indica las limitaciones de
 cobertura, fechas y referencias. Los datasets grandes permanecen fuera de Git.
 
+Los [cinco CSV reales y su evidencia se pueden descargar de Google Drive](https://drive.google.com/drive/folders/1-UEy9W_3cmbVlUrCLwmiMFmBwI_H_gXc?usp=sharing),
+con acceso público de lectura. Están disponibles sin comprimir: los CSV en
+`out/exports/tableau/` y la evidencia en `docs/evidence/real-run-2026-09-17/`.
+La descarga es opcional para ejecutar la demo o una nueva ingesta. No incluye
+el corpus Raw ni los Parquet; reproducir exactamente aquella ejecución requiere
+el Raw original y sus metadatos, conservados como respaldo local.
+
 ## Pruebas
 
 La suite utiliza **unittest**, fixtures locales y HTTP simulado:
