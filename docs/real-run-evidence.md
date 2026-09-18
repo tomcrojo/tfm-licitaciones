@@ -133,12 +133,15 @@ de cobertura de las fuentes oficiales.
 
 ## Descarga opcional de resultados
 
-Los [cinco CSV y su evidencia están disponibles en Google Drive](https://drive.google.com/file/d/1KR-r2unnbF7oxQ33r3cu7fHoU8HEtlm2/view?usp=drivesdk).
-El ZIP ocupa **2.737.168 bytes (2,74 MB)**. No contiene Raw ni Parquet; incluye
-`SHA256SUMS` para verificar los CSV con `sha256sum -c SHA256SUMS` tras extraerlo.
-Su acceso depende de los permisos concedidos por el propietario: subirlo a Drive
-no implica que el evaluador tenga acceso. La demo y la evidencia versionadas
-se pueden consultar y ejecutar sin acceder a ese enlace.
+Los [cinco CSV y su evidencia están disponibles en una carpeta pública de Google Drive](https://drive.google.com/drive/folders/1-UEy9W_3cmbVlUrCLwmiMFmBwI_H_gXc?usp=sharing),
+con acceso de lectura para cualquiera con el enlace. Los archivos sin comprimir
+ocupan **16.991.655 bytes (16,99 MB)**: los CSV están en `out/exports/tableau/`
+y la evidencia en `docs/evidence/real-run-2026-09-17/`. No contienen el corpus
+Raw ni los Parquet. El archivo `SHA256SUMS` permite verificar los CSV con
+`sha256sum -c SHA256SUMS` desde la raíz de la descarga, conservando las rutas.
+La demo y la evidencia versionadas se pueden consultar y ejecutar sin Drive.
+
+La carpeta conserva también el ZIP opcional de **2.737.168 bytes (2,74 MB)**.
 
 SHA-256 del ZIP publicado:
 
