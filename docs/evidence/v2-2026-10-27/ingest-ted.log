@@ -1,0 +1,5 @@
+Request attempt 1/4 failed for https://api.ted.europa.eu/v3/notices/search: HTTP Error 429: Too Many Requests
+Request attempt 1/4 failed for https://api.ted.europa.eu/v3/notices/search: HTTP Error 429: Too Many Requests
+Request attempt 1/4 failed for https://api.ted.europa.eu/v3/notices/search: HTTP Error 429: Too Many Requests
+Request attempt 1/4 failed for https://api.ted.europa.eu/v3/notices/search: HTTP Error 429: Too Many Requests
+{"ted": 9905, "files": ["/mnt/pop-work/tfm-v2-2026-10-27/raw/ted/ted-20260101-20260630.jsonl"]}

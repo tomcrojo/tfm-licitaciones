@@ -12,8 +12,8 @@ The public fixture in ``examples/demo/raw`` derives from the mini Atom with the
 first entry promoted ``EV -> PUB`` ("EN PLAZO", the only actionable PLACSP
 status). Expected policy outcome: 1 open (PUB), 1 status_closed (EV),
 1 deleted (dated tombstone over an unknown ref, resolved as its own
-current-state row). PLACSP never publishes ``publication_date`` in canonical
-Silver, so the open opportunity is observably undated
+current-state row). This fixture has no declared DOC_CN publication date,
+so its open opportunity is observably undated
 (``opportunities_monthly`` header-only, ``..._without_publication_date`` = 1).
 
 PySpark follows the repo convention (``skipIf`` when the pinned runtime is

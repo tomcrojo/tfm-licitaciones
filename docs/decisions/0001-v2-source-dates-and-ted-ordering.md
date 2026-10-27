@@ -19,7 +19,12 @@ All publication media are considered; XML order does not determine the result.
 Multiple dates may describe republication. Award/result notices and Atom
 `updated` are distinct facts. Missing/invalid declared dates remain null.
 No first-observed fallback is implemented or passed off as an official date.
-Corpus coverage and the fallback decision are recorded with the new evidence.
+The first complete corpus run covers 14,762 of 14,763 Gold opportunities
+(99.9932%); only two of 83,111 PUB snapshots lack a date. Whole-history Silver
+coverage is lower (298,913 / 348,230 notice snapshots), concentrated in closed
+and planning states. No fallback is warranted for the opportunity product.
+Using the September/October retrieval date would also misrepresent historical
+publication. The complete two-run evidence records coverage by grain and status.
 
 ## Current-state ordering
 

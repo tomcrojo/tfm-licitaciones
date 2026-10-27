@@ -312,7 +312,7 @@ actuales son `notice`, `notice:<tipo>` (TED), `notice_snapshot` (OpenPLACSP) y
   declarado bajo `ValidNoticeInfo` de tipo `DOC_CN`. Se consideran todos los
   medios de publicación. No se reutiliza `updated` como publicación; sin fecha
   declarada válida el valor permanece nulo. La extensión v2 se aplica después
-  de ambas rutas Silver y valida colisiones de fecha antes de colapsar observaciones.
+  de ambas rutas Silver y valida colisiones de fecha en todas las observaciones originales.
 - BOE: fecha oficial de publicación → `publication_date`.
 - Importes: Silver prefiere el texto numérico publicado (texto TED o claves
   CODICE `*_raw`) y construye `Decimal` exactos. Payloads antiguos sin texto

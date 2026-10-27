@@ -1,0 +1,26 @@
+2026-10-27T16:40:33+01:00 run1 Raw -> Bronze -> Silver -> legacy Gold
+{"counts": {"bronze_records": 359304, "silver_procurement_events": 359180, "legacy_current_state_records": 138995, "gold_opportunities": 138995, "gold_canonical_opportunities": 136608}, "quality_passed": true}
+2026-10-27T16:57:18+01:00 run1 Silver -> Spark Gold (as-of 2026-06-30)
+WARNING: Using incubator modules: jdk.incubator.vector
+Using Spark's default log4j profile: org/apache/spark/log4j2-defaults.properties
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/10/27 16:57:21 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+{"open_opportunities": "/mnt/pop-work/tfm-v2-2026-10-27/run1/gold2/open_opportunities", "manifest": "/mnt/pop-work/tfm-v2-2026-10-27/run1/gold2/gold_manifest.json", "current_state_rows": 137587, "current_state_issues_rows": 801, "open_opportunities_rows": 14763}
+2026-10-27T16:58:19+01:00 run1 Gold -> DuckDB -> deterministic CSV exports
+{"analytics_duckdb": "/mnt/pop-work/tfm-v2-2026-10-27/run1/analytics/licitaciones.duckdb", "duckdb_version": "1.5.5", "views": ["dim_cpv", "open_opportunities", "opportunity_cpv", "buyer_summary", "cpv_summary", "opportunities_monthly", "opportunities_without_publication_date"], "cpv_dimension_available": false, "counts": {"open_opportunities": 14763, "opportunity_cpv": 28730, "cpv_matched": 0, "cpv_unmatched": 28730, "buyer_summary_rows": 4027, "cpv_summary_rows": 3751, "opportunities_monthly_rows": 43, "opportunities_without_publication_date": 1}}
+{"export_dir": "/mnt/pop-work/tfm-v2-2026-10-27/run1/exports/tableau", "files": {"open_opportunities": "/mnt/pop-work/tfm-v2-2026-10-27/run1/exports/tableau/open_opportunities.csv", "opportunity_cpv": "/mnt/pop-work/tfm-v2-2026-10-27/run1/exports/tableau/opportunity_cpv.csv", "buyer_summary": "/mnt/pop-work/tfm-v2-2026-10-27/run1/exports/tableau/buyer_summary.csv", "cpv_summary": "/mnt/pop-work/tfm-v2-2026-10-27/run1/exports/tableau/cpv_summary.csv", "opportunities_monthly": "/mnt/pop-work/tfm-v2-2026-10-27/run1/exports/tableau/opportunities_monthly.csv"}, "counts": {"open_opportunities": 14763, "opportunity_cpv": 28730, "buyer_summary": 4027, "cpv_summary": 3751, "opportunities_monthly": 43}}
+2026-10-27T16:58:20+01:00 run1 completed
+2026-10-27T16:58:20+01:00 run2 Raw -> Bronze -> Silver -> legacy Gold
+{"counts": {"bronze_records": 359304, "silver_procurement_events": 359180, "legacy_current_state_records": 138995, "gold_opportunities": 138995, "gold_canonical_opportunities": 136608}, "quality_passed": true}
+2026-10-27T17:14:26+01:00 run2 Silver -> Spark Gold (as-of 2026-06-30)
+WARNING: Using incubator modules: jdk.incubator.vector
+Using Spark's default log4j profile: org/apache/spark/log4j2-defaults.properties
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/10/27 17:14:28 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+{"open_opportunities": "/mnt/pop-work/tfm-v2-2026-10-27/run2/gold2/open_opportunities", "manifest": "/mnt/pop-work/tfm-v2-2026-10-27/run2/gold2/gold_manifest.json", "current_state_rows": 137587, "current_state_issues_rows": 801, "open_opportunities_rows": 14763}
+2026-10-27T17:15:26+01:00 run2 Gold -> DuckDB -> deterministic CSV exports
+{"analytics_duckdb": "/mnt/pop-work/tfm-v2-2026-10-27/run2/analytics/licitaciones.duckdb", "duckdb_version": "1.5.5", "views": ["dim_cpv", "open_opportunities", "opportunity_cpv", "buyer_summary", "cpv_summary", "opportunities_monthly", "opportunities_without_publication_date"], "cpv_dimension_available": false, "counts": {"open_opportunities": 14763, "opportunity_cpv": 28730, "cpv_matched": 0, "cpv_unmatched": 28730, "buyer_summary_rows": 4027, "cpv_summary_rows": 3751, "opportunities_monthly_rows": 43, "opportunities_without_publication_date": 1}}
+{"export_dir": "/mnt/pop-work/tfm-v2-2026-10-27/run2/exports/tableau", "files": {"open_opportunities": "/mnt/pop-work/tfm-v2-2026-10-27/run2/exports/tableau/open_opportunities.csv", "opportunity_cpv": "/mnt/pop-work/tfm-v2-2026-10-27/run2/exports/tableau/opportunity_cpv.csv", "buyer_summary": "/mnt/pop-work/tfm-v2-2026-10-27/run2/exports/tableau/buyer_summary.csv", "cpv_summary": "/mnt/pop-work/tfm-v2-2026-10-27/run2/exports/tableau/cpv_summary.csv", "opportunities_monthly": "/mnt/pop-work/tfm-v2-2026-10-27/run2/exports/tableau/opportunities_monthly.csv"}, "counts": {"open_opportunities": 14763, "opportunity_cpv": 28730, "buyer_summary": 4027, "cpv_summary": 3751, "opportunities_monthly": 43}}
+2026-10-27T17:15:27+01:00 run2 completed
