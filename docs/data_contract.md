@@ -424,8 +424,10 @@ negocio pertenecen a enriquecimiento, no a esta entidad canónica.
 
 Vista de estado vigente consumida por Gold 0.1. Grano: una versión consolidada
 por `(source, tender_id)`. Las revisiones de OpenPLACSP se pliegan mediante el
-timestamp `updated` y los identificadores marcados como tombstone (solo ZIP)
-se excluyen. Ya no se persiste como JSONL.
+timestamp `updated`, comparado como instante UTC cuando incluye zona horaria.
+Valores ausentes, inválidos o sin zona no aportan orden temporal; en empates
+se conserva la última posición del lote. Los identificadores marcados como
+tombstone (solo ZIP) se excluyen. Ya no se persiste como JSONL.
 
 | Campo | Tipo | Regla actual |
 | --- | --- | --- |
@@ -469,8 +471,11 @@ inequívocos configurados. CPV actúa como proxy, no como anotación humana. La
 cobertura y el soporte por clase forman parte del resultado y deben citarse al
 interpretar las métricas.
 
-La implementación actual incluye en el macro-F1 clases con soporte cero.
-Debe tenerse en cuenta antes de utilizar esa agregación como resultado académico.
+El macro-F1 promedia solo clases con soporte CPV evaluable mayor que cero.
+Las clases sin soporte permanecen visibles en el desglose, pero no reducen
+la agregación. Una predicción de una categoría sin prefijos CPV sigue contando
+como fallo de la clase de referencia cuando el aviso tiene un CPV evaluable.
+Los informes históricos conservan la métrica calculada por su versión de código.
 
 ## Gold Parquet
 

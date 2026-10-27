@@ -31,20 +31,36 @@ def fold_latest_updates(records: list[TenderRecord]) -> tuple[list[TenderRecord]
     so the same atom id appears in several Atom files and monthly zips.
     Recency uses the entry ``updated`` timestamp rather than file order
     because the base Atom holds the latest state but sorts first inside
-    each zip. Raw loading already selects the latest snapshot per partition
-    and orders retrievals chronologically; position breaks ties across windows.
+    each zip. Compare timezone-aware instants in UTC; an absent, invalid or
+    timezone-naive value provides no recency evidence. Raw loading already
+    selects the latest snapshot per partition and orders retrievals
+    chronologically; position breaks ties across windows.
     """
 
-    latest: dict[tuple[str, str], tuple[Any, int, TenderRecord]] = {}
+    latest: dict[tuple[str, str], tuple[tuple[bool, datetime, int], TenderRecord]] = {}
     for position, record in enumerate(records):
-        timestamp = record.raw.get("updated")
+        timestamp = _revision_instant(record.raw.get("updated"))
         key = (record.source, record.tender_id)
-        rank = (timestamp or "", position)
+        rank = (timestamp is not None, timestamp or datetime.min.replace(tzinfo=timezone.utc), position)
         previous = latest.get(key)
-        if previous is None or rank > (previous[0], previous[1]):
-            latest[key] = (timestamp or "", position, record)
-    folded = [entry[2] for entry in sorted(latest.values(), key=lambda entry: entry[1])]
+        if previous is None or rank > previous[0]:
+            latest[key] = (rank, record)
+    folded = [entry[1] for entry in sorted(latest.values(), key=lambda entry: entry[0][2])]
     return folded, len(records) - len(folded)
+
+
+def _revision_instant(value: Any) -> datetime | None:
+    """Read an aware source revision timestamp without inventing a timezone."""
+
+    if not isinstance(value, str):
+        return None
+    try:
+        instant = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            return None
+        return instant.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        return None
 
 
 def run_pipeline(
