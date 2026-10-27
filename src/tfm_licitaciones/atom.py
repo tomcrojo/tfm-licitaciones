@@ -14,7 +14,7 @@ import re
 import zipfile
 import zlib
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -186,6 +186,25 @@ def parse_placsp_zip_batch(path: Path) -> AtomBatch:
     return result
 
 
+def _declared_publication_date(entry: ElementTree.Element) -> str | None:
+    """Earliest valid declared contract-notice date across publication media.
+
+    DOC_CN may include republications. Award/result dates and Atom updated
+    timestamps are distinct facts and never substitute for publication.
+    """
+
+    dates: list[date] = []
+    for notice in entry.findall(".//cpe:ValidNoticeInfo", CODICE_NS):
+        if _first_text(notice, "cpex:NoticeTypeCode") != "DOC_CN":
+            continue
+        for node in notice.findall(".//cpe:AdditionalPublicationDocumentReference/cbc:IssueDate", CODICE_NS):
+            try:
+                dates.append(date.fromisoformat((node.text or "").strip()[:10]))
+            except ValueError:
+                continue
+    return min(dates).isoformat() if dates else None
+
+
 def _parse_entry(entry: ElementTree.Element) -> dict[str, Any]:
     """Extract the CODICE fields of one Atom entry into a flat payload."""
 
@@ -216,6 +235,7 @@ def _parse_entry(entry: ElementTree.Element) -> dict[str, Any]:
         "title": title,
         "summary": _text(entry, "summary"),
         "updated": _text(entry, "updated"),
+        "publication_date": _declared_publication_date(entry),
         "url": _link(entry),
         "contract_folder_id": _first_text(entry, ".//cpe:ContractFolderStatus/cbc:ContractFolderID"),
         "status_code": _first_text(entry, ".//cbc-place-ext:ContractFolderStatusCode", explicit_ns=True),

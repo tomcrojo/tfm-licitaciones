@@ -1,7 +1,9 @@
 """Spark current-state resolution from canonical Silver.
 
 Group by source-namespaced procedure_id and order by source_updated_at,
-then event_id. Competing undated events and invalid identities remain issues;
+then event_id. TED uses declared publication dates without inventing revision
+timestamps; a shared latest date remains ambiguous. Competing undated events
+and invalid identities remain issues;
 ingestion time never breaks a business-time tie. A lone valid event is resolvable
 without a source timestamp. is_deleted reflects the selected tombstone.
 
@@ -192,18 +194,34 @@ def build_current_state(silver: "DataFrame") -> tuple["DataFrame", "DataFrame"]:
     ).drop("___published_ref", "___identity_reason")
 
     procedure_window = Window.partitionBy("procedure_id")
-    with_counts = identity_ok.withColumn(
+    # Publication date orders TED notices at day precision only. Keep the
+    # canonical source_updated_at null: publication is not a revision instant.
+    ordered = identity_ok.withColumn(
+        "___order_at",
+        F.when(F.col("source") == "ted", F.col("publication_date").cast("timestamp"))
+        .otherwise(F.col("source_updated_at")),
+    )
+    with_counts = ordered.withColumn(
         "___cnt", F.count(F.lit(1)).over(procedure_window)
     ).withColumn(
         "___undated_cnt",
-        F.sum(F.when(F.col("source_updated_at").isNull(), F.lit(1)).otherwise(F.lit(0))).over(
+        F.sum(F.when(F.col("___order_at").isNull(), F.lit(1)).otherwise(F.lit(0))).over(
             procedure_window
         ),
     )
 
-    undated_issues = with_counts.filter(
-        (F.col("___cnt") > 1) & (F.col("___undated_cnt") > 0)
-    ).select(
+    with_counts = with_counts.withColumn(
+        "___max_order", F.max("___order_at").over(procedure_window)
+    ).withColumn(
+        "___top_count",
+        F.sum(F.when(F.col("___order_at") == F.col("___max_order"), 1).otherwise(0))
+        .over(procedure_window),
+    )
+    ambiguous = (F.col("___cnt") > 1) & (
+        (F.col("___undated_cnt") > 0)
+        | ((F.col("source") == "ted") & (F.col("___top_count") > 1))
+    )
+    undated_issues = with_counts.filter(ambiguous).select(
         F.col("procedure_id"),
         F.col("event_id"),
         F.col("source"),
@@ -211,16 +229,13 @@ def build_current_state(silver: "DataFrame") -> tuple["DataFrame", "DataFrame"]:
         F.lit(REASON_UNDATED_COMPETING_EVENTS).alias("reason"),
     )
 
-    resolvable = with_counts.filter(
-        (F.col("___cnt") == 1)
-        | ((F.col("___cnt") > 1) & (F.col("___undated_cnt") == 0))
-    )
+    resolvable = with_counts.filter(~ambiguous)
 
     rank_window = Window.partitionBy("procedure_id").orderBy(
-        F.col("source_updated_at").desc_nulls_last(), F.col("event_id").desc()
+        F.col("___order_at").desc_nulls_last(), F.col("event_id").desc()
     )
     ranked = resolvable.withColumn("___rn", F.row_number().over(rank_window))
-    winners = ranked.filter(F.col("___rn") == 1).drop("___cnt", "___undated_cnt", "___rn")
+    winners = ranked.filter(F.col("___rn") == 1).drop("___cnt", "___undated_cnt", "___rn", "___order_at", "___max_order", "___top_count")
 
     current = winners.withColumn(
         "is_deleted", F.col("source_event_type") == F.lit("tombstone")
