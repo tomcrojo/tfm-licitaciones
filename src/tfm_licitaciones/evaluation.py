@@ -15,10 +15,11 @@ def evaluate_against_cpv(
     """Measure keyword categories against CPV-derived labels.
 
     The CPV 2008 vocabulary predates cloud, AI and cybersecurity procurement,
-    so only unambiguous prefixes act as ground truth. Precision, recall and
+    so only unambiguous prefixes act as proxy labels. Precision, recall and
     F1 compare the keyword verdict with the CPV verdict on the subset of
     notices whose CPV maps to one of the keyword categories; macro averages
-    weight every category equally regardless of support.
+    weight equally the categories with CPV support in that subset. Categories
+    without support remain visible in the per-category report.
     """
 
     labels = sorted(cpv_map)
@@ -42,7 +43,7 @@ def evaluate_against_cpv(
             tp[gold] += 1
             continue
         fn[gold] += 1
-        if predicted != "Other":
+        if predicted in fp:
             fp[predicted] += 1
     per_category = {}
     f1_scores: list[float] = []
@@ -50,7 +51,8 @@ def evaluate_against_cpv(
         precision = tp[label] / (tp[label] + fp[label]) if tp[label] + fp[label] else 0.0
         recall = tp[label] / (tp[label] + fn[label]) if tp[label] + fn[label] else 0.0
         f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-        f1_scores.append(f1)
+        if support[label] > 0:
+            f1_scores.append(f1)
         per_category[label] = {
             "precision": round(precision, 4),
             "recall": round(recall, 4),
@@ -67,5 +69,6 @@ def evaluate_against_cpv(
         "notes": [
             "CPV 2008 lacks explicit AI and cybersecurity codes; those categories are keyword-only.",
             "Predictions use only the keyword signal (category_source=keywords); CPV fallback is excluded to avoid circularity.",
+            "CPV labels are a proxy, not human ground truth; macro-F1 includes only categories with evaluated CPV support.",
         ],
     }

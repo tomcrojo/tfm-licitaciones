@@ -1,5 +1,8 @@
 # tfm-licitaciones
 
+> Versión evaluada del TFM: [tfm-v1.0-graded](https://github.com/tomcrojo/tfm-licitaciones/releases/tag/tfm-v1.0-graded).
+> `main` continúa como v2; cambios en [CHANGELOG.md](CHANGELOG.md).
+
 Prototipo del Trabajo Fin de Máster de Data Engineering de la UCM para
 integrar datos de contratación pública, conservar su procedencia y preparar
 análisis de oportunidades en Tableau. El modelo es generalista; la tecnología

@@ -6,6 +6,7 @@ import json
 import shutil
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from tfm_licitaciones.models import TenderRecord
@@ -34,6 +35,29 @@ class FoldTests(unittest.TestCase):
         folded, removed = fold_latest_updates([first, second])
         self.assertEqual(removed, 1)
         self.assertEqual(folded[0].title, "B")
+
+    def test_fold_compares_source_instants_across_timezone_offsets(self) -> None:
+        older = TenderRecord("1", "placsp", "Stale", raw={"updated": "2026-01-01T11:30:00+02:00"})
+        newer = TenderRecord("1", "placsp", "Latest", raw={"updated": "2026-01-01T10:00:00Z"})
+        for records in ([older, newer], [newer, older]):
+            with self.subTest(titles=[record.title for record in records]):
+                folded, removed = fold_latest_updates(records)
+                self.assertEqual(folded, [newer])
+                self.assertEqual(removed, 1)
+
+    def test_fold_breaks_equivalent_timestamp_ties_by_position(self) -> None:
+        first = TenderRecord("1", "placsp", "A", raw={"updated": "2026-01-01T11:00:00+01:00"})
+        last = TenderRecord("1", "placsp", "B", raw={"updated": "2026-01-01T10:00:00.000Z"})
+        folded, removed = fold_latest_updates([first, last])
+        self.assertEqual(folded, [last])
+        self.assertEqual(removed, 1)
+
+    def test_fold_invalid_or_naive_timestamp_cannot_replace_dated_revision(self) -> None:
+        dated = TenderRecord("1", "placsp", "Dated", raw={"updated": "2026-01-01T10:00:00Z"})
+        for timestamp in (None, "not-a-date", "2027-01-01T10:00:00"):
+            with self.subTest(timestamp=timestamp):
+                undated = TenderRecord("1", "placsp", "Undated", raw={"updated": timestamp})
+                self.assertEqual(fold_latest_updates([dated, undated])[0], [dated])
 
 
 class PipelineTests(unittest.TestCase):
@@ -119,6 +143,28 @@ class PipelineTests(unittest.TestCase):
             report = result["quality"]
             self.assertIn("duplicate_share", report["metrics"])
             self.assertTrue(report["passed"])
+
+    def test_revision_offsets_select_latest_gold_without_collapsing_silver_history(self) -> None:
+        feed = '''<feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><id>https://example.invalid/1</id><title>Latest cloud</title>
+          <updated>2026-01-01T10:00:00Z</updated></entry>
+          <entry><id>https://example.invalid/1</id><title>Stale cloud</title>
+          <updated>2026-01-01T11:30:00+02:00</updated></entry>
+        </feed>'''
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = root / "raw"
+            archive = raw / "placsp" / "sample.zip"
+            archive.parent.mkdir(parents=True)
+            with zipfile.ZipFile(archive, "w") as handle:
+                handle.writestr("feed.atom", feed)
+            evidence_for_fixture(raw, archive, "placsp")
+            result = run_pipeline(raw_dir=raw, output_root=root / "out")
+            self.assertEqual(result["manifest"]["counts"]["silver_procurement_events"], 2)
+            self.assertEqual(result["manifest"]["ingestion"]["updates_folded"], 1)
+            self.assertEqual([item.tender.title for item in result["opportunities"]], ["Latest cloud"])
+            exported = json.loads((root / "out/gold/opportunities.jsonl").read_text(encoding="utf-8"))
+            self.assertEqual(exported["title"], "Latest cloud")
 
     def test_failed_run_retires_preexisting_legacy_tenders_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
