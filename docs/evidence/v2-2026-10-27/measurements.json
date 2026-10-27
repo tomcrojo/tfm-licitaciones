@@ -1,0 +1,516 @@
+{
+  "v1_csv_hashes": {
+    "buyer_summary.csv": "4324dfb3d483627ae9b45e621087e5fba803d7f2f2df8a126ac29671c95d0870",
+    "cpv_summary.csv": "8ccd75ebf941dfc03dbe144ac92ddde0ac12f5f58f09840880c36d6d68f8f351",
+    "open_opportunities.csv": "50ada3cc154b87050d577a0dbae75d464a1b7b2b1c1d02f74d00e08fbd87eead",
+    "opportunities_monthly.csv": "3a09af6ca11a689c22ae8ebd75b836ca9d72002e4def16552799a10f7dd36f83",
+    "opportunity_cpv.csv": "ff9a806934cbd05c4da425107297a5e8a12b5218a3d760cad155c28cbfefe812"
+  },
+  "csv_changed_from_v1": {
+    "buyer_summary.csv": true,
+    "cpv_summary.csv": false,
+    "open_opportunities.csv": true,
+    "opportunities_monthly.csv": true,
+    "opportunity_cpv.csv": true
+  },
+  "code_revision": "566e7d2b0fd3460a47805bc0d7fce2ec2254bc91",
+  "as_of": "2026-06-30",
+  "inputs": [
+    {
+      "path": "placsp/placsp-202601.zip",
+      "bytes": 158979652,
+      "sha256": "7ce450e8acaeda88bd2c0f0f79193c7ae68d2fbf842dc9634f82bd84a357c796",
+      "provenance": {
+        "partition": "202601",
+        "raw_path": "placsp/placsp-202601.zip",
+        "retrieved_at": "2026-09-17T19:40:25.034841+00:00",
+        "sha256": "7ce450e8acaeda88bd2c0f0f79193c7ae68d2fbf842dc9634f82bd84a357c796",
+        "source": "placsp",
+        "version": 1,
+        "window_end": "2026-01-31",
+        "window_start": "2026-01-01"
+      }
+    },
+    {
+      "path": "placsp/placsp-202602.zip",
+      "bytes": 167977295,
+      "sha256": "b3414e3c08dae6fd230d980be937aac61d474cda531e2a23c6555e47914bd05e",
+      "provenance": {
+        "partition": "202602",
+        "raw_path": "placsp/placsp-202602.zip",
+        "retrieved_at": "2026-09-17T19:47:13.145721+00:00",
+        "sha256": "b3414e3c08dae6fd230d980be937aac61d474cda531e2a23c6555e47914bd05e",
+        "source": "placsp",
+        "version": 1,
+        "window_end": "2026-02-28",
+        "window_start": "2026-02-01"
+      }
+    },
+    {
+      "path": "placsp/placsp-202603.zip",
+      "bytes": 194593012,
+      "sha256": "82146676d60a58bbd3041883ddcf35ba09ec2361a7e3085a7af49c959a32e77d",
+      "provenance": {
+        "partition": "202603",
+        "raw_path": "placsp/placsp-202603.zip",
+        "retrieved_at": "2026-09-17T19:56:39.630768+00:00",
+        "sha256": "82146676d60a58bbd3041883ddcf35ba09ec2361a7e3085a7af49c959a32e77d",
+        "source": "placsp",
+        "version": 1,
+        "window_end": "2026-03-31",
+        "window_start": "2026-03-01"
+      }
+    },
+    {
+      "path": "placsp/placsp-202604.zip",
+      "bytes": 183076141,
+      "sha256": "0ee7d079f41ac0c130d1fefc6cc01a72b3e1acbfc7ec37d47233bac18ed63ccd",
+      "provenance": {
+        "partition": "202604",
+        "raw_path": "placsp/placsp-202604.zip",
+        "retrieved_at": "2026-09-17T19:57:15.321577+00:00",
+        "sha256": "0ee7d079f41ac0c130d1fefc6cc01a72b3e1acbfc7ec37d47233bac18ed63ccd",
+        "source": "placsp",
+        "version": 1,
+        "window_end": "2026-04-30",
+        "window_start": "2026-04-01"
+      }
+    },
+    {
+      "path": "placsp/placsp-202605.zip",
+      "bytes": 198346558,
+      "sha256": "318179b51f525a3d70d067c25b7cbe285a618d125599b9a6aa1caa6b9ebe5d79",
+      "provenance": {
+        "partition": "202605",
+        "raw_path": "placsp/placsp-202605.zip",
+        "retrieved_at": "2026-09-17T19:58:00.431184+00:00",
+        "sha256": "318179b51f525a3d70d067c25b7cbe285a618d125599b9a6aa1caa6b9ebe5d79",
+        "source": "placsp",
+        "version": 1,
+        "window_end": "2026-05-31",
+        "window_start": "2026-05-01"
+      }
+    },
+    {
+      "path": "placsp/placsp-202606.zip",
+      "bytes": 215948197,
+      "sha256": "bedeeaa85527fa111b29ad6fb9391523820624b2dac2884599c3c710b700024a",
+      "provenance": {
+        "partition": "202606",
+        "raw_path": "placsp/placsp-202606.zip",
+        "retrieved_at": "2026-09-17T19:58:53.552556+00:00",
+        "sha256": "bedeeaa85527fa111b29ad6fb9391523820624b2dac2884599c3c710b700024a",
+        "source": "placsp",
+        "version": 1,
+        "window_end": "2026-06-30",
+        "window_start": "2026-06-01"
+      }
+    },
+    {
+      "path": "ted/ted-20260101-20260630.jsonl",
+      "bytes": 106100895,
+      "sha256": "ea2ef7d9dcba94dbe9d1d873ec0f169ca2db038e4cd87700b3347a8112aa1397",
+      "provenance": {
+        "partition": "20260101-20260630",
+        "raw_path": "ted/ted-20260101-20260630.jsonl",
+        "retrieved_at": "2026-10-27T15:37:35.501663+00:00",
+        "sha256": "ea2ef7d9dcba94dbe9d1d873ec0f169ca2db038e4cd87700b3347a8112aa1397",
+        "source": "ted",
+        "version": 1,
+        "window_end": "2026-06-30",
+        "window_start": "2026-01-01"
+      }
+    }
+  ],
+  "ted_retrieval": {
+    "before_events": 9905,
+    "after_events": 9905,
+    "before_resolved_events": 0,
+    "same_notice_ids": true,
+    "shared_fields_changed_notices": 0,
+    "shared_fields_changed": {},
+    "old_ids_resolved_after": 9337,
+    "missing_procedure_by_notice_type": {
+      "pin-rtl": 307,
+      "pin-buyer": 130,
+      "pin-only": 130,
+      "pin-tran": 1
+    }
+  },
+  "runs": [
+    {
+      "run": 1,
+      "manifest_counts": {
+        "bronze_records": 359304,
+        "silver_procurement_events": 359180,
+        "legacy_current_state_records": 138995,
+        "gold_opportunities": 138995,
+        "gold_canonical_opportunities": 136608
+      },
+      "ingestion": {
+        "parsed": 359304,
+        "accepted": 359304,
+        "rejected": 0,
+        "document_errors": 0,
+        "control_errors": 0,
+        "tombstones": 1046,
+        "by_source": {
+          "placsp": {
+            "parsed": 349399,
+            "accepted": 349399,
+            "rejected": 0,
+            "document_errors": 0,
+            "control_errors": 0,
+            "tombstones": 1046
+          },
+          "ted": {
+            "parsed": 9905,
+            "accepted": 9905,
+            "rejected": 0,
+            "document_errors": 0,
+            "control_errors": 0,
+            "tombstones": 0
+          }
+        },
+        "passed": true,
+        "placsp_zip_files": 6,
+        "placsp_entries": 349399,
+        "atom_files": 704,
+        "tombstone_ids": 1028,
+        "superseded_artifacts": 0,
+        "superseded_records": 0,
+        "tombstoned_removed": 3362,
+        "updates_folded": 216947
+      },
+      "gold_counts": {
+        "current_state": 137587,
+        "current_state_issues": 801,
+        "excluded_deleted": 521,
+        "excluded_insufficient_evidence": 8346,
+        "excluded_not_actionable": 113957,
+        "open_opportunities": 14763
+      },
+      "gold_manifest": {
+        "as_of": "2026-06-30",
+        "buyer_dir3_enriched_schema_version": 1,
+        "counts": {
+          "current_state": 137587,
+          "current_state_issues": 801,
+          "excluded_deleted": 521,
+          "excluded_insufficient_evidence": 8346,
+          "excluded_not_actionable": 113957,
+          "open_opportunities": 14763
+        },
+        "cpv": {
+          "available": true,
+          "cpv_occurrences": 28730,
+          "dataset": "cpv_enriched",
+          "dimension_duplicate_keys": 0,
+          "dimension_rows": 9454,
+          "dimension_source": "csv-rebuild",
+          "distinct_cpv_codes": 3751,
+          "distinct_unresolved_cpv_codes": 0,
+          "events_with_cpv_codes": 14445,
+          "events_without_cpv_codes": 318,
+          "input_events": 14763,
+          "resolved_occurrences": 28730,
+          "schema_version": 1,
+          "unresolved_occurrences": 0
+        },
+        "cpv_enriched_schema_version": 1,
+        "current_state_issues_schema_version": 1,
+        "current_state_schema_version": 1,
+        "dir3": {
+          "available": false,
+          "dimension_source": null,
+          "input_events": 14763,
+          "resolved_events": null,
+          "unresolved_events_with_buyer_id": null
+        },
+        "gold_open_opportunities_schema_version": 1,
+        "reasons": {
+          "deadline_passed": 0,
+          "deleted": 521,
+          "insufficient_evidence": 8346,
+          "open": 14763,
+          "status_closed": 113957
+        }
+      },
+      "silver_rows": 359180,
+      "gold_rows": 14763,
+      "gold_publication_date_range": {
+        "earliest": "2020-06-02",
+        "latest": "2026-06-30"
+      },
+      "export_counts": {
+        "buyer_summary.csv": 4027,
+        "cpv_summary.csv": 3751,
+        "open_opportunities.csv": 14763,
+        "opportunities_monthly.csv": 43,
+        "opportunity_cpv.csv": 28730
+      },
+      "ted": {
+        "events": 9905,
+        "resolved_events": 9337,
+        "unresolved_events": 568,
+        "procedures": 7542,
+        "competing_procedures": 1290,
+        "ambiguous_procedures": 73,
+        "ambiguous_events": 233,
+        "resolvable_procedures": 7469
+      },
+      "placsp_dates_by_status": [
+        {
+          "status": "ADJ",
+          "events": 60559,
+          "missing_date": 13201
+        },
+        {
+          "status": "ANUL",
+          "events": 565,
+          "missing_date": 565
+        },
+        {
+          "status": "EV",
+          "events": 100602,
+          "missing_date": 676
+        },
+        {
+          "status": "PRE",
+          "events": 3034,
+          "missing_date": 3033
+        },
+        {
+          "status": "PUB",
+          "events": 83111,
+          "missing_date": 2
+        },
+        {
+          "status": "RES",
+          "events": 100359,
+          "missing_date": 31840
+        }
+      ],
+      "placsp_dates": {
+        "bronze_observations": {
+          "total": 349399,
+          "declared_date": 299950,
+          "missing_date": 49449,
+          "coverage": 0.858474
+        },
+        "silver_events": {
+          "total": 348230,
+          "declared_date": 298913,
+          "missing_date": 49317,
+          "coverage": 0.858378
+        },
+        "gold_opportunities": {
+          "total": 14763,
+          "declared_date": 14762,
+          "missing_date": 1,
+          "coverage": 0.999932
+        }
+      },
+      "hashes": {
+        "silver_parquet_sha256": "9280c7c597f6ea6ff4570502fccc6f96148ab717461656c79625950efdd843ee",
+        "silver_logical_sha256": "0ab0277db61f4cd19dd7dfe4a83a118b56716451a857bb599cc5493a2ffe4cca",
+        "gold_logical_sha256": "243ab5032c14aa678ddc9da698094afbbcee1ed221deb9e289e4515249b0bca3",
+        "csv_sha256": {
+          "buyer_summary.csv": "7ac7b359c78590bd6efcc6a85ca734e67f3fbeda978f861aebf9767fe2ab6008",
+          "cpv_summary.csv": "8ccd75ebf941dfc03dbe144ac92ddde0ac12f5f58f09840880c36d6d68f8f351",
+          "open_opportunities.csv": "f9e7451f4ee86e518f1a622319ef603111bb0a73d290f47eaa93761d667d6d29",
+          "opportunities_monthly.csv": "154091f267896f716e29d49f55d321205e12377bea9af9f4ece79abfb1073850",
+          "opportunity_cpv.csv": "71cbc07a183313698e522fef97357197708b25cf291f0a32a0d2acd316b392e0"
+        }
+      }
+    },
+    {
+      "run": 2,
+      "manifest_counts": {
+        "bronze_records": 359304,
+        "silver_procurement_events": 359180,
+        "legacy_current_state_records": 138995,
+        "gold_opportunities": 138995,
+        "gold_canonical_opportunities": 136608
+      },
+      "ingestion": {
+        "parsed": 359304,
+        "accepted": 359304,
+        "rejected": 0,
+        "document_errors": 0,
+        "control_errors": 0,
+        "tombstones": 1046,
+        "by_source": {
+          "placsp": {
+            "parsed": 349399,
+            "accepted": 349399,
+            "rejected": 0,
+            "document_errors": 0,
+            "control_errors": 0,
+            "tombstones": 1046
+          },
+          "ted": {
+            "parsed": 9905,
+            "accepted": 9905,
+            "rejected": 0,
+            "document_errors": 0,
+            "control_errors": 0,
+            "tombstones": 0
+          }
+        },
+        "passed": true,
+        "placsp_zip_files": 6,
+        "placsp_entries": 349399,
+        "atom_files": 704,
+        "tombstone_ids": 1028,
+        "superseded_artifacts": 0,
+        "superseded_records": 0,
+        "tombstoned_removed": 3362,
+        "updates_folded": 216947
+      },
+      "gold_counts": {
+        "current_state": 137587,
+        "current_state_issues": 801,
+        "excluded_deleted": 521,
+        "excluded_insufficient_evidence": 8346,
+        "excluded_not_actionable": 113957,
+        "open_opportunities": 14763
+      },
+      "gold_manifest": {
+        "as_of": "2026-06-30",
+        "buyer_dir3_enriched_schema_version": 1,
+        "counts": {
+          "current_state": 137587,
+          "current_state_issues": 801,
+          "excluded_deleted": 521,
+          "excluded_insufficient_evidence": 8346,
+          "excluded_not_actionable": 113957,
+          "open_opportunities": 14763
+        },
+        "cpv": {
+          "available": true,
+          "cpv_occurrences": 28730,
+          "dataset": "cpv_enriched",
+          "dimension_duplicate_keys": 0,
+          "dimension_rows": 9454,
+          "dimension_source": "csv-rebuild",
+          "distinct_cpv_codes": 3751,
+          "distinct_unresolved_cpv_codes": 0,
+          "events_with_cpv_codes": 14445,
+          "events_without_cpv_codes": 318,
+          "input_events": 14763,
+          "resolved_occurrences": 28730,
+          "schema_version": 1,
+          "unresolved_occurrences": 0
+        },
+        "cpv_enriched_schema_version": 1,
+        "current_state_issues_schema_version": 1,
+        "current_state_schema_version": 1,
+        "dir3": {
+          "available": false,
+          "dimension_source": null,
+          "input_events": 14763,
+          "resolved_events": null,
+          "unresolved_events_with_buyer_id": null
+        },
+        "gold_open_opportunities_schema_version": 1,
+        "reasons": {
+          "deadline_passed": 0,
+          "deleted": 521,
+          "insufficient_evidence": 8346,
+          "open": 14763,
+          "status_closed": 113957
+        }
+      },
+      "silver_rows": 359180,
+      "gold_rows": 14763,
+      "gold_publication_date_range": {
+        "earliest": "2020-06-02",
+        "latest": "2026-06-30"
+      },
+      "export_counts": {
+        "buyer_summary.csv": 4027,
+        "cpv_summary.csv": 3751,
+        "open_opportunities.csv": 14763,
+        "opportunities_monthly.csv": 43,
+        "opportunity_cpv.csv": 28730
+      },
+      "ted": {
+        "events": 9905,
+        "resolved_events": 9337,
+        "unresolved_events": 568,
+        "procedures": 7542,
+        "competing_procedures": 1290,
+        "ambiguous_procedures": 73,
+        "ambiguous_events": 233,
+        "resolvable_procedures": 7469
+      },
+      "placsp_dates_by_status": [
+        {
+          "status": "ADJ",
+          "events": 60559,
+          "missing_date": 13201
+        },
+        {
+          "status": "ANUL",
+          "events": 565,
+          "missing_date": 565
+        },
+        {
+          "status": "EV",
+          "events": 100602,
+          "missing_date": 676
+        },
+        {
+          "status": "PRE",
+          "events": 3034,
+          "missing_date": 3033
+        },
+        {
+          "status": "PUB",
+          "events": 83111,
+          "missing_date": 2
+        },
+        {
+          "status": "RES",
+          "events": 100359,
+          "missing_date": 31840
+        }
+      ],
+      "placsp_dates": {
+        "bronze_observations": {
+          "total": 349399,
+          "declared_date": 299950,
+          "missing_date": 49449,
+          "coverage": 0.858474
+        },
+        "silver_events": {
+          "total": 348230,
+          "declared_date": 298913,
+          "missing_date": 49317,
+          "coverage": 0.858378
+        },
+        "gold_opportunities": {
+          "total": 14763,
+          "declared_date": 14762,
+          "missing_date": 1,
+          "coverage": 0.999932
+        }
+      },
+      "hashes": {
+        "silver_parquet_sha256": "9280c7c597f6ea6ff4570502fccc6f96148ab717461656c79625950efdd843ee",
+        "silver_logical_sha256": "0ab0277db61f4cd19dd7dfe4a83a118b56716451a857bb599cc5493a2ffe4cca",
+        "gold_logical_sha256": "243ab5032c14aa678ddc9da698094afbbcee1ed221deb9e289e4515249b0bca3",
+        "csv_sha256": {
+          "buyer_summary.csv": "7ac7b359c78590bd6efcc6a85ca734e67f3fbeda978f861aebf9767fe2ab6008",
+          "cpv_summary.csv": "8ccd75ebf941dfc03dbe144ac92ddde0ac12f5f58f09840880c36d6d68f8f351",
+          "open_opportunities.csv": "f9e7451f4ee86e518f1a622319ef603111bb0a73d290f47eaa93761d667d6d29",
+          "opportunities_monthly.csv": "154091f267896f716e29d49f55d321205e12377bea9af9f4ece79abfb1073850",
+          "opportunity_cpv.csv": "71cbc07a183313698e522fef97357197708b25cf291f0a32a0d2acd316b392e0"
+        }
+      }
+    }
+  ],
+  "two_run_hashes_equal": true,
+  "two_run_counts_equal": true
+}

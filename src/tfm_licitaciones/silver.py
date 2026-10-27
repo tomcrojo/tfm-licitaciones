@@ -15,6 +15,10 @@ time from ingestion provenance. Canonical timestamp precision is microseconds
 (``timestamp[us, UTC]``), matching the existing Silver schema and Parquet
 boundary; finer source fractions, if ever published, collapse to that precision.
 
+The v2 facade additionally maps declared PLACSP publication dates from Bronze,
+with collision validation across every observation, after either engine. The
+frozen engine benchmark semantics are preserved.
+
 Production routing is hybrid by construction:
 
     complete Bronze batch -> conservative eligibility guard
@@ -54,6 +58,7 @@ import logging
 
 import polars as pl
 
+from .source_dates import apply_declared_publication_dates
 from .silver_guard import NativeEligibility, assess_native_eligibility
 from .silver_native import IMPLEMENTATION_DETAIL as _NATIVE_KERNEL_DETAIL
 from .silver_native import build_procurement_events_native
@@ -207,4 +212,4 @@ def build_procurement_events(records: pl.DataFrame, tombstones: pl.DataFrame) ->
         events = build_procurement_events_native(records, routed_tombstones)
     else:
         events = build_procurement_events_reference(records, routed_tombstones)
-    return _apply_tombstone_source_time(events, enrichment)
+    return apply_declared_publication_dates(_apply_tombstone_source_time(events, enrichment), records)

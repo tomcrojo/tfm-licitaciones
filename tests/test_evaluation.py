@@ -52,7 +52,49 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(data["support"], 1)
         self.assertEqual(data["recall"], 0.0)
         self.assertEqual(data["precision"], 0.0)
-        self.assertGreater(report["macro_f1"], 0.0)
+        self.assertEqual(report["macro_f1"], 0.3333)
+
+    def test_macro_f1_excludes_labels_without_cpv_support(self) -> None:
+        report = evaluate_against_cpv(
+            [_opportunity("1", "72415000", "Cloud")],
+            {**CPV_MAP, "AI & Machine Learning": [], "Cybersecurity": []},
+        )
+        self.assertEqual(report["macro_f1"], 1.0)
+        self.assertEqual(report["per_category"]["Cybersecurity"]["support"], 0)
+        self.assertEqual(report["per_category"]["Software & Development"]["support"], 0)
+
+    def test_unsupported_prediction_still_counts_as_supported_label_miss(self) -> None:
+        report = evaluate_against_cpv(
+            [
+                _opportunity("1", "72415000", "Cloud"),
+                _opportunity("2", "72415000", "Cybersecurity"),
+            ],
+            {**CPV_MAP, "Cybersecurity": []},
+        )
+        self.assertEqual(report["macro_f1"], 0.6667)
+        self.assertEqual(report["per_category"]["Cloud"]["recall"], 0.5)
+        self.assertEqual(report["per_category"]["Cybersecurity"]["precision"], 0.0)
+
+    def test_keyword_category_absent_from_cpv_map_counts_as_miss(self) -> None:
+        report = evaluate_against_cpv(
+            [_opportunity("1", "72310000", "Cybersecurity")], CPV_MAP,
+        )
+        self.assertEqual(report["evaluated_records"], 1)
+        self.assertEqual(report["per_category"]["Data & Analytics"]["support"], 1)
+        self.assertEqual(report["per_category"]["Data & Analytics"]["recall"], 0.0)
+        self.assertEqual(report["macro_f1"], 0.0)
+
+    def test_corpus_without_evaluable_proxy_labels_reports_zero_macro_f1(self) -> None:
+        report = evaluate_against_cpv(
+            [
+                _opportunity("1", "72415000", "Cloud", source_signal="cpv"),
+                _opportunity("2", "45212200", "Cloud"),
+            ],
+            CPV_MAP,
+        )
+        self.assertEqual(report["evaluated_records"], 0)
+        self.assertEqual(report["macro_f1"], 0.0)
+        self.assertEqual(report["coverage"], 0.0)
 
     def test_empty_corpus_reports_zeroed_report(self) -> None:
         report = evaluate_against_cpv([], CPV_MAP)

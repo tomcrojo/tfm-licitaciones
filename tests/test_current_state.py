@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 try:
@@ -159,6 +159,43 @@ class CurrentStateTests(unittest.TestCase):
     def _build(self, rows: list[dict]):
         frame = self.spark.createDataFrame(rows, schema=canonical_silver_schema())
         return build_current_state(frame)
+
+    def test_declared_codice_date_survives_silver_current_state_and_gold(self) -> None:
+        from test_source_dates import _payload, _row
+        from tfm_licitaciones.bronze import bronze_frame, tombstone_frame
+        from tfm_licitaciones.silver import build_procurement_events
+        from tfm_licitaciones.gold_open_opportunities import build_open_opportunities
+
+        payload = {**_payload(["2026-01-10", "2026-02-05"]), "status_code": "PUB"}
+        silver = build_procurement_events(bronze_frame([_row(payload)]), tombstone_frame([]))
+        current, issues = self._build(silver.to_dicts())
+        self.assertEqual(issues.count(), 0)
+        gold, metrics = build_open_opportunities(current, as_of="2026-06-30")
+        self.assertEqual(metrics["open_opportunities_rows"], 1)
+        self.assertEqual(gold.collect()[0].publication_date, date(2026, 1, 10))
+
+    def test_ted_publication_dates_order_without_inventing_revision_time(self) -> None:
+        older = {**_ted_notice("ted:notice:1-2026", "ted:procedure:p"),
+                 "publication_date": date(2026, 1, 1)}
+        latest = {**_ted_notice("ted:notice:2-2026", "ted:procedure:p"),
+                  "publication_date": date(2026, 1, 2)}
+        for rows in ([older, latest], [latest, older]):
+            current, issues = self._build(rows)
+            selected = current.collect()
+            self.assertEqual([row.event_id for row in selected], [latest["event_id"]])
+            self.assertIsNone(selected[0].source_updated_at)
+            self.assertEqual(issues.count(), 0)
+
+    def test_ted_same_latest_day_or_missing_date_remains_an_issue(self) -> None:
+        first = {**_ted_notice("ted:notice:1-2026", "ted:procedure:p"),
+                 "publication_date": date(2026, 1, 2)}
+        for day in (date(2026, 1, 2), None):
+            second = {**_ted_notice("ted:notice:2-2026", "ted:procedure:p"),
+                      "publication_date": day}
+            current, issues = self._build([first, second])
+            self.assertEqual(current.count(), 0)
+            self.assertEqual([r.reason for r in issues.collect()],
+                             [REASON_UNDATED_COMPETING_EVENTS] * 2)
 
     def test_schemas_match_frozen_contracts(self) -> None:
         self.assertEqual(

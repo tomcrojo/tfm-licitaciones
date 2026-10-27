@@ -308,8 +308,11 @@ actuales son `notice`, `notice:<tipo>` (TED), `notice_snapshot` (OpenPLACSP) y
   autoritativo; `deadline` y `status`/`nuts_code` permanecen nulos porque los
   campos actuales son solo fecha o texto libre.
 - OpenPLACSP: `updated` → `source_updated_at` solo cuando lleva zona horaria
-  (normalizado a UTC); `publication_date` es nulo, nunca se reutiliza
-  `updated` como publicación.
+  (normalizado a UTC); `publication_date` toma el mínimo `IssueDate` válido
+  declarado bajo `ValidNoticeInfo` de tipo `DOC_CN`. Se consideran todos los
+  medios de publicación. No se reutiliza `updated` como publicación; sin fecha
+  declarada válida el valor permanece nulo. La extensión v2 se aplica después
+  de ambas rutas Silver y valida colisiones de fecha en todas las observaciones originales.
 - BOE: fecha oficial de publicación → `publication_date`.
 - Importes: Silver prefiere el texto numérico publicado (texto TED o claves
   CODICE `*_raw`) y construye `Decimal` exactos. Payloads antiguos sin texto
@@ -424,8 +427,10 @@ negocio pertenecen a enriquecimiento, no a esta entidad canónica.
 
 Vista de estado vigente consumida por Gold 0.1. Grano: una versión consolidada
 por `(source, tender_id)`. Las revisiones de OpenPLACSP se pliegan mediante el
-timestamp `updated` y los identificadores marcados como tombstone (solo ZIP)
-se excluyen. Ya no se persiste como JSONL.
+timestamp `updated`, comparado como instante UTC cuando incluye zona horaria.
+Valores ausentes, inválidos o sin zona no aportan orden temporal; en empates
+se conserva la última posición del lote. Los identificadores marcados como
+tombstone (solo ZIP) se excluyen. Ya no se persiste como JSONL.
 
 | Campo | Tipo | Regla actual |
 | --- | --- | --- |
@@ -469,8 +474,11 @@ inequívocos configurados. CPV actúa como proxy, no como anotación humana. La
 cobertura y el soporte por clase forman parte del resultado y deben citarse al
 interpretar las métricas.
 
-La implementación actual incluye en el macro-F1 clases con soporte cero.
-Debe tenerse en cuenta antes de utilizar esa agregación como resultado académico.
+El macro-F1 promedia solo clases con soporte CPV evaluable mayor que cero.
+Las clases sin soporte permanecen visibles en el desglose, pero no reducen
+la agregación. Una predicción de una categoría sin prefijos CPV sigue contando
+como fallo de la clase de referencia cuando el aviso tiene un CPV evaluable.
+Los informes históricos conservan la métrica calculada por su versión de código.
 
 ## Gold Parquet
 
@@ -498,12 +506,17 @@ La selección usa estas reglas:
 1. Un evento sin `procedure_id` o con identidad PLACSP incompatible genera una
    incidencia; no recibe una clave sintética.
 2. Un evento único con identidad válida determina estado, incluso sin fecha.
-3. Varios eventos válidos con alguna fecha `source_updated_at` nula generan
-   `undated_competing_events`.
-4. Si todos tienen fecha, gana el máximo `source_updated_at`; en empate gana
-   el máximo lexicográfico `event_id`.
+3. PLACSP: varios eventos válidos con algún `source_updated_at` nulo generan
+   `undated_competing_events`. Si todos tienen fecha, gana el máximo
+   `source_updated_at`; en empate gana el máximo lexicográfico `event_id`.
+4. TED: se ordena por `publication_date`, manteniendo `source_updated_at` nulo.
+   Si falta alguna fecha en un grupo competidor, o varios avisos comparten el
+   último día, todo el grupo genera `undated_competing_events`. Un máximo único
+   resuelve el estado. No se inventa prioridad por tipo de aviso ni por UUID.
 5. `is_deleted` es verdadero exactamente cuando el evento seleccionado es
-   `tombstone`. Ni `publication_date` ni `ingested_at` deciden la revisión.
+   `tombstone`. `ingested_at` nunca decide la revisión.
+
+Racional y campos oficiales: [decisión v2](decisions/0001-v2-source-dates-and-ted-ordering.md).
 
 `current_state_issues` conserva `procedure_id` nullable, `event_id`, `source`,
 `source_event_type` y `reason`. Los motivos son `missing_procedure_id`,
@@ -578,8 +591,9 @@ analíticas y sus atributos CPV se describen en [analítica](analytics.md).
 
 ## Límites de los contratos actuales
 
-- El baseline conserva su fecha publicada PLACSP derivada de `updated`;
-  Silver canónico y Gold Parquet mantienen `publication_date` nula.
+- El baseline legado conserva su fecha PLACSP derivada de `updated`;
+  Silver canónico y Gold Parquet usan la fecha declarada `DOC_CN`, cuando existe.
+  No hay fallback derivado en el contrato canónico.
 - Bronze informa rechazos por separado de los gates de calidad del baseline.
 - El estado operativo de ventanas aún no está integrado en la CLI.
 - La ausencia de filas en Gold no prueba ausencia de contratación: puede

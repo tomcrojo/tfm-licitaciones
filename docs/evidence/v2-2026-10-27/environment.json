@@ -1,0 +1,16 @@
+{
+  "python": "3.11.16",
+  "packages": {
+    "polars": "1.44.2",
+    "duckdb": "1.5.5",
+    "pyspark": "4.0.1",
+    "fastexcel": "0.21.0"
+  },
+  "java": [
+    "openjdk version \"17.0.20.1\" 2026-08-18",
+    "OpenJDK Runtime Environment (build 17.0.20.1+1-1-24.04-Ubuntu)",
+    "OpenJDK 64-Bit Server VM (build 17.0.20.1+1-1-24.04-Ubuntu, mixed mode, sharing)"
+  ],
+  "config_sha256": "444aea4bc020794b60b831e5e7c7ea03f55c52c8deecd1b6eb52df3abee49a6b",
+  "uv_lock_sha256": "26fd48d717e49aa616985fcc2ad2a02d202aed706a25c5987a3a0daebcf4269d"
+}

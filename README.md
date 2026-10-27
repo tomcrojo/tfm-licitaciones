@@ -1,5 +1,8 @@
 # tfm-licitaciones
 
+> Versión evaluada del TFM: [tfm-v1.0-graded](https://github.com/tomcrojo/tfm-licitaciones/releases/tag/tfm-v1.0-graded).
+> `main` continúa como v2; cambios en [CHANGELOG.md](CHANGELOG.md).
+
 Prototipo del Trabajo Fin de Máster de Data Engineering de la UCM para
 integrar datos de contratación pública, conservar su procedencia y preparar
 análisis de oportunidades en Tableau. El modelo es generalista; la tecnología
@@ -41,7 +44,8 @@ bash examples/demo/run.sh
 La [demo reproducible](examples/demo/README.md) usa una fixture **sintética**:
 2 avisos y 1 tombstone producen 3 eventos Silver y **1 oportunidad abierta**,
 con categoría CPV oficial y cuatro CSV con datos. El CSV mensual conserva su
-cabecera porque PLACSP no aporta `publication_date` al contrato canónico.
+cabecera porque esta fixture no contiene una fecha declarada `DOC_CN`.
+En v2, las fechas declaradas disponibles se propagan a Silver y Gold.
 Los resultados permanecen en `data/demo/`; no representan una muestra de mercado.
 El script encadena los cuatro comandos productivos y prepara CPV sin descargar
 datos de contratación. DIR3 ausente se registra como tal.
